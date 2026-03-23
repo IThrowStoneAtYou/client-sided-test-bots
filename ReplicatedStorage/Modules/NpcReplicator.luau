@@ -95,11 +95,6 @@ function NpcReplicator:Render()
 
 	local newPos = latest.cf.Position + latest.v * dt
 	self.Root.CFrame = CFrame.new(newPos) * latest.cf.Rotation
-
-	if not self.Destroying and workspace:GetServerTimeNow() - latest.t > 1 then
-		self.Destroying = true
-		self:Destroy()
-	end
 end
 
 function NpcReplicator:Destroy()

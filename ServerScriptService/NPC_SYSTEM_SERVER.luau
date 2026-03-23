@@ -53,6 +53,8 @@ local SPAWN_POSITIONS = {
 
 -- ─── State ───────────────────────────────────────────────────────────────────
 local activeNpcs = {} -- [id] = { model, humanoid, root, origin, path }
+local lastSentPos = {} -- [id] = Vector3
+local lastSentVel = {} -- [id] = Vector3
 
 -- ─── Helpers ─────────────────────────────────────────────────────────────────
 local idCounter = 0
@@ -158,6 +160,7 @@ local function spawnNpc(spawnPos: Vector3)
 		NpcDespawned:FireAllClients(id)
 		activeNpcs[id] = nil
 		lastSentPos[id] = nil
+		lastSentVel[id] = nil
 
 		task.delay(CONFIG.RespawnDelay, function()
 			model:Destroy()
@@ -186,7 +189,6 @@ end)
 
 -- ─── Snapshot Broadcast ──────────────────────────────────────────────────────
 local lastBroadcast = 0
-local lastSentPos = {} -- fix 4: delta compression
 
 RunService.Heartbeat:Connect(function()
 	local now = workspace:GetServerTimeNow()
@@ -200,12 +202,18 @@ RunService.Heartbeat:Connect(function()
 	for id, data in pairs(activeNpcs) do
 		local cf  = data.root.CFrame
 		local pos = cf.Position
+		local vel = data.root.AssemblyLinearVelocity
 
 		-- fix 4: skip if NPC hasn't moved
-		if lastSentPos[id] and (pos - lastSentPos[id]).Magnitude < 0.1 then
+		-- We also check velocity change to prevent "sliding" when stopping
+		local dist = lastSentPos[id] and (pos - lastSentPos[id]).Magnitude or 999
+		local velChange = lastSentVel[id] and (vel - lastSentVel[id]).Magnitude or 999
+
+		if dist < 0.1 and velChange < 1 then
 			continue
 		end
 		lastSentPos[id] = pos
+		lastSentVel[id] = vel
 
 		-- fix 2: compact pos + yRot instead of full CFrame
 		local yRot = math.floor(math.deg(select(2, cf:ToEulerAnglesYXZ())) * 10 + 0.5) / 10
@@ -214,7 +222,7 @@ RunService.Heartbeat:Connect(function()
 			id   = id,
 			pos  = pos,
 			yRot = yRot,
-			vel  = data.root.AssemblyLinearVelocity,
+			vel  = vel,
 			t    = now,
 		})
 	end
