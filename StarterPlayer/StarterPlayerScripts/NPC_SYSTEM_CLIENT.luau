@@ -9,9 +9,11 @@ local NpcReplicator = require(ReplicatedStorage:WaitForChild("Modules"):WaitForC
 
 -- ─── Remotes ─────────────────────────────────────────────────────────────────
 local Remotes          = ReplicatedStorage:WaitForChild("NpcRemotes")
+
 local NpcSpawned       = Remotes:WaitForChild("NpcSpawned")
 local NpcDespawned     = Remotes:WaitForChild("NpcDespawned")
 local NpcBatchSnapshot = Remotes:WaitForChild("NpcBatchSnapshot")
+local NpcClientDied    = Remotes:WaitForChild("NpcClientDied")
 
 -- ─── Templates ───────────────────────────────────────────────────────────────
 local CLIENT_TEMPLATE = ReplicatedStorage:WaitForChild("CLIENT")
@@ -27,20 +29,23 @@ end
 local replicators = {} -- [id] = NpcReplicator
 
 -- ─── Spawn ───────────────────────────────────────────────────────────────────
-NpcSpawned.OnClientEvent:Connect(function(id: string, spawnCFrame: CFrame)
-	-- Don't double-spawn if we somehow receive this twice
+NpcSpawned.OnClientEvent:Connect(function(id: number, spawnCFrame: CFrame)
 	if replicators[id] then return end
 
 	local clientModel = CLIENT_TEMPLATE:Clone()
 	clientModel.Name = "ClientNPC_" .. id
 
-	-- Pre-position the model so it doesn't appear at origin on first frame
 	local root = clientModel:WaitForChild("HumanoidRootPart")
 	root.CFrame = spawnCFrame
 
+	-- When this client model's health hits 0, notify the server
+	local humanoid = clientModel:WaitForChild("Humanoid")
+	humanoid.Died:Connect(function()
+		NpcClientDied:FireServer(id)
+	end)
+
 	local replicator = NpcReplicator.new(id, clientModel)
 	replicator:Start()
-
 	replicators[id] = replicator
 end)
 
