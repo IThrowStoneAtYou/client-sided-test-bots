@@ -22,9 +22,9 @@ local NpcClientDied = ReplicatedStorage.NpcRemotes.NpcClientDied
 
 -- ─── Config ──────────────────────────────────────────────────────────────────
 local CONFIG = {
-	NpcCount        = 35,
+	NpcCount        = 65,
 	WanderRadius    = 65,
-	RespawnDelay    = 3,
+	RespawnDelay    = 1,
 	SnapshotRate    = 0.05,
 	WaypointSpacing = 4,
 	NpcSpeed        = 16,
@@ -42,11 +42,11 @@ local SPAWN_POSITIONS = {
 
 -- ─── State ───────────────────────────────────────────────────────────────────
 local activeNpcs  = {} -- [id] = { model, humanoid, root, origin, path }
-local lastSentPos = {} -- FIX 1: moved up so Died handler can safely reference it
+local lastSentPos = {} -- Died handler can safely reference it
 
 -- ─── Helpers ─────────────────────────────────────────────────────────────────
 local idCounter = 0
-local function generateId(): number -- FIX 2: return type corrected to number
+local function generateId(): number -- return type to number
 	idCounter += 1
 	return idCounter
 end
@@ -61,7 +61,7 @@ local function randomWaypointNear(origin: Vector3, radius: number): Vector3
 	)
 end
 
--- FIX 5: cycles through SPAWN_POSITIONS instead of falling back to index 1
+-- cycles through SPAWN_POSITIONS instead of falling back to index 1
 local function getSpawnPosition(index: number): Vector3
 	return SPAWN_POSITIONS[((index - 1) % #SPAWN_POSITIONS) + 1]
 end
@@ -156,7 +156,7 @@ end
 -- ─── Initial Spawn ───────────────────────────────────────────────────────────
 for i = 1, CONFIG.NpcCount do
 	task.wait(0.1)
-	spawnNpc(getSpawnPosition(i)) -- FIX 5: cycles evenly across all positions
+	spawnNpc(getSpawnPosition(i)) -- cycles evenly across all positions
 end
 
 -- ─── Late-Join Handler ───────────────────────────────────────────────────────
