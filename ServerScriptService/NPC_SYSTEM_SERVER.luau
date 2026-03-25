@@ -15,24 +15,13 @@ local NoobPath   = require(Modules:WaitForChild("NoobPath"))
 local SERVER_TEMPLATE = ReplicatedStorage:WaitForChild("SERVER")
 
 -- ─── Remotes Setup ───────────────────────────────────────────────────────────
-local Remotes = Instance.new("Folder")
-Remotes.Name  = "NpcRemotes"
-Remotes.Parent = ReplicatedStorage
-
-local function makeRemote(name: string)
-	local re = Instance.new("RemoteEvent")
-	re.Name   = name
-	re.Parent = Remotes
-	return re
-end
-
-local NpcSpawned       = makeRemote("NpcSpawned")
-local NpcDespawned     = makeRemote("NpcDespawned")
-local NpcBatchSnapshot = makeRemote("NpcBatchSnapshot")
+local NpcSpawned       = ReplicatedStorage.NpcRemotes.NpcSpawned
+local NpcDespawned     = ReplicatedStorage.NpcRemotes.NpcDespawned
+local NpcBatchSnapshot = ReplicatedStorage.NpcRemotes.NpcBatchSnapshot
 
 -- ─── Config ──────────────────────────────────────────────────────────────────
 local CONFIG = {
-	NpcCount        = 75,
+	NpcCount        = 35,
 	WanderRadius    = 65,
 	RespawnDelay    = 3,
 	SnapshotRate    = 0.05,    -- 0 = every Heartbeat. e.g. 0.05 = 20 per second
@@ -53,8 +42,6 @@ local SPAWN_POSITIONS = {
 
 -- ─── State ───────────────────────────────────────────────────────────────────
 local activeNpcs = {} -- [id] = { model, humanoid, root, origin, path }
-local lastSentPos = {} -- [id] = Vector3
-local lastSentVel = {} -- [id] = Vector3
 
 -- ─── Helpers ─────────────────────────────────────────────────────────────────
 local idCounter = 0
@@ -129,7 +116,7 @@ local function spawnNpc(spawnPos: Vector3)
 	local id    = generateId()
 	local model = SERVER_TEMPLATE:Clone()
 	model.Name  = "ServerNPC_" .. id
-	model.Parent = workspace
+	model.Parent = workspace.Npc_Registry_Server
 
 	local root     = model:WaitForChild("HumanoidRootPart")
 	local humanoid = model:WaitForChild("Humanoid")
@@ -160,7 +147,6 @@ local function spawnNpc(spawnPos: Vector3)
 		NpcDespawned:FireAllClients(id)
 		activeNpcs[id] = nil
 		lastSentPos[id] = nil
-		lastSentVel[id] = nil
 
 		task.delay(CONFIG.RespawnDelay, function()
 			model:Destroy()
@@ -189,11 +175,12 @@ end)
 
 -- ─── Snapshot Broadcast ──────────────────────────────────────────────────────
 local lastBroadcast = 0
+local lastSentPos = {} -- fix 4: delta compression
 
 RunService.Heartbeat:Connect(function()
 	local now = workspace:GetServerTimeNow()
 
-	-- fix 1: rate limiting
+	-- rate limiting
 	if (now - lastBroadcast) < CONFIG.SnapshotRate then return end
 	lastBroadcast = now
 
@@ -202,27 +189,21 @@ RunService.Heartbeat:Connect(function()
 	for id, data in pairs(activeNpcs) do
 		local cf  = data.root.CFrame
 		local pos = cf.Position
-		local vel = data.root.AssemblyLinearVelocity
 
-		-- fix 4: skip if NPC hasn't moved
-		-- We also check velocity change to prevent "sliding" when stopping
-		local dist = lastSentPos[id] and (pos - lastSentPos[id]).Magnitude or 999
-		local velChange = lastSentVel[id] and (vel - lastSentVel[id]).Magnitude or 999
-
-		if dist < 0.1 and velChange < 1 then
+		-- skip if NPC hasn't moved
+		if lastSentPos[id] and (pos - lastSentPos[id]).Magnitude < 0.1 then
 			continue
 		end
 		lastSentPos[id] = pos
-		lastSentVel[id] = vel
 
-		-- fix 2: compact pos + yRot instead of full CFrame
+		-- compact pos + yRot instead of full CFrame
 		local yRot = math.floor(math.deg(select(2, cf:ToEulerAnglesYXZ())) * 10 + 0.5) / 10
 
 		table.insert(batch, {
 			id   = id,
 			pos  = pos,
 			yRot = yRot,
-			vel  = vel,
+			vel  = data.root.AssemblyLinearVelocity,
 			t    = now,
 		})
 	end

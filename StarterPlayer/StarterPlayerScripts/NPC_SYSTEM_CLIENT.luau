@@ -5,7 +5,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local NpcReplicator = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NpcReplicator"))
+local NpcReplicator = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPC_Replicator_v2"))
 
 -- ─── Remotes ─────────────────────────────────────────────────────────────────
 local Remotes          = ReplicatedStorage:WaitForChild("NpcRemotes")
