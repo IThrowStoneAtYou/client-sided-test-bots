@@ -43,6 +43,7 @@ local farLastSent = {}   -- [Player] = { [shortId] = number }
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
 	local dist  = minDist + math.random() * (radius - minDist)
+	
 	return Vector3.new(
 		center.X + math.cos(angle) * dist,
 		center.Y,
@@ -56,15 +57,24 @@ local function getYaw(cf)
 end
 
 local function cfChanged(cf, lastCF)
-	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then return true end
-	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then return true end
+	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then 
+		return true
+	end
+	
+	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then
+		return true
+	end
 	return false
 end
 
 local function getPlayerRootPos(player)
 	local char = player.Character
-	if not char then return nil end
+	if not char then
+		return nil
+	end
+	
 	local root = char:FindFirstChild("HumanoidRootPart")
+	
 	return root and root.Position or nil
 end
 
@@ -74,6 +84,7 @@ local function fireChunked(player, timestamp, entries)
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
 			chunk[#chunk + 1] = entries[j]
 		end
+		
 		EvtBatch:FireClient(player, timestamp, chunk)
 	end
 end
@@ -88,6 +99,8 @@ end
 local function spawnNpc()
 	local shortId = nextShortId
 	nextShortId   = nextShortId + 1
+	
+--	print("spawn", nextShortId)
 
 	local model = SERVER_MODEL:Clone()
 	model.Name  = "NPC_" .. shortId
@@ -95,6 +108,7 @@ local function spawnNpc()
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.LocalTransparencyModifier = 1
+			print("is this even working???")
 		end
 	end
 
@@ -106,7 +120,7 @@ local function spawnNpc()
 		randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0, 4, 0)
 	)
 	root.CFrame  = spawnCF
-	model.Parent = workspace
+	model.Parent = workspace.Npc_Registry_Server
 
 	local npc = {
 		ShortId      = shortId,
@@ -165,9 +179,9 @@ end)
 
 
 -- ── Broadcast loop ────────────────────────────────────────────────────
---local accumulator = 0
 local nearAccum = 0
 local farAccum  = 0
+
 RunService.Heartbeat:Connect(function(dt)
 	nearAccum += dt
 	farAccum  += dt
@@ -183,9 +197,13 @@ RunService.Heartbeat:Connect(function(dt)
 	local timestamp = workspace:GetServerTimeNow()
 	local deadIds   = {}
 
-	-- Build one global dirty table with position cached per NPC
-	-- Each entry: { shortId, pos, yaw, pos } (last field for cull math)
-	local allEntries = {}
+	-- [CHANGED] Two separate tables:
+	--   dirtyEntries  — NPCs that moved; used for near players (high freq)
+	--   allFarEntries — every live NPC; used for far keep-alive (low freq)
+	--   Far players need ALL npcs so stationary ones don't go dark.
+	local dirtyEntries  = {}
+	local allFarEntries = {}
+
 	for shortId, npc in pairs(activeNpcs) do
 		if not (npc.Model and npc.Model.Parent) then
 			deadIds[#deadIds + 1] = shortId
@@ -197,8 +215,19 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local cf = npc.Root.CFrame
-		if cfChanged(cf, npc.LastSentCF) then
-			allEntries[#allEntries + 1] = {
+
+		if doFar then
+			-- Always include every live NPC in the far list
+			allFarEntries[#allFarEntries + 1] = {
+				shortId,
+				cf.Position,
+				getYaw(cf),
+			}
+		end
+
+		if doNear and cfChanged(cf, npc.LastSentCF) then
+			-- Only include moved NPCs in the near list
+			dirtyEntries[#dirtyEntries + 1] = {
 				shortId,
 				cf.Position,
 				getYaw(cf),
@@ -207,7 +236,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- Per-player: split dirty list into near/far and fire at the right rate
+	-- Per-player: route each NPC to near or far based on distance
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
 
@@ -220,19 +249,20 @@ RunService.Heartbeat:Connect(function(dt)
 		local farList  = {}
 		local now      = os.clock()
 
-		for _, entry in ipairs(allEntries) do
-			local shortId = entry[1]
-			local dist    = playerPos and (entry[2] - playerPos).Magnitude or 0
-
-			if dist <= CULL_RADIUS then
-				-- Near: send every near tick
-				if doNear then
+		if doNear then
+			for _, entry in ipairs(dirtyEntries) do
+				local dist = playerPos and (entry[2] - playerPos).Magnitude or 0
+				if dist <= CULL_RADIUS then
 					nearList[#nearList + 1] = entry
 				end
-			else
-				-- Far: send only on far ticks, and only if enough time has passed
-				-- (guards against the far accumulator firing slightly too early)
-				if doFar then
+			end
+		end
+
+		if doFar then
+			for _, entry in ipairs(allFarEntries) do
+				local shortId = entry[1]
+				local dist    = playerPos and (entry[2] - playerPos).Magnitude or 0
+				if dist > CULL_RADIUS then
 					local lastSent = playerFarSent[shortId] or 0
 					if now - lastSent >= FAR_RATE * 0.9 then
 						farList[#farList + 1] = entry
@@ -250,7 +280,6 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- Reliable cleanup for dead NPCs
 	for _, shortId in ipairs(deadIds) do
 		for player in pairs(readyPlayers) do
 			EvtDespawned:FireClient(player, shortId)

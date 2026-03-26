@@ -5,6 +5,8 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local NpcReplicator = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
+local NpcAnimator = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
+
 local CLIENT_MODEL  = ReplicatedStorage:WaitForChild("CLIENT")
 
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
@@ -21,17 +23,24 @@ end
 
 local replicators = {}
 
+local animators = {}  -- [shortId] = NpcAnimator
+
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 end
 
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
+
 	local clientModel    = CLIENT_MODEL:Clone()
 	local rep            = NpcReplicator.new(shortId, clientModel)
 	rep.Root.CFrame      = buildCFrame(pos, yaw)
+	
 	rep:Start()
 	replicators[shortId] = rep
+
+	-- Animator created after rep so the model is already parented to Npc_Registry
+	animators[shortId] = NpcAnimator.new(clientModel)
 end
 
 -- ── Wire all handlers FIRST, then signal ready ────────────────────────
@@ -56,12 +65,19 @@ EvtBatch.OnClientEvent:Connect(function(timestamp, chunk)
 	end
 end)
 
+-- EvtDespawned — also destroy the animator
 EvtDespawned.OnClientEvent:Connect(function(shortId)
 	local rep = replicators[shortId]
 	if not rep then return end
 	if rep.Client then rep.Client:Destroy() end
 	rep:Destroy()
 	replicators[shortId] = nil
+
+	local anim = animators[shortId]
+	if anim then
+		anim:Destroy()
+		animators[shortId] = nil
+	end
 end)
 
 -- Signal the server only after all handlers above are connected.
