@@ -14,15 +14,21 @@ local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 local EvtBatch     = Remotes:WaitForChild("NpcBatch")
 local EvtReady     = Remotes:WaitForChild("NpcReady")
 
+-- ── Modules ────────────────────────────────────────────────────────────
+local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
+
 -- ── Config ────────────────────────────────────────────────────────────
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
-local NPC_COUNT     = 50
+local NPC_COUNT     = 350
+
 local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
 local WANDER_MIN    = 8
+
 local WALK_SPEED    = 14
 local UPDATE_RATE   = 1 / 20
 local IDLE_TIMEOUT  = 3
+
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
 local CHUNK_SIZE    = 12
@@ -31,13 +37,23 @@ local CHUNK_SIZE    = 12
 -- Set to math.huge to disable culling (e.g. small maps where all bots are visible).
 local NEAR_RATE     = 1 / 20   -- 20 hz for nearby NPCs
 local FAR_RATE      = 1 / 4    -- 4 hz keep-alive for distant NPCs
-local CULL_RADIUS   = 150      -- studs — near/far boundary
+local CULL_RADIUS   = 350      -- studs — near/far boundary
 
 -- ── State ─────────────────────────────────────────────────────────────
 local activeNpcs  = {}
 local nextShortId = 1
 local readyPlayers = {} -- [Player] = true; only populated after NpcReady fires
 local farLastSent = {}   -- [Player] = { [shortId] = number }
+
+-- [player] = {
+--     formation : string,
+--     anchorCF  : CFrame,
+--     slots     : { shortId },   -- ordered; index = slot number
+-- }
+local regiments = {}
+
+local MAX_SPAWN     = 100   -- hard cap per /spawn command
+local SPAWN_OFFSET  = 16    -- studs in front of the player the line appears
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -96,6 +112,60 @@ local function pickNewTarget(npc)
 end
 
 -- ── Spawn ─────────────────────────────────────────────────────────────
+
+local function spawnNpc(spawnCF: CFrame?)
+	local shortId = nextShortId
+	nextShortId   = nextShortId + 1
+
+	local model = SERVER_MODEL:Clone()
+	model.Name  = "NPC_" .. shortId
+
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.LocalTransparencyModifier = 1
+		end
+	end
+
+	local root     = model:WaitForChild("HumanoidRootPart")
+	local humanoid = model:WaitForChild("Humanoid")
+	humanoid.WalkSpeed = WALK_SPEED
+
+	-- Use provided CFrame or fall back to random wander position
+	local cf = spawnCF or CFrame.new(
+		randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0, 4, 0)
+	)
+
+	root.CFrame  = cf
+	model.Parent = workspace
+
+	local npc = {
+		ShortId      = shortId,
+		Model        = model,
+		Root         = root,
+		Humanoid     = humanoid,
+		LastMoveTime = 0,
+		LastSentCF   = cf,
+	}
+
+	humanoid.MoveToFinished:Connect(function()
+		pickNewTarget(npc)
+	end)
+
+	-- Only wander if not part of a regiment (regiment handles its own MoveTo)
+	if not spawnCF then
+		pickNewTarget(npc)
+	end
+
+	activeNpcs[shortId] = npc
+
+	for player in pairs(readyPlayers) do
+		EvtSpawned:FireClient(player, shortId, cf.Position, getYaw(cf))
+	end
+
+	return npc
+end
+
+--[[
 local function spawnNpc()
 	local shortId = nextShortId
 	nextShortId   = nextShortId + 1
@@ -104,13 +174,14 @@ local function spawnNpc()
 
 	local model = SERVER_MODEL:Clone()
 	model.Name  = "NPC_" .. shortId
-
+	
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.LocalTransparencyModifier = 1
 			print("is this even working???")
 		end
 	end
+
 
 	local root     = model:WaitForChild("HumanoidRootPart")
 	local humanoid = model:WaitForChild("Humanoid")
@@ -149,6 +220,48 @@ end
 for _ = 1, NPC_COUNT do
 	spawnNpc()
 end
+--[[]]
+
+-- ── Regiment spawn ─────────────────────────────────────────────────────
+local function spawnRegiment(player: Player, count: number)
+	count = math.clamp(count, 1, MAX_SPAWN)
+
+	local char = player.Character
+	if not char then return end
+	local playerRoot = char:FindFirstChild("HumanoidRootPart")
+	if not playerRoot then return end
+
+	-- Anchor is SPAWN_OFFSET studs in front of where the player is looking,
+	-- flattened to Y=0 so the line sits on the ground plane.
+	local look = playerRoot.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z).Unit
+
+	local anchorPos = playerRoot.Position + flatLook * SPAWN_OFFSET
+	local anchorCF  = CFrame.lookAt(anchorPos, anchorPos + flatLook)
+
+	local slots     = RegimentFormation.getSlots(anchorCF, count, "Line")
+	local slotIds   = {}
+
+	for i, slotCF in ipairs(slots) do
+		-- Raise slightly so bots don't spawn inside the ground
+		local raisedCF = slotCF + Vector3.new(0, 4, 0)
+		local npc      = spawnNpc(raisedCF)
+
+		-- Walk each bot to its slot (clears the raised Y)
+		npc.Humanoid:MoveTo(slotCF.Position)
+		npc.LastMoveTime = os.clock()
+
+		slotIds[i] = npc.ShortId
+	end
+
+	regiments[player] = {
+		formation = "Line",
+		anchorCF  = anchorCF,
+		slots     = slotIds,
+	}
+
+	print(string.format("[NpcManager] %s spawned regiment of %d", player.Name, count))
+end
 
 -- ── Ready gate ────────────────────────────────────────────────────────
 -- The client fires NpcReady once its handlers are wired.
@@ -175,6 +288,7 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	readyPlayers[player] = nil
 	farLastSent[player]  = nil   -- clean up
+	regiments[player] 	 = nil
 end)
 
 
@@ -290,3 +404,23 @@ RunService.Heartbeat:Connect(function(dt)
 		activeNpcs[shortId] = nil
 	end
 end)
+
+-- ── Chat command listener ─────────────────────────────────────────────
+-- Wire up for players already in the server and ones who join later.
+local function hookChat(player: Player)
+	player.Chatted:Connect(function(message: string)
+		-- Match "/spawn n" case-insensitively, ignore leading spaces
+		local raw = message:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s*$")
+		if not raw then return end
+
+		local count = tonumber(raw)
+		if not count or count < 1 then return end
+
+		spawnRegiment(player, count)
+	end)
+end
+
+Players.PlayerAdded:Connect(hookChat)
+for _, player in ipairs(Players:GetPlayers()) do
+	hookChat(player)
+end
