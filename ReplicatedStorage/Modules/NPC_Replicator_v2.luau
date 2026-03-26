@@ -23,7 +23,7 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.Snapshots = {}
 	self.BufferTime = 0.1
 	self.MaxBuffer = 20
-	self.MaxExtrapolation = 0.25
+	self.MaxExtrapolation = 0.4 --0.25
 
 	self.Connections = {}
 	
@@ -51,6 +51,31 @@ end
 -- cf: CFrame of the entity
 -- velocity: movement velocity
 -- timestamp: server time
+function NpcReplicator:PushNetworkSnapshot(cf, timestamp)
+	local last = self.Snapshots[#self.Snapshots]
+	if last and timestamp <= last.t then return end
+
+	-- Derive velocity from the position delta with the previous snapshot
+	local velocity = Vector3.zero
+	if last then
+		local dt = timestamp - last.t
+		if dt > 0 then
+			velocity = (cf.Position - last.cf.Position) / dt
+		end
+	end
+
+	table.insert(self.Snapshots, {
+		t  = timestamp,
+		cf = cf,
+		v  = velocity,
+	})
+
+	while #self.Snapshots > self.MaxBuffer do
+		table.remove(self.Snapshots, 1)
+	end
+end
+
+--[[
 function NpcReplicator:PushNetworkSnapshot(cf, velocity, timestamp)
 	local last = self.Snapshots[#self.Snapshots]
 	if last and timestamp <= last.t then return end
@@ -67,6 +92,7 @@ function NpcReplicator:PushNetworkSnapshot(cf, velocity, timestamp)
 
 	self.LastVelocity = velocity
 end
+--[[]]
 
 -->>>>>>>>>>>>
 -- Connects the render loop

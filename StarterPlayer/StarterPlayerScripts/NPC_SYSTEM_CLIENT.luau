@@ -1,77 +1,69 @@
 -->>>>>>>>>>>>
--- NPC_SYSTEM — Client
--- Handles: receiving spawns/despawns, creating visual models, feeding replicator
+-- NPC_CLIENT (Client) — ready-gated
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local NpcReplicator = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPC_Replicator_v2"))
-local Ragdoll = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Ragdoll"))
+local NpcReplicator = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
+local CLIENT_MODEL  = ReplicatedStorage:WaitForChild("CLIENT")
 
--- ─── Remotes ─────────────────────────────────────────────────────────────────
-local Remotes          = ReplicatedStorage:WaitForChild("NpcRemotes")
+local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
+local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
+local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
+local EvtBatch     = Remotes:WaitForChild("NpcBatch")
+local EvtReady     = Remotes:WaitForChild("NpcReady")
 
-local NpcSpawned       = Remotes:WaitForChild("NpcSpawned")
-local NpcDespawned     = Remotes:WaitForChild("NpcDespawned")
-local NpcBatchSnapshot = Remotes:WaitForChild("NpcBatchSnapshot")
-local NpcClientDied    = Remotes:WaitForChild("NpcClientDied")
-
--- ─── Templates ───────────────────────────────────────────────────────────────
-local CLIENT_TEMPLATE = ReplicatedStorage:WaitForChild("CLIENT")
-
--- ─── Registry Folder (used by NpcReplicator internally) ──────────────────────
 if not workspace:FindFirstChild("Npc_Registry") then
-	local folder = Instance.new("Folder")
-	folder.Name = "Npc_Registry"
+	local folder  = Instance.new("Folder")
+	folder.Name   = "Npc_Registry"
 	folder.Parent = workspace
 end
 
--- ─── Active Replicators ───────────────────────────────────────────────────────
-local replicators = {} -- [id] = NpcReplicator
+local replicators = {}
 
--- ─── Spawn ───────────────────────────────────────────────────────────────────
-NpcSpawned.OnClientEvent:Connect(function(id: number, spawnCFrame: CFrame)
-	if replicators[id] then return end
+local function buildCFrame(pos, yaw)
+	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+end
 
-	local clientModel = CLIENT_TEMPLATE:Clone()
-	clientModel.Name = "ClientNPC_" .. id
+local function registerNpc(shortId, pos, yaw)
+	if replicators[shortId] then return end
+	local clientModel    = CLIENT_MODEL:Clone()
+	local rep            = NpcReplicator.new(shortId, clientModel)
+	rep.Root.CFrame      = buildCFrame(pos, yaw)
+	rep:Start()
+	replicators[shortId] = rep
+end
 
-	local root = clientModel:WaitForChild("HumanoidRootPart")
-	root.CFrame = spawnCFrame
+-- ── Wire all handlers FIRST, then signal ready ────────────────────────
 
-	local replicator = NpcReplicator.new(id, clientModel)
-	replicator:Start()
-	replicators[id] = replicator
-end)
-
--- ─── Despawn ─────────────────────────────────────────────────────────────────
-NpcDespawned.OnClientEvent:Connect(function(id: number)
-	local replicator = replicators[id]
-	if not replicator then return end
-
-	local model = replicator.Client
-
-	-- Stop replicator immediately so it stops moving the ragdoll around
-	replicator:Destroy()
-	replicators[id] = nil
-
-	-- Ragdoll then clean up after delay
-	if model then
-		Ragdoll.Apply(model)
-		task.delay(4, function()
-			model:Destroy()
-		end)
-	end
-end)
-
--- ─── Snapshot Feed ───────────────────────────────────────────────────────────
-NpcBatchSnapshot.OnClientEvent:Connect(function(batch: { any })
-	for _, snap in ipairs(batch) do
-		local replicator = replicators[snap.id]
-		if replicator then
-			-- fix 2: reconstruct CFrame from compact pos + yRot
-			local cf = CFrame.new(snap.pos) * CFrame.Angles(0, math.rad(snap.yRot), 0)
-			replicator:PushNetworkSnapshot(cf, snap.vel, snap.t)
+EvtSpawned.OnClientEvent:Connect(function(idOrBatch, pos, yaw)
+	if type(idOrBatch) == "number" then
+		registerNpc(idOrBatch, pos, yaw)
+	else
+		for _, entry in ipairs(idOrBatch) do
+			registerNpc(entry[1], entry[2], entry[3])
 		end
 	end
 end)
+
+-- velocity is no longer sent; replicator derives it internally
+EvtBatch.OnClientEvent:Connect(function(timestamp, chunk)
+	for _, entry in ipairs(chunk) do
+		local rep = replicators[entry[1]]
+		if rep then
+			rep:PushNetworkSnapshot(buildCFrame(entry[2], entry[3]), timestamp)
+		end
+	end
+end)
+
+EvtDespawned.OnClientEvent:Connect(function(shortId)
+	local rep = replicators[shortId]
+	if not rep then return end
+	if rep.Client then rep.Client:Destroy() end
+	rep:Destroy()
+	replicators[shortId] = nil
+end)
+
+-- Signal the server only after all handlers above are connected.
+-- This is what eliminates the "did you forget OnClientEvent?" drop warning.
+EvtReady:FireServer()
