@@ -1,8 +1,10 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
--- Version 3.1.0
--- Cards slide up on hover/select, stay raised when selected.
--- Selected company bots get a Highlight matching card accent color.
+-- Version 3.2.0
+-- Description: 
+-- This script handles the local player's interaction with the NPC system.
+-- It manages the HUD, selection logic, movement previews (dots/arrows), 
+-- and acts as the bridge between network events and client-side replicators.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -31,6 +33,8 @@ local companySlots    = {}   -- [companyIndex] = { [shortId] = true }
 local selectedCompany = nil
 local lastFormation   = {}   -- [companyIndex] = { ranks, files }
 
+-->>>>>>>>>>>>
+-- Ensures workspace folders exist for organized NPC storage and preview dots
 local function ensureFolder(name)
 	if not workspace:FindFirstChild(name) then
 		local f = Instance.new("Folder")
@@ -41,6 +45,8 @@ end
 ensureFolder("Npc_Registry")
 ensureFolder("Client_Preview_Dots")
 
+-->>>>>>>>>>>>
+-- Helper to construct a CFrame from position and Y-axis rotation (Yaw)
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 end
@@ -72,6 +78,8 @@ end
 -- ── Highlight Helpers ─────────────────────────────────────────────────
 local HIGHLIGHT_TAG = "CompanyHighlight"
 
+-->>>>>>>>>>>>
+-- Removes the selection highlights from all NPCs currently rendered
 local function clearHighlights()
 	for _, rep in pairs(replicators) do
 		if rep.Client then
@@ -81,6 +89,8 @@ local function clearHighlights()
 	end
 end
 
+-->>>>>>>>>>>>
+-- Adds a visual highlight to a specific NPC model based on its company color
 local function addHighlight(clientModel, companyIndex)
 	if not clientModel then return end
 	local existing = clientModel:FindFirstChild(HIGHLIGHT_TAG)
@@ -97,6 +107,8 @@ local function addHighlight(clientModel, companyIndex)
 	h.Parent              = clientModel
 end
 
+-->>>>>>>>>>>>
+-- Applies highlights to all NPCs belonging to the currently selected company
 local function applyHighlights(companyIndex)
 	clearHighlights()
 	if not companyIndex then return end
@@ -112,6 +124,8 @@ local function applyHighlights(companyIndex)
 end
 
 -- ── NPC Registration ──────────────────────────────────────────────────
+-->>>>>>>>>>>>
+-- Spawns the client-side representation of an NPC and initializes its replicator/animator
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
 	local clientModel   = CLIENT_MODEL:Clone()
@@ -143,6 +157,8 @@ screenGui.Parent          = PlayerGui
 -- Cards table: [i] = { frame, countLabel, stroke, hovered, raisedPos, restingPos }
 local companyCards = {}
 
+-->>>>>>>>>>>>
+-- Updates a specific UI card's state (Selected, Hovered, or Hidden)
 local function refreshCard(i)
 	local cd      = companyCards[i]
 	local company = myCompanies[i]
@@ -164,10 +180,14 @@ local function refreshCard(i)
 	}):Play()
 end
 
+-->>>>>>>>>>>>
+-- Force-refreshes the UI state for all 4 company slots
 local function updateAllCards()
 	for i = 1, 4 do refreshCard(i) end
 end
 
+-->>>>>>>>>>>>
+-- Changes the active company selection and updates visual highlights
 local function setSelectedCompany(idx)
 	local prev = selectedCompany
 	selectedCompany = idx
@@ -178,6 +198,8 @@ local function setSelectedCompany(idx)
 	if idx  then refreshCard(idx)  end
 end
 
+-->>>>>>>>>>>>
+-- Constructs the UI elements for a company card and binds hover/click events
 local function createCard(index: number)
 	local accent     = COMPANY_COLORS[index]
 	local xOff       = cardXOffset(index)
@@ -333,6 +355,8 @@ for i = 1, 4 do createCard(i) end
 
 -- ── Event Handlers ────────────────────────────────────────────────────
 
+-->>>>>>>>>>>>
+-- Handles initial spawning of NPCs (either one-by-one or in bulk batches)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
 		registerNpc(data.id, data.pos, data.yaw)
@@ -343,6 +367,8 @@ Network.NpcSpawn.On(function(data)
 	end
 end)
 
+-->>>>>>>>>>>>
+-- Receives high-frequency position updates and pushes them to the interpolation buffer
 Network.NpcBatch.On(function(timestamp, chunk)
 	for _, entry in ipairs(chunk) do
 		local rep = replicators[entry.id]
@@ -352,6 +378,8 @@ Network.NpcBatch.On(function(timestamp, chunk)
 	end
 end)
 
+-->>>>>>>>>>>>
+-- Cleans up an NPC from the client world when it is despawned on the server
 Network.NpcDespawn.On(function(shortId)
 	local rep = replicators[shortId]
 	if not rep then return end
@@ -366,6 +394,8 @@ Network.NpcDespawn.On(function(shortId)
 	end
 end)
 
+-->>>>>>>>>>>>
+-- Syncs the client's knowledge of which NPCs belong to which of their 4 companies
 Network.NpcCompanySync.On(function(data)
 	myCompanies  = {}
 	companySlots = {}
@@ -392,12 +422,16 @@ end)
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
+-->>>>>>>>>>>>
+-- Updates the raycast filter so move orders don't hit NPCs or the local character
 local function updateRayFilter()
 	local list = { workspace:WaitForChild("Npc_Registry") }
 	if localPlayer.Character then table.insert(list, localPlayer.Character) end
 	rayParams.FilterDescendantsInstances = list
 end
 
+-->>>>>>>>>>>>
+-- Creates a neon part used for visual feedback during the movement drag/preview
 updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
@@ -419,6 +453,8 @@ local previewArrow = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.ne
 local slotDots     = {}
 local activeDots   = 0
 
+-->>>>>>>>>>>>
+-- Maintains a pool of parts to show formation dots without constant instancing
 local function ensurePool(needed)
 	while #slotDots < needed do
 		slotDots[#slotDots + 1] = createPreviewPart(DOT_COLOR, DOT_SIZE)
@@ -426,6 +462,8 @@ local function ensurePool(needed)
 end
 
 local function showDots(slots)
+-->>>>>>>>>>>>
+-- Positions and reveals the formation dots based on calculated slot positions
 	ensurePool(#slots)
 	for i, slotCF in ipairs(slots) do
 		slotDots[i].CFrame       = slotCF
@@ -437,6 +475,8 @@ local function showDots(slots)
 	activeDots = #slots
 end
 
+-->>>>>>>>>>>>
+-- Positions the "Facing" arrow in front of the formation preview
 local function setArrow(centre, facing, depth)
 	local arrowLen      = math.clamp(depth * 0.3, 2, 6)
 	previewArrow.Size   = Vector3.new(0.4, 0.4, arrowLen)
@@ -447,12 +487,16 @@ local function setArrow(centre, facing, depth)
 	previewArrow.Transparency = 0
 end
 
+-->>>>>>>>>>>>
+-- Hides all preview elements (dots and arrow)
 local function hidePreview()
 	for i = 1, activeDots do slotDots[i].Transparency = 1 end
 	activeDots = 0
 	previewArrow.Transparency = 1
 end
 
+-->>>>>>>>>>>>
+-- Creates a temporary visual "ghost" formation that fades out after an order is given
 local function spawnFadeDots(slots, anchor, facing, depth)
 	local fadeInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 	for _, slotCF in ipairs(slots) do
@@ -476,6 +520,8 @@ local function spawnFadeDots(slots, anchor, facing, depth)
 	t2.Completed:Connect(function() a:Destroy() end)
 end
 
+-->>>>>>>>>>>>
+-- Interfaces with RegimentFormation module to calculate slot data for the preview
 local function buildSlots(leftAnchor, dir, count, mag)
 	local ranks, files = RegimentFormation.dragToLayout(count, mag)
 	local width, depth = RegimentFormation.getPreviewSize(ranks, files)
@@ -486,6 +532,8 @@ local function buildSlots(leftAnchor, dir, count, mag)
 	return slots, rankCentre, facing, ranks, files, width, depth
 end
 
+-->>>>>>>>>>>>
+-- Utility to get the world position of the mouse on the terrain/floor
 local function raycastMouse()
 	local pos    = UserInputService:GetMouseLocation()
 	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)

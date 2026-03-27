@@ -1,8 +1,9 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_SERVER
--- Version 3.0.0
--- Now supports up to 4 independent companies per player.
--- Chat command: /spawn <nc> <n>  (nc = companies 1-4, n = bots per company)
+-- Version 3.1.0
+-- Description: 
+-- Coordinates NPC AI states (Wander/Regiment), handles network replication 
+-- with distance-based culling, and manages player-owned companies.
 -->>>>>>>>>>>>
 
 local RunService        = game:GetService("RunService")
@@ -44,17 +45,23 @@ local farLastSent  = {}   -- [Player] = { [shortId] = os.clock() }
 local companies = {}
 
 -- ── Helpers ───────────────────────────────────────────────────────────
+-->>>>>>>>>>>>
+-- Generates a random Vector3 within a donut-shaped area on the XZ plane
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
 	local dist  = minDist + math.random() * (radius - minDist)
 	return Vector3.new(center.X + math.cos(angle) * dist, center.Y, center.Z + math.sin(angle) * dist)
 end
 
+-->>>>>>>>>>>>
+-- Extracts the Y-axis rotation (Yaw) from a CFrame
 local function getYaw(cf)
 	local _, y, _ = cf:ToEulerAnglesYXZ()
 	return y
 end
 
+-->>>>>>>>>>>>
+-- Determines if an NPC has moved or rotated enough to justify a network update
 local function cfChanged(cf, lastCF)
 	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then return true end
 	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then return true end
@@ -68,10 +75,14 @@ local function getPlayerRootPos(player)
 	return root and root.Position or nil
 end
 
+-->>>>>>>>>>>>
+-- Formats NPC data into a compact table for network transmission
 local function makeBatchEntry(shortId, cf)
 	return { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
 end
 
+-->>>>>>>>>>>>
+-- Splits large lists of NPC updates into smaller chunks to prevent network buffer overflows
 local function fireChunked(player, timestamp, entries)
 	for i = 1, #entries, CHUNK_SIZE do
 		local chunk = {}
@@ -83,6 +94,8 @@ local function fireChunked(player, timestamp, entries)
 	end
 end
 
+-->>>>>>>>>>>>
+-- Commands an idle NPC to walk to a new random location within the wander zone
 local function pickNewTarget(npc)
 	npc.Target       = randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN)
 	npc.LastMoveTime = os.clock()
@@ -90,6 +103,8 @@ local function pickNewTarget(npc)
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
+-->>>>>>>>>>>>
+-- Creates a new NPC entity, sets network ownership to server, and registers it in the system
 local function spawnNpc(spawnCF: CFrame?)
 	local shortId   = nextShortId
 	nextShortId     = nextShortId + 1
@@ -160,6 +175,8 @@ end
 
 -- ── Company Management ────────────────────────────────────────────────
 
+-->>>>>>>>>>>>
+-- Sends the current state of a player's companies to their client
 local function syncCompanies(player: Player)
 	local playerCompanies = companies[player]
 	local data = {}
@@ -176,6 +193,8 @@ local function syncCompanies(player: Player)
 	Network.NpcCompanySync.Fire(player, data)
 end
 
+-->>>>>>>>>>>>
+-- Destroys all NPCs associated with a specific company index for a player
 local function despawnCompany(player: Player, companyIndex: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
@@ -206,6 +225,8 @@ local function despawnAllCompanies(player: Player)
 end
 
 -- Spawns nc companies of n bots each, side-by-side centered in front of the player.
+-->>>>>>>>>>>>
+-- Logic for bulk-spawning multiple companies in a line based on player facing direction
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
 	botCount     = math.clamp(botCount, 1, MAX_BOTS)
@@ -261,6 +282,8 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	print(string.format("[NPC] %s spawned %d companies × %d bots each", player.Name, companyCount, botCount))
 end
 
+-->>>>>>>>>>>>
+-- Moves an existing company into a new formation at a target position
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
@@ -295,6 +318,8 @@ end
 
 -- ── Remote Handlers ───────────────────────────────────────────────────
 
+-->>>>>>>>>>>>
+-- Handles new players joining and sends them the initial state of all existing NPCs
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
@@ -331,6 +356,8 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- ── Chat: /spawn <nc> <n> ─────────────────────────────────────────────
+-->>>>>>>>>>>>
+-- Parses chat commands to allow players to spawn their army
 local function hookChat(player: Player)
 	player.Chatted:Connect(function(msg: string)
 		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$")
@@ -352,6 +379,8 @@ for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
 local nearAccum = 0
 local farAccum  = 0
 
+-->>>>>>>>>>>>
+-- Main replication loop. Handles distance culling and dirty-state broadcasting.
 RunService.Heartbeat:Connect(function(dt)
 	nearAccum += dt
 	farAccum  += dt
