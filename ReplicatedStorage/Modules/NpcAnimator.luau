@@ -36,7 +36,7 @@ function NpcAnimator.new(model: Model)
 	self._prevPos   = root.Position
 	self._isWalking = false
 
-	-- Set priorities so they don't fight each other
+	-- priorities
 	self._trackIdle.Priority = Enum.AnimationPriority.Core
 	self._trackWalk.Priority = Enum.AnimationPriority.Core
 
