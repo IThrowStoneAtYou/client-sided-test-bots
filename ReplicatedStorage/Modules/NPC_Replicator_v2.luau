@@ -153,13 +153,9 @@ function NpcReplicator:Destroy()
 	end
 	self.Connections = {}
 	
-	-->>>>>>>>>>>>
-	-- These lines below are optional. can re-enable it if dont want to destroy entity manually
-	-->>>>>>>>>>>>
-	
-	--[[if self.Client then
+	if self.Client then
 		self.Client:Destroy()
-	end]]
+	end
 	
 	self.Snapshots = nil
 end

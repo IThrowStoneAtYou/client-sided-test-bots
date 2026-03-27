@@ -11,6 +11,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local Players          = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
 
 -- ── Modules ───────────────────────────────────────────────────────────
 local NpcReplicator     = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
@@ -60,7 +61,6 @@ local function registerNpc(shortId, pos, yaw)
 
 	-- Animator created after rep so the model is already parented to Npc_Registry
 	animators[shortId]     = NpcAnimator.new(clientModel)
-	myRegimentCount        += 1
 end
 
 -- ── Wire all handlers FIRST, then signal ready ────────────────────────
@@ -100,6 +100,12 @@ EvtDespawned.OnClientEvent:Connect(function(shortId)
 	end
 end)
 
+-- Synchronize regiment count from server
+-- This ensures myRegimentCount only reflects bots controlled by the local player
+EvtOrder.OnClientEvent:Connect(function(newCount)
+	myRegimentCount = newCount
+end)
+
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -117,6 +123,7 @@ local function createPreviewPart(color: Color3, size: Vector3)
 	local p = Instance.new("Part")
 	p.Anchored     = true
 	p.CanCollide   = false
+	p.CanQuery     = false
 	p.CastShadow   = false
 	p.Material     = Enum.Material.Neon
 	p.Color        = color
@@ -168,6 +175,35 @@ local function hidePreview()
 	end
 	activeDots = 0
 	previewArrow.Transparency = 1
+end
+
+-- Spawns temporary dots at final positions that fade away
+local function spawnFadeDots(slots: {CFrame}, anchor: Vector3, facing: Vector3, depth: number)
+	local fadeInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+	
+	for _, slotCF in ipairs(slots) do
+		local p = createPreviewPart(DOT_COLOR, DOT_SIZE)
+		p.CFrame = slotCF
+		p.Transparency = 0.3
+		
+		local tween = TweenService:Create(p, fadeInfo, {Transparency = 1, Size = DOT_SIZE * 0.5})
+		tween:Play()
+		
+		tween.Completed:Connect(function() p:Destroy() end)
+	end
+
+	-- Also create a fading arrow to show final facing direction
+	local arrowLen = math.clamp(depth * 0.3, 2, 6)
+	local a = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, arrowLen))
+	a.CFrame = CFrame.lookAt(
+		anchor + facing * (arrowLen / 2 + 0.5),
+		anchor + facing * (arrowLen / 2 + 0.5) + facing
+	)
+	a.Transparency = 0
+	
+	local aTween = TweenService:Create(a, fadeInfo, {Transparency = 1})
+	aTween:Play()
+	aTween.Completed:Connect(function() a:Destroy() end)
 end
 
 -- ── Shared slot computation ───────────────────────────────────────────
@@ -231,7 +267,10 @@ UserInputService.InputChanged:Connect(function(input)
 
     local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
     local mag   = delta.Magnitude
-    if mag < DRAG_THRESHOLD then return end
+    if mag < DRAG_THRESHOLD then
+        hidePreview()
+        return
+    end
 
     dragDir = delta.Unit
 
@@ -264,25 +303,37 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
         return
     end
 
+    local finalSlots = {}
+    local finalAnchor, finalFacing, finalRanks, finalFiles, finalDepth
+
     if dragDir then
         local hit = raycastMouse()
         local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
         
-        local _, rankCentre, facingFinal, ranks, files =
+        local slots, rankCentre, facingFinal, ranks, files, _, depth =
             buildSlots(anchorPos, dragDir, count, delta.Magnitude)
 
-        lastRanks = ranks
-        lastFiles = files
-
-        EvtOrder:FireServer(rankCentre, facingFinal, ranks, files)
+        finalSlots, finalAnchor, finalFacing, finalRanks, finalFiles, finalDepth = 
+            slots, rankCentre, facingFinal, ranks, files, depth
     else
         -- Plain click — click point is centre, reuse last layout
         local look      = camera.CFrame.LookVector
-        local facingDir = Vector3.new(look.X, 0, look.Z)
-        facingDir       = facingDir.Magnitude > 0.01 and facingDir.Unit or Vector3.new(0, 0, -1)
-
-        EvtOrder:FireServer(anchorPos, facingDir, lastRanks, lastFiles)
+        finalFacing     = Vector3.new(look.X, 0, look.Z)
+        finalFacing     = finalFacing.Magnitude > 0.01 and finalFacing.Unit or Vector3.new(0, 0, -1)
+        finalAnchor     = anchorPos
+        finalRanks, finalFiles = lastRanks, lastFiles
+        local _, depth  = RegimentFormation.getPreviewSize(finalRanks, finalFiles)
+        finalDepth      = depth
+        
+        local anchorCF  = CFrame.lookAt(finalAnchor, finalAnchor + finalFacing)
+        finalSlots      = RegimentFormation.getSlots(anchorCF, count, finalRanks, finalFiles)
     end
+
+    lastRanks = finalRanks
+    lastFiles = finalFiles
+    
+    spawnFadeDots(finalSlots, finalAnchor, finalFacing, finalDepth)
+    EvtOrder:FireServer(finalAnchor, finalFacing, finalRanks, finalFiles)
 
     anchorPos = nil
     dragDir   = nil

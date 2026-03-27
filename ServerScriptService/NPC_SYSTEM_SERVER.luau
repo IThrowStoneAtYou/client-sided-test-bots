@@ -246,6 +246,10 @@ local function spawnRegiment(player: Player, count: number)
 		ranks    = ranks,
 		files    = files,
 	}
+	
+	-- Notify the owner of their actual regiment size to keep previews accurate
+	-- Using EvtOrder as a simple way to sync size back to the specific client
+	EvtOrder:FireClient(player, count)
 
 	print(string.format("[NpcSystem] %s spawned %d bots (%dr × %df)",
 		player.Name, count, ranks, files))
