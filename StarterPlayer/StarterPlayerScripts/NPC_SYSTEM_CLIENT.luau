@@ -1,29 +1,48 @@
 -->>>>>>>>>>>>
--- NPC_CLIENT (Client) — ready-gated
+-- NPC_SYSTEM_CLIENT
+-- Handles client-side rendering, network interpolation, and the UX for
+-- commanding regiments (visual previews and input handling).
+--
+-- The system uses "Replicators" to smooth out server movement via snapshots
+-- and "Animators" to drive procedural animations based on local velocity.
 -->>>>>>>>>>>>
 
+-- ── Services ──────────────────────────────────────────────────────────
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Players          = game:GetService("Players")
 
-local NpcReplicator = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
-local NpcAnimator = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
+-- ── Modules ───────────────────────────────────────────────────────────
+local NpcReplicator     = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
+local NpcAnimator       = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
+local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
 
+-- ── Configuration & Assets ────────────────────────────────────────────
 local CLIENT_MODEL  = ReplicatedStorage:WaitForChild("CLIENT")
+local DRAG_THRESHOLD = 3      -- Studs mouse must move to trigger "drag" mode
+local DOT_SIZE       = Vector3.new(1.2, 0.3, 1.2)
+local DOT_COLOR      = Color3.fromRGB(255, 215, 60)
 
+-- ── Remotes ───────────────────────────────────────────────────────────
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 local EvtBatch     = Remotes:WaitForChild("NpcBatch")
 local EvtReady     = Remotes:WaitForChild("NpcReady")
+local EvtOrder     = Remotes:WaitForChild("NpcOrder")
+
+-- ── State Variables ───────────────────────────────────────────────────
+local localPlayer = Players.LocalPlayer
+local camera      = workspace.CurrentCamera
+local replicators = {}    -- [shortId] = NpcReplicator instance
+local animators   = {}    -- [shortId] = NpcAnimator instance
+local myRegimentCount = 0
 
 if not workspace:FindFirstChild("Npc_Registry") then
 	local folder  = Instance.new("Folder")
 	folder.Name   = "Npc_Registry"
 	folder.Parent = workspace
 end
-
-local replicators = {}
-
-local animators = {}  -- [shortId] = NpcAnimator
 
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
@@ -40,7 +59,8 @@ local function registerNpc(shortId, pos, yaw)
 	replicators[shortId] = rep
 
 	-- Animator created after rep so the model is already parented to Npc_Registry
-	animators[shortId] = NpcAnimator.new(clientModel)
+	animators[shortId]     = NpcAnimator.new(clientModel)
+	myRegimentCount        += 1
 end
 
 -- ── Wire all handlers FIRST, then signal ready ────────────────────────
@@ -79,6 +99,195 @@ EvtDespawned.OnClientEvent:Connect(function(shortId)
 		animators[shortId] = nil
 	end
 end)
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function updateRayFilter()
+	rayParams.FilterDescendantsInstances = {
+		workspace:WaitForChild("Npc_Registry"),
+		localPlayer.Character,
+	}
+end
+updateRayFilter()
+localPlayer.CharacterAdded:Connect(updateRayFilter)
+
+-- ── Preview parts ─────────────────────────────────────────────────────
+local function createPreviewPart(color: Color3, size: Vector3)
+	local p = Instance.new("Part")
+	p.Anchored     = true
+	p.CanCollide   = false
+	p.CastShadow   = false
+	p.Material     = Enum.Material.Neon
+	p.Color        = color
+	p.Size         = size
+	p.Transparency = 1
+	p.Parent       = workspace
+	return p
+end
+
+-- Arrow at centre-front showing facing direction
+local previewArrow = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
+
+-- Pool of slot dots — grown on demand, never shrunk (Parts are cheap hidden)
+local slotDots  = {}
+local activeDots = 0
+
+local function ensurePool(needed: number)
+	while #slotDots < needed do
+		slotDots[#slotDots + 1] = createPreviewPart(DOT_COLOR, DOT_SIZE)
+	end
+end
+
+local function showDots(slots: {CFrame})
+	ensurePool(#slots)
+	for i, slotCF in ipairs(slots) do
+		slotDots[i].CFrame       = slotCF
+		slotDots[i].Transparency = 0.3
+	end
+	-- Hide any extras from a previous larger formation
+	for i = #slots + 1, activeDots do
+		slotDots[i].Transparency = 1
+	end
+	activeDots = #slots
+end
+
+local function setArrow(centre: Vector3, facing: Vector3, depth: number)
+	local arrowLen = math.clamp(depth * 0.3, 2, 6)
+	previewArrow.Size   = Vector3.new(0.4, 0.4, arrowLen)
+	previewArrow.CFrame = CFrame.lookAt(
+		centre + facing * (arrowLen / 2 + 0.5),
+		centre + facing * (arrowLen / 2 + 0.5) + facing
+	)
+	previewArrow.Transparency = 0
+end
+
+local function hidePreview()
+	for i = 1, activeDots do
+		slotDots[i].Transparency = 1
+	end
+	activeDots = 0
+	previewArrow.Transparency = 1
+end
+
+-- ── Shared slot computation ───────────────────────────────────────────
+local function buildSlots(leftAnchor: Vector3, dir: Vector3, count: number, mag: number)
+	local ranks, files = RegimentFormation.dragToLayout(count, mag)
+	local width, depth = RegimentFormation.getPreviewSize(ranks, files)
+
+	local facing     = Vector3.new(dir.Z, 0, -dir.X)
+	local rankCentre = leftAnchor + dir * (width / 2)
+	local anchorCF   = CFrame.lookAt(rankCentre, rankCentre + facing)
+	local slots      = RegimentFormation.getSlots(anchorCF, count, ranks, files)
+
+	return slots, rankCentre, facing, ranks, files, width, depth
+end
+
+-- ── Raycast helper ────────────────────────────────────────────────────
+local function raycastMouse(): Vector3?
+	local pos    = UserInputService:GetMouseLocation()
+	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
+	local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
+	return result and result.Position or nil
+end
+
+-- ── Drag state ────────────────────────────────────────────────────────
+local dragActive = false
+local anchorPos  = nil
+local dragDir    = nil
+local facingDir  = nil
+local dragRanks  = 1
+local dragFiles  = 1
+
+-- [FIX 1] Persist ranks/files across plain clicks
+local lastRanks  = 1
+local lastFiles  = 1
+
+local function getCount(): number
+	return myRegimentCount  -- tracked earlier in registerNpc
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+    local hit = raycastMouse()
+    if not hit then return end
+
+    dragActive = true
+    anchorPos  = hit
+    dragDir    = nil
+    dragRanks  = lastRanks
+    dragFiles  = lastFiles
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not dragActive then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    if not anchorPos then return end
+
+    local hit = raycastMouse()
+    if not hit then return end
+
+    local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
+    local mag   = delta.Magnitude
+    if mag < DRAG_THRESHOLD then return end
+
+    dragDir = delta.Unit
+
+    local count = getCount()
+    if count < 1 then return end
+
+    local slots, rankCentre, facing, ranks, files, _, depth =
+        buildSlots(anchorPos, dragDir, count, mag)
+
+    dragRanks = ranks
+    dragFiles = files
+
+    showDots(slots)
+    setArrow(rankCentre, facing, depth)
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if not dragActive then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+    dragActive = false
+    hidePreview()
+
+    if not anchorPos then return end
+
+    local count = getCount()
+    if count == 0 then
+        anchorPos = nil
+        dragDir   = nil
+        return
+    end
+
+    if dragDir then
+        local hit = raycastMouse()
+        local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
+        
+        local _, rankCentre, facingFinal, ranks, files =
+            buildSlots(anchorPos, dragDir, count, delta.Magnitude)
+
+        lastRanks = ranks
+        lastFiles = files
+
+        EvtOrder:FireServer(rankCentre, facingFinal, ranks, files)
+    else
+        -- Plain click — click point is centre, reuse last layout
+        local look      = camera.CFrame.LookVector
+        local facingDir = Vector3.new(look.X, 0, look.Z)
+        facingDir       = facingDir.Magnitude > 0.01 and facingDir.Unit or Vector3.new(0, 0, -1)
+
+        EvtOrder:FireServer(anchorPos, facingDir, lastRanks, lastFiles)
+    end
+
+    anchorPos = nil
+    dragDir   = nil
+end)
+
 
 -- Signal the server only after all handlers above are connected.
 -- This is what eliminates the "did you forget OnClientEvent?" drop warning.
