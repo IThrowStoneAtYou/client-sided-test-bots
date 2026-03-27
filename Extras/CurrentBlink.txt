@@ -24,16 +24,13 @@ event NpcBatch {
     From: Server,
     Type: Unreliable,
     Call: ManyAsync,
-
     Data: (f64, struct {
         id: u16,
         pos: vector<f32>,
         yaw: f32,
-
     }[])
 }
 
--- Reliable spawn event (server → clients)
 event NpcSpawn {
     From: Server,
     Type: Reliable,
@@ -41,32 +38,35 @@ event NpcSpawn {
     Data: NpcSpawnData
 }
 
--- Reliable despawn event (server → clients)
 event NpcDespawn {
-    From: Server,
-    Type: Reliable,
-    Call: ManyAsync,
-    Data: u16   -- shortId
-}
-
-event NpcOrderCommand {
-    From: Client,
-    Type: Reliable,
-    Call: ManyAsync,
-    Data: (vector, vector, u8, u8)
-}
-
--- Server → Client: regiment count (single value)
-event NpcRegimentCount {
     From: Server,
     Type: Reliable,
     Call: ManyAsync,
     Data: u16
 }
 
+-- companyIndex added as 5th value
+event NpcOrderCommand {
+    From: Client,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (vector, vector, u8, u8, u8)
+}
+
+-- Replaces NpcRegimentCount: full company list for this player
+event NpcCompanySync {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: struct {
+        index: u8,
+        count: u16,
+        slots: u16[]
+    }[]
+}
+
 event NpcReady {
     From: Client,
     Type: Reliable,
     Call: ManyAsync
-    -- no data needed
 }
