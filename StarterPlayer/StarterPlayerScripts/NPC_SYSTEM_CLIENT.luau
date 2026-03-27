@@ -29,7 +29,7 @@ local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 --local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 --local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 --local EvtBatch     = Remotes:WaitForChild("NpcBatch")
-local EvtReady     = Remotes:WaitForChild("NpcReady")
+--local EvtReady     = Remotes:WaitForChild("NpcReady")
 --local EvtOrder     = Remotes:WaitForChild("NpcOrder")
 
 local NpcPackets = require(game.ReplicatedStorage.Modules.NpcPackets)
@@ -92,9 +92,11 @@ end)
 Network.NpcDespawn.On(function(shortId)
 	local rep = replicators[shortId]
 	if not rep then return end
+	
 	if rep.Client then
 		rep.Client:Destroy()
 	end
+	
 	rep:Destroy()
 	replicators[shortId] = nil
 
@@ -120,6 +122,7 @@ local function updateRayFilter()
 		localPlayer.Character,
 	}
 end
+
 updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
@@ -130,11 +133,13 @@ local function createPreviewPart(color: Color3, size: Vector3)
 	p.CanCollide   = false
 	p.CanQuery     = false
 	p.CastShadow   = false
+	
 	p.Material     = Enum.Material.Neon
 	p.Color        = color
 	p.Size         = size
 	p.Transparency = 1
 	p.Parent       = workspace.Client_Preview_Dots
+	
 	return p
 end
 
@@ -238,6 +243,7 @@ local function raycastMouse(): Vector3?
 	local pos    = UserInputService:GetMouseLocation()
 	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
+	
 	return result and result.Position or nil
 end
 
@@ -296,8 +302,7 @@ UserInputService.InputChanged:Connect(function(input)
 	local count = getCount()
 	if count < 1 then return end
 
-	local slots, rankCentre, facing, ranks, files, _, depth =
-		buildSlots(anchorPos, dragDir, count, mag)
+	local slots, rankCentre, facing, ranks, files, _, depth = buildSlots(anchorPos, dragDir, count, mag)
 
 	dragRanks = ranks
 	dragFiles = files
@@ -331,8 +336,7 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
 		local hit = raycastMouse()
 		local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
 
-		local slots, rankCentre, facingFinal, ranks, files, _, depth =
-			buildSlots(anchorPos, dragDir, count, delta.Magnitude)
+		local slots, rankCentre, facingFinal, ranks, files, _, depth = buildSlots(anchorPos, dragDir, count, delta.Magnitude)
 
 		finalSlots, finalAnchor, finalFacing, finalRanks, finalFiles, finalDepth = 
 			slots, rankCentre, facingFinal, ranks, files, depth
@@ -364,4 +368,4 @@ end)
 
 -- Signal the server only after all handlers above are connected.
 -- This is what eliminates the "did you forget OnClientEvent?" drop warning.
-EvtReady:FireServer()
+Network.NpcReady.Fire()

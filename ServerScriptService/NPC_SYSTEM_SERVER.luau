@@ -23,7 +23,7 @@ local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 --local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 --local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 --local EvtBatch     = Remotes:WaitForChild("NpcBatch")       -- UnreliableRemoteEvent
-local EvtReady     = Remotes:WaitForChild("NpcReady")
+--local EvtReady     = Remotes:WaitForChild("NpcReady")
 --local EvtOrder     = Remotes:WaitForChild("NpcOrder")
 
 
@@ -283,8 +283,7 @@ local function spawnRegiment(player: Player, count: number)
 	-- Using EvtOrder as a simple way to sync size back to the specific client
 	Network.NpcRegimentCount.Fire(player, count)
 	
-	print(string.format("[NpcSystem] %s spawned %d bots (%dr × %df)",
-		player.Name, count, ranks, files))
+	print(string.format("%s spawned %d bots (%dr × %df)", player.Name, count, ranks, files))
 end
 
 -- Issues new slot positions to every bot in the regiment.
@@ -326,7 +325,7 @@ end
 
 -- Client fires NpcReady once all its OnClientEvent handlers are wired.
 -- Server responds with a batch of all currently live NPCs.
-EvtReady.OnServerEvent:Connect(function(player)
+Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
 
@@ -341,7 +340,7 @@ EvtReady.OnServerEvent:Connect(function(player)
 			})
 		end
 	end
-	
+
 	if #batchList > 0 then
 		Network.NpcSpawn.Fire(player, {
 			Type = "Batch",
@@ -402,9 +401,11 @@ RunService.Heartbeat:Connect(function(dt)
 	-- Determine which update tier to run this frame
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
+	
 	if not doNear and not doFar then return end
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
+	
 	local timestamp = workspace:GetServerTimeNow()
 	local deadIds   = {}
 
@@ -441,6 +442,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if not farLastSent[player] then
 			farLastSent[player] = {}
 		end
+		
 		local playerFarSent = farLastSent[player]
 
 		local nearList = {}
@@ -487,6 +489,7 @@ RunService.Heartbeat:Connect(function(dt)
 				farLastSent[player][shortId] = nil
 			end
 		end
+		
 		activeNpcs[shortId] = nil
 	end
 end)
