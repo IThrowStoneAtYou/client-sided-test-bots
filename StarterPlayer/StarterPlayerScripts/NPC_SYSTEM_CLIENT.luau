@@ -597,4 +597,5 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+-- this to avoid the server firing the event before the client is ready, and causing issues.
 Network.NpcReady.Fire()
