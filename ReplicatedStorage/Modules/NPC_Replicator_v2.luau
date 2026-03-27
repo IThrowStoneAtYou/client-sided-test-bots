@@ -21,7 +21,7 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.Root = clientModel:WaitForChild("HumanoidRootPart")
 
 	self.Snapshots = {}
-	self.BufferTime = 0.1
+	self.BufferTime = 0.3	--0.1
 	self.MaxBuffer = 20
 	self.MaxExtrapolation = 0.4 --0.25
 
@@ -152,6 +152,10 @@ function NpcReplicator:Destroy()
 		conn:Disconnect()
 	end
 	self.Connections = {}
+	
+	-->>>>>>>>>>>>
+	-- These lines below are optional. can re-enable it if dont want to destroy entity manually
+	-->>>>>>>>>>>>
 	
 	if self.Client then
 		self.Client:Destroy()

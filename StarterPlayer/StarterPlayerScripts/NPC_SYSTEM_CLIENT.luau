@@ -32,7 +32,6 @@ local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 --local EvtReady     = Remotes:WaitForChild("NpcReady")
 --local EvtOrder     = Remotes:WaitForChild("NpcOrder")
 
-local NpcPackets = require(game.ReplicatedStorage.Modules.NpcPackets)
 local Network = require(game.ReplicatedStorage.Blink.Client)
 
 -- ── State Variables ───────────────────────────────────────────────────
@@ -117,10 +116,15 @@ local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 local function updateRayFilter()
-	rayParams.FilterDescendantsInstances = {
-		workspace:WaitForChild("Npc_Registry"),
-		localPlayer.Character,
+	local list = {
+		workspace:WaitForChild("Npc_Registry")
 	}
+
+	if localPlayer.Character then
+		table.insert(list, localPlayer.Character)
+	end
+
+	rayParams.FilterDescendantsInstances = list
 end
 
 updateRayFilter()

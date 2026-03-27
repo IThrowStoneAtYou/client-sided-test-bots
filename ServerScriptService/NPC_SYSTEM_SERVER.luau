@@ -26,8 +26,6 @@ local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 --local EvtReady     = Remotes:WaitForChild("NpcReady")
 --local EvtOrder     = Remotes:WaitForChild("NpcOrder")
 
-
-local NpcPackets = require(game.ReplicatedStorage.Modules.NpcPackets)
 local Network = require(game.ReplicatedStorage.Blink.Server)
 
 -- ── Modules ───────────────────────────────────────────────────────────
@@ -352,6 +350,7 @@ end)
 -- Client fires NpcOrder on left-click (move) or drag-release (reshape).
 -- anchorPos = centre of front rank, facingDir = unit facing vector.
 Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files)
+	if not regiments[player] then return end
 	if typeof(anchorPos) ~= "Vector3" then return end
 	if typeof(facingDir) ~= "Vector3" then return end
 	if anchorPos.Magnitude > 10000 then return end
@@ -474,10 +473,12 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if #nearList > 0 then 
 			fireChunked(player, timestamp, nearList) 
+		--	print("near")
 		end
 
 		if #farList  > 0 then
 			fireChunked(player, timestamp, farList) 
+		--	print("farList")
 		end
 	end
 
