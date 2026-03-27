@@ -18,12 +18,17 @@ local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- ── Networking Remotes ────────────────────────────────────────────────
+
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
-local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
-local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
-local EvtBatch     = Remotes:WaitForChild("NpcBatch")       -- UnreliableRemoteEvent
+--local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
+--local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
+--local EvtBatch     = Remotes:WaitForChild("NpcBatch")       -- UnreliableRemoteEvent
 local EvtReady     = Remotes:WaitForChild("NpcReady")
-local EvtOrder     = Remotes:WaitForChild("NpcOrder")
+--local EvtOrder     = Remotes:WaitForChild("NpcOrder")
+
+
+local NpcPackets = require(game.ReplicatedStorage.Modules.NpcPackets)
+local Network = require(game.ReplicatedStorage.Blink.Server)
 
 -- ── Modules ───────────────────────────────────────────────────────────
 local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
@@ -95,13 +100,28 @@ local function getPlayerRootPos(player)
 	return root and root.Position or nil
 end
 
+local function makeBatchEntry(shortId, cf)
+	return {
+		id = shortId,
+		pos = cf.Position,
+		yaw = getYaw(cf),
+	}
+end
+
 local function fireChunked(player, timestamp, entries)
 	for i = 1, #entries, CHUNK_SIZE do
 		local chunk = {}
+
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
-			chunk[#chunk + 1] = entries[j]
+			local entry = entries[j]
+			chunk[#chunk + 1] = {
+				id = entry.id,
+				pos = entry.pos,
+				yaw = entry.yaw,
+			}
 		end
-		EvtBatch:FireClient(player, timestamp, chunk)
+
+		Network.NpcBatch.Fire(player, timestamp, chunk)
 	end
 end
 
@@ -125,10 +145,10 @@ local function spawnNpc(spawnCF: CFrame?)
 	-- Clients render their own CLIENT model clone via NpcReplicator.
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.LocalTransparencyModifier = 1
+		--	part.LocalTransparencyModifier = 1
 		end
 	end
-
+	
 	local root     = model:WaitForChild("HumanoidRootPart")
 	local humanoid = model:WaitForChild("Humanoid")
 	humanoid.WalkSpeed = WALK_SPEED
@@ -138,7 +158,14 @@ local function spawnNpc(spawnCF: CFrame?)
 	)
 
 	root.CFrame  = cf
-	model.Parent = workspace
+	model.Parent = workspace.Npc_Registry_Server
+	
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			--	part.LocalTransparencyModifier = 1
+			part:SetNetworkOwner(nil)
+		end
+	end
 
 	local npc = {
 		ShortId        = shortId,
@@ -180,7 +207,12 @@ local function spawnNpc(spawnCF: CFrame?)
 	activeNpcs[shortId] = npc
 
 	for player in pairs(readyPlayers) do
-		EvtSpawned:FireClient(player, shortId, cf.Position, getYaw(cf))
+		Network.NpcSpawn.Fire(player, {
+			Type = "Single",
+			id = shortId,
+			pos = cf.Position,
+			yaw = getYaw(cf)
+		})
 	end
 
 	return npc
@@ -196,7 +228,7 @@ local function despawnRegiment(player: Player)
 	for _, shortId in ipairs(regiment.slots) do
 		if activeNpcs[shortId] then
 			for p in pairs(readyPlayers) do
-				EvtDespawned:FireClient(p, shortId)
+				Network.NpcDespawn.Fire(p, shortId)
 				if farLastSent[p] then
 					farLastSent[p][shortId] = nil
 				end
@@ -246,11 +278,11 @@ local function spawnRegiment(player: Player, count: number)
 		ranks    = ranks,
 		files    = files,
 	}
-	
+
 	-- Notify the owner of their actual regiment size to keep previews accurate
 	-- Using EvtOrder as a simple way to sync size back to the specific client
-	EvtOrder:FireClient(player, count)
-
+	Network.NpcRegimentCount.Fire(player, count)
+	
 	print(string.format("[NpcSystem] %s spawned %d bots (%dr × %df)",
 		player.Name, count, ranks, files))
 end
@@ -274,7 +306,9 @@ local function orderRegiment(player: Player, anchorPos: Vector3, facingDir: Vect
 
 	for i, shortId in ipairs(regiment.slots) do
 		local npc = activeNpcs[shortId]
-		if not (npc and npc.Model and npc.Model.Parent) then continue end
+		if not (npc and npc.Model and npc.Model.Parent) then
+			continue
+		end
 
 		npc.RegimentTarget = slots[i].Position
 		npc.MoveRetries    = 0
@@ -296,27 +330,32 @@ EvtReady.OnServerEvent:Connect(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
 
-	local batch = {}
+	local batchList = {}
 	for shortId, npc in pairs(activeNpcs) do
 		if npc.Model and npc.Model.Parent then
 			local cf = npc.Root.CFrame
-			batch[#batch + 1] = { shortId, cf.Position, getYaw(cf) }
+			table.insert(batchList, {
+				id = shortId,
+				pos = cf.Position,
+				yaw = getYaw(cf)
+			})
 		end
 	end
-
-	if #batch > 0 then
-		EvtSpawned:FireClient(player, batch)
+	
+	if #batchList > 0 then
+		Network.NpcSpawn.Fire(player, {
+			Type = "Batch",
+			list = batchList
+		})
 	end
 end)
 
 -- Client fires NpcOrder on left-click (move) or drag-release (reshape).
 -- anchorPos = centre of front rank, facingDir = unit facing vector.
-EvtOrder.OnServerEvent:Connect(function(player, anchorPos, facingDir, ranks, files)
+Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files)
 	if typeof(anchorPos) ~= "Vector3" then return end
 	if typeof(facingDir) ~= "Vector3" then return end
-	if typeof(ranks)     ~= "number"  then return end
-	if typeof(files)     ~= "number"  then return end
-	if anchorPos.Magnitude > 10000    then return end
+	if anchorPos.Magnitude > 10000 then return end
 
 	orderRegiment(player, anchorPos, facingDir, math.floor(ranks), math.floor(files))
 end)
@@ -332,7 +371,9 @@ local function hookChat(player: Player)
 	player.Chatted:Connect(function(msg: string)
 		local raw = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s*$")
 		if not raw then return end
+		
 		local count = tonumber(raw)
+		
 		if count and count >= 1 then
 			spawnRegiment(player, count)
 		end
@@ -340,7 +381,9 @@ local function hookChat(player: Player)
 end
 
 Players.PlayerAdded:Connect(hookChat)
-for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
+for _, p in ipairs(Players:GetPlayers())do 
+	hookChat(p) 
+end
 
 -- ── Broadcast loop ────────────────────────────────────────────────────
 -- Runs on every Heartbeat, fires at NEAR_RATE and FAR_RATE independently.
@@ -382,11 +425,11 @@ RunService.Heartbeat:Connect(function(dt)
 		-- Snapshot capturing
 		local cf = npc.Root.CFrame
 		if doFar then
-			allFarEntries[#allFarEntries + 1] = { shortId, cf.Position, getYaw(cf) }
+			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
 		end
 
 		if doNear and cfChanged(cf, npc.LastSentCF) then
-			dirtyEntries[#dirtyEntries + 1] = { shortId, cf.Position, getYaw(cf) }
+			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
 			npc.LastSentCF = cf
 		end
 	end
@@ -406,7 +449,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if doNear then
 			for _, entry in ipairs(dirtyEntries) do
-				local dist = playerPos and (entry[2] - playerPos).Magnitude or 0
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0   -- use entry.pos
 				if dist <= CULL_RADIUS then
 					nearList[#nearList + 1] = entry
 				end
@@ -415,8 +458,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if doFar then
 			for _, entry in ipairs(allFarEntries) do
-				local sid  = entry[1]
-				local dist = playerPos and (entry[2] - playerPos).Magnitude or 0
+				local sid = entry.id                                                -- use entry.id
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0   -- use entry.pos
 				if dist > CULL_RADIUS then
 					local last = playerFarSent[sid] or 0
 					if now - last >= FAR_RATE * 0.9 then
@@ -427,14 +470,19 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 		end
 
-		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
-		if #farList  > 0 then fireChunked(player, timestamp, farList)  end
+		if #nearList > 0 then 
+			fireChunked(player, timestamp, nearList) 
+		end
+
+		if #farList  > 0 then
+			fireChunked(player, timestamp, farList) 
+		end
 	end
 
 	-- Clean up dead NPCs and notify all ready clients
 	for _, shortId in ipairs(deadIds) do
 		for player in pairs(readyPlayers) do
-			EvtDespawned:FireClient(player, shortId)
+			Network.NpcDespawn.Fire(player, shortId)
 			if farLastSent[player] then
 				farLastSent[player][shortId] = nil
 			end
