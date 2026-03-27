@@ -3,11 +3,15 @@
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Players          = game:GetService("Players")
+
+local localPlayer = Players.LocalPlayer
+local camera      = workspace.CurrentCamera
 
 local NpcReplicator = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
-
 
 local CLIENT_MODEL  = ReplicatedStorage:WaitForChild("CLIENT")
 
@@ -16,6 +20,7 @@ local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 local EvtBatch     = Remotes:WaitForChild("NpcBatch")
 local EvtReady     = Remotes:WaitForChild("NpcReady")
+local EvtOrder    = Remotes:WaitForChild("NpcOrder")
 
 if not workspace:FindFirstChild("Npc_Registry") then
 	local folder  = Instance.new("Folder")
@@ -85,14 +90,6 @@ EvtDespawned.OnClientEvent:Connect(function(shortId)
 	end
 end)
 
-
-local UserInputService = game:GetService("UserInputService")
-local Players          = game:GetService("Players")
-
-local EvtOrder    = Remotes:WaitForChild("NpcOrder")
-local localPlayer = Players.LocalPlayer
-local camera      = workspace.CurrentCamera
-
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -106,53 +103,84 @@ updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
 -- ── Preview parts ─────────────────────────────────────────────────────
-local function makePart(color: Color3, transparency: number)
+local function makePart(color: Color3, size: Vector3)
 	local p = Instance.new("Part")
-	p.Anchored      = true
-	p.CanCollide    = false
-	p.CastShadow    = false
-	p.Material      = Enum.Material.Neon
-	p.Color         = color
-	p.Transparency  = transparency
-	p.Parent        = workspace
+	p.Anchored     = true
+	p.CanCollide   = false
+	p.CastShadow   = false
+	p.Material     = Enum.Material.Neon
+	p.Color        = color
+	p.Size         = size
+	p.Transparency = 1
+	p.Parent       = workspace
 	return p
 end
 
--- Front rank line (gold, solid)
-local previewFront = makePart(Color3.fromRGB(255, 215, 60), 1)
--- Formation body rectangle (gold, semi-transparent)
-local previewBody  = makePart(Color3.fromRGB(255, 215, 60), 1)
--- Facing arrow nub (white)
-local previewArrow = makePart(Color3.fromRGB(255, 255, 255), 1)
+-- Arrow at centre-front showing facing direction
+local previewArrow = makePart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
 
-local function setPreview(anchor: Vector3, facing: Vector3, width: number, depth: number)
-	-- Front rank line: runs perpendicular to facing, centred on anchor
-	previewFront.Size  = Vector3.new(0.3, 0.3, width)
-	previewFront.CFrame = CFrame.lookAt(anchor, anchor + facing)
-		* CFrame.Angles(0, math.pi / 2, 0)
+-- Pool of slot dots — grown on demand, never shrunk (Parts are cheap hidden)
+local slotDots  = {}
+local activeDots = 0
 
-	-- Body rect: centred halfway back into the depth, same orientation
-	local bodyCenter = anchor + (-facing) * (depth / 2)
-	previewBody.Size  = Vector3.new(depth, 0.15, width)
-	previewBody.CFrame = CFrame.lookAt(bodyCenter, bodyCenter + facing)
-		* CFrame.Angles(0, math.pi / 2, 0)
+local DOT_SIZE  = Vector3.new(1.2, 0.3, 1.2)
+local DOT_COLOR = Color3.fromRGB(255, 215, 60)
 
-	-- Facing arrow: short nub sticking forward from anchor
-	previewArrow.Size  = Vector3.new(0.4, 0.4, math.min(4, depth * 0.3 + 1))
+local function ensurePool(needed: number)
+	while #slotDots < needed do
+		slotDots[#slotDots + 1] = makePart(DOT_COLOR, DOT_SIZE)
+	end
+end
+
+local function showDots(slots: {CFrame})
+	ensurePool(#slots)
+	for i, slotCF in ipairs(slots) do
+		slotDots[i].CFrame       = slotCF
+		slotDots[i].Transparency = 0.3
+	end
+	-- Hide any extras from a previous larger formation
+	for i = #slots + 1, activeDots do
+		slotDots[i].Transparency = 1
+	end
+	activeDots = #slots
+end
+
+local function setArrow(centre: Vector3, facing: Vector3, depth: number)
+	local arrowLen = math.clamp(depth * 0.3, 2, 6)
+	previewArrow.Size   = Vector3.new(0.4, 0.4, arrowLen)
 	previewArrow.CFrame = CFrame.lookAt(
-		anchor + facing * 2,
-		anchor + facing * 2 + facing
+		centre + facing * (arrowLen / 2 + 0.5),
+		centre + facing * (arrowLen / 2 + 0.5) + facing
 	)
-
-	previewFront.Transparency = 0
-	previewBody.Transparency  = 0.6
 	previewArrow.Transparency = 0
 end
 
 local function hidePreview()
-	previewFront.Transparency = 1
-	previewBody.Transparency  = 1
+	for i = 1, activeDots do
+		slotDots[i].Transparency = 1
+	end
+	activeDots = 0
 	previewArrow.Transparency = 1
+end
+
+-- ── Shared slot computation ───────────────────────────────────────────
+-- Returns slots + rankCentre given left-anchor, dragDir, count
+local function computeSlots(leftAnchor: Vector3, dragDirection: Vector3, count: number)
+	local ranks, files = RegimentFormation.dragToLayout(count, 0)
+	-- will be overridden by caller with real mag, this is just a safe default
+	return ranks, files
+end
+
+local function buildSlots(leftAnchor: Vector3, dir: Vector3, count: number, mag: number)
+	local ranks, files = RegimentFormation.dragToLayout(count, mag)
+	local width, depth = RegimentFormation.getPreviewSize(ranks, files)
+
+	local facing     = Vector3.new(dir.Z, 0, -dir.X)
+	local rankCentre = leftAnchor + dir * (width / 2)
+	local anchorCF   = CFrame.lookAt(rankCentre, rankCentre + facing)
+	local slots      = RegimentFormation.getSlots(anchorCF, count, ranks, files)
+
+	return slots, rankCentre, facing, ranks, files, width, depth
 end
 
 -- ── Raycast helper ────────────────────────────────────────────────────
@@ -181,91 +209,90 @@ local function getCount(): number
 end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if gameProcessed then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
-	local hit = raycastMouse()
-	if not hit then return end
+    local hit = raycastMouse()
+    if not hit then return end
 
-	dragActive = true
-	anchorPos  = hit
-	dragDir    = nil
-	-- Start from last known layout until drag overrides it
-	dragRanks  = lastRanks
-	dragFiles  = lastFiles
+    dragActive = true
+    anchorPos  = hit
+    dragDir    = nil
+    dragRanks  = lastRanks
+    dragFiles  = lastFiles
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-	if not anchorPos then return end
+    if not dragActive then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    if not anchorPos then return end
 
-	local hit = raycastMouse()
-	if not hit then return end
+    local hit = raycastMouse()
+    if not hit then return end
 
-	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
-	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then return end
+    local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
+    local mag   = delta.Magnitude
+    if mag < DRAG_THRESHOLD then return end
 
-	-- [FIX 2] Drag direction = right edge direction (the front rank line)
-	dragDir = delta.Unit
+    dragDir = delta.Unit
 
-	-- Facing = 90° clockwise from dragDir (soldiers face perpendicular to rank line)
-	-- If you drag right (+X), soldiers face forward (-Z)
-	local facingDir = Vector3.new(dragDir.Z, 0, -dragDir.X)
+    local count = getCount()
+    if count < 1 then return end
 
-	local count = getCount()
-	if count > 0 then
-		-- Width comes from drag magnitude
-		dragRanks, dragFiles = RegimentFormation.dragToLayout(count, mag)
-		local width, depth   = RegimentFormation.getPreviewSize(dragRanks, dragFiles)
+    local slots, rankCentre, facing, ranks, files, _, depth =
+        buildSlots(anchorPos, dragDir, count, mag)
 
-		-- [FIX 2] Preview is left-anchored not centred
-		-- Centre of front rank = anchorPos shifted right by half width
-		local rankCentre = anchorPos + dragDir * (width / 2)
-		setPreview(rankCentre, facingDir, width, depth)
-	end
+    dragRanks = ranks
+    dragFiles = files
+
+    showDots(slots)
+    setArrow(rankCentre, facing, depth)
 end)
 
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
-	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if not dragActive then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
-	dragActive = false
-	hidePreview()
+    dragActive = false
+    hidePreview()
 
-	if not anchorPos then return end
+    if not anchorPos then return end
 
-	local count = getCount()
-	if count == 0 then
-		anchorPos = nil
-		dragDir   = nil
-		return
-	end
+    local count = getCount()
+    if count == 0 then
+        anchorPos = nil
+        dragDir   = nil
+        return
+    end
 
-	if dragDir then
-		-- Drag occurred — derive facing from drag direction, update persisted layout
-		local facingDir  = Vector3.new(dragDir.Z, 0, -dragDir.X)
-		local width, _   = RegimentFormation.getPreviewSize(dragRanks, dragFiles)
-		local rankCentre = anchorPos + dragDir * (width / 2)
+    if dragDir then
+        local _, rankCentre, facing, ranks, files =
+            buildSlots(anchorPos, dragDir, count,
+                (raycastMouse() and (raycastMouse() - anchorPos) or Vector3.zero).Magnitude)
 
-		-- [FIX 1] Persist for next plain click
-		lastRanks = dragRanks
-		lastFiles = dragFiles
+        -- Use the values computed during last InputChanged (dragRanks/dragFiles)
+        -- since raycastMouse() on InputEnded is the same frame as the last move
+        local width, _ = RegimentFormation.getPreviewSize(dragRanks, dragFiles)
+        local facingFinal = Vector3.new(dragDir.Z, 0, -dragDir.X)
+        rankCentre = anchorPos + dragDir * (width / 2)
 
-		EvtOrder:FireServer(rankCentre, facingDir, dragRanks, dragFiles)
-	else
-		-- [FIX 1] Plain click — reuse last ranks/files, face camera direction
-		local look      = camera.CFrame.LookVector
-		local facingDir = Vector3.new(look.X, 0, look.Z)
-		facingDir       = facingDir.Magnitude > 0.01 and facingDir.Unit or Vector3.new(0, 0, -1)
+        lastRanks = dragRanks
+        lastFiles = dragFiles
 
-		EvtOrder:FireServer(anchorPos, facingDir, lastRanks, lastFiles)
-	end
+        EvtOrder:FireServer(rankCentre, facingFinal, dragRanks, dragFiles)
+    else
+        -- Plain click — click point is centre, reuse last layout
+        local look      = camera.CFrame.LookVector
+        local facingDir = Vector3.new(look.X, 0, look.Z)
+        facingDir       = facingDir.Magnitude > 0.01 and facingDir.Unit or Vector3.new(0, 0, -1)
 
-	anchorPos = nil
-	dragDir   = nil
+        EvtOrder:FireServer(anchorPos, facingDir, lastRanks, lastFiles)
+    end
+
+    anchorPos = nil
+    dragDir   = nil
 end)
+
 
 -- Signal the server only after all handlers above are connected.
 -- This is what eliminates the "did you forget OnClientEvent?" drop warning.

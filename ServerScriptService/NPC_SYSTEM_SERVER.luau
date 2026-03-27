@@ -1,66 +1,76 @@
 -->>>>>>>>>>>>
--- NPC_MANAGER (Server) — ready-gated + per-player distance culling
+-- NPC_SYSTEM_SERVER
+-- Manages server-side NPC lifecycle, regiment formation, and
+-- position broadcasting to all ready clients.
+--
+-- Architecture:
+--   activeNpcs   = flat table of every live NPC keyed by shortId
+--   regiments    = one entry per player, holds their slot list
+--   readyPlayers = set of players whose client handlers are wired
+--
+-- Broadcast runs two-tier:
+--   Near (≤CULL_RADIUS studs) → 20 hz, dirty-only
+--   Far  (> CULL_RADIUS studs) → 4 hz, all NPCs (keeps extrapolation alive)
 -->>>>>>>>>>>>
 
 local RunService        = game:GetService("RunService")
-local HttpService       = game:GetService("HttpService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- ── Remotes ──────────────────────────────────────────────────────────
+-- ── Remotes (created externally in a Script or folder) ────────────────
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
-local EvtBatch     = Remotes:WaitForChild("NpcBatch")
+local EvtBatch     = Remotes:WaitForChild("NpcBatch")       -- UnreliableRemoteEvent
 local EvtReady     = Remotes:WaitForChild("NpcReady")
-local EvtOrder 	   = Remotes:WaitForChild("NpcOrder")
+local EvtOrder     = Remotes:WaitForChild("NpcOrder")
 
--- ── Modules ────────────────────────────────────────────────────────────
+-- ── Modules ───────────────────────────────────────────────────────────
 local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
 
 -- ── Config ────────────────────────────────────────────────────────────
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
-local NPC_COUNT     = 350
 
+local WALK_SPEED    = 14
+local CHUNK_SIZE    = 12      -- NPCs per unreliable fire
+
+local NEAR_RATE     = 1 / 20  -- 20 hz for nearby NPCs
+local FAR_RATE      = 1 / 4   -- 4 hz keep-alive for distant NPCs
+local CULL_RADIUS   = 350     -- studs — near/far split boundary
+
+local DELTA_POS     = 0.08    -- studs — skip broadcast if moved less than this
+local DELTA_ROT     = 0.01    -- radians — skip broadcast if rotated less than this
+
+local MAX_SPAWN     = 1000    -- hard cap per /spawn command
+local SPAWN_OFFSET  = 16      -- studs in front of the player on /spawn
+
+local MOVE_RETRIES  = 5       -- max MoveTo retries before giving up on a stuck bot
+
+-- Wander config (for non-regiment bots if ever used)
 local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
 local WANDER_MIN    = 8
-
-local WALK_SPEED    = 14
-local UPDATE_RATE   = 1 / 20
 local IDLE_TIMEOUT  = 3
 
-local DELTA_POS     = 0.08
-local DELTA_ROT     = 0.01
-local CHUNK_SIZE    = 12
-
--- Only send NPCs within this distance of the player's character.
--- Set to math.huge to disable culling (e.g. small maps where all bots are visible).
-local NEAR_RATE     = 1 / 20   -- 20 hz for nearby NPCs
-local FAR_RATE      = 1 / 4    -- 4 hz keep-alive for distant NPCs
-local CULL_RADIUS   = 350      -- studs — near/far boundary
-
 -- ── State ─────────────────────────────────────────────────────────────
-local activeNpcs  = {}
-local nextShortId = 1
-local readyPlayers = {} -- [Player] = true; only populated after NpcReady fires
-local farLastSent = {}   -- [Player] = { [shortId] = number }
+local activeNpcs   = {}   -- [shortId] = npc table
+local nextShortId  = 1
 
--- [player] = {
---     formation : string,
---     anchorCF  : CFrame,
---     slots     : { shortId },   -- ordered; index = slot number
+local readyPlayers = {}   -- [Player] = true
+local farLastSent  = {}   -- [Player] = { [shortId] = os.clock() }
+
+-- regiments[player] = {
+--   anchorCF : CFrame,
+--   slots    : { shortId },  -- index matches formation slot
+--   ranks    : number,
+--   files    : number,
 -- }
 local regiments = {}
-
-local MAX_SPAWN     = 1000   -- hard cap per /spawn command
-local SPAWN_OFFSET  = 16    -- studs in front of the player the line appears
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
 	local dist  = minDist + math.random() * (radius - minDist)
-	
 	return Vector3.new(
 		center.X + math.cos(angle) * dist,
 		center.Y,
@@ -74,24 +84,15 @@ local function getYaw(cf)
 end
 
 local function cfChanged(cf, lastCF)
-	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then 
-		return true
-	end
-	
-	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then
-		return true
-	end
+	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then return true end
+	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then return true end
 	return false
 end
 
 local function getPlayerRootPos(player)
 	local char = player.Character
-	if not char then
-		return nil
-	end
-	
+	if not char then return nil end
 	local root = char:FindFirstChild("HumanoidRootPart")
-	
 	return root and root.Position or nil
 end
 
@@ -101,7 +102,6 @@ local function fireChunked(player, timestamp, entries)
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
 			chunk[#chunk + 1] = entries[j]
 		end
-		
 		EvtBatch:FireClient(player, timestamp, chunk)
 	end
 end
@@ -112,8 +112,9 @@ local function pickNewTarget(npc)
 	npc.Humanoid:MoveTo(npc.Target)
 end
 
--- ── Spawn ─────────────────────────────────────────────────────────────
-
+-- ── NPC Spawn ─────────────────────────────────────────────────────────
+-- spawnCF: if provided, bot is regiment-owned and placed at that CFrame.
+--          if nil, bot is a free wanderer.
 local function spawnNpc(spawnCF: CFrame?)
 	local shortId = nextShortId
 	nextShortId   = nextShortId + 1
@@ -121,6 +122,8 @@ local function spawnNpc(spawnCF: CFrame?)
 	local model = SERVER_MODEL:Clone()
 	model.Name  = "NPC_" .. shortId
 
+	-- Server models are invisible client-side.
+	-- Clients render their own CLIENT model clone via NpcReplicator.
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.LocalTransparencyModifier = 1
@@ -131,7 +134,6 @@ local function spawnNpc(spawnCF: CFrame?)
 	local humanoid = model:WaitForChild("Humanoid")
 	humanoid.WalkSpeed = WALK_SPEED
 
-	-- Use provided CFrame or fall back to random wander position
 	local cf = spawnCF or CFrame.new(
 		randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0, 4, 0)
 	)
@@ -140,32 +142,38 @@ local function spawnNpc(spawnCF: CFrame?)
 	model.Parent = workspace
 
 	local npc = {
-		ShortId      = shortId,
-		Model        = model,
-		Root         = root,
-		Humanoid     = humanoid,
-		LastMoveTime = 0,
-		LastSentCF   = cf,
-		IsRegiment   = spawnCF ~= nil,
+		ShortId        = shortId,
+		Model          = model,
+		Root           = root,
+		Humanoid       = humanoid,
+		LastMoveTime   = 0,
+		LastSentCF     = cf,
+		IsRegiment     = spawnCF ~= nil,
+		RegimentTarget = nil,   -- set by spawnRegiment / orderRegiment
+		MoveRetries    = 0,
 	}
 
+	-- MoveToFinished fires when Humanoid:MoveTo completes OR times out (8s).
+	-- reached=true  → arrived, reset retry counter
+	-- reached=false → Roblox timeout, re-issue same target up to MOVE_RETRIES times
 	humanoid.MoveToFinished:Connect(function(reached)
-		if npc.IsRegiment then
-			if not reached then
-				-- Timed out before arriving — re-issue the same destination
-				if npc.RegimentTarget then
-					humanoid:MoveTo(npc.RegimentTarget)
-					npc.LastMoveTime = os.clock()
-				end
-			end
-			-- reached == true means they arrived, nothing to do
-		else
+		if not npc.IsRegiment then
 			pickNewTarget(npc)
+			return
+		end
+
+		if reached then
+			npc.MoveRetries = 0
+		elseif npc.RegimentTarget then
+			npc.MoveRetries += 1
+			if npc.MoveRetries <= MOVE_RETRIES then
+				humanoid:MoveTo(npc.RegimentTarget)
+				npc.LastMoveTime = os.clock()
+			end
+			-- Beyond MOVE_RETRIES the bot stays put — it's stuck on geometry.
 		end
 	end)
 
-
-	-- Only wander if not part of a regiment (regiment handles its own MoveTo)
 	if not spawnCF then
 		pickNewTarget(npc)
 	end
@@ -179,14 +187,15 @@ local function spawnNpc(spawnCF: CFrame?)
 	return npc
 end
 
--- ── Regiment spawn ─────────────────────────────────────────────────────
+-- ── Regiment management ───────────────────────────────────────────────
+-- Fully removes a player's regiment: notifies all clients, destroys
+-- server models, cleans up activeNpcs and the regiment table entry.
 local function despawnRegiment(player: Player)
-	local old = regiments[player]
-	if not old then return end
+	local regiment = regiments[player]
+	if not regiment then return end
 
-	for _, shortId in ipairs(old.slots) do
+	for _, shortId in ipairs(regiment.slots) do
 		if activeNpcs[shortId] then
-			-- Notify all clients first, then remove server-side
 			for p in pairs(readyPlayers) do
 				EvtDespawned:FireClient(p, shortId)
 				if farLastSent[p] then
@@ -201,6 +210,8 @@ local function despawnRegiment(player: Player)
 	regiments[player] = nil
 end
 
+-- Spawns a fresh regiment in a default wide-line formation in front of
+-- the player. Always despawns any existing regiment first.
 local function spawnRegiment(player: Player, count: number)
 	count = math.clamp(count, 1, MAX_SPAWN)
 
@@ -209,7 +220,6 @@ local function spawnRegiment(player: Player, count: number)
 	local playerRoot = char:FindFirstChild("HumanoidRootPart")
 	if not playerRoot then return end
 
-	-- [CHANGED] Always remove existing company first
 	despawnRegiment(player)
 
 	local look     = playerRoot.CFrame.LookVector
@@ -217,22 +227,17 @@ local function spawnRegiment(player: Player, count: number)
 	local anchorPos = playerRoot.Position + flatLook * SPAWN_OFFSET
 	local anchorCF  = CFrame.lookAt(anchorPos, anchorPos + flatLook)
 
-	-- Default spawn: 1 rank wide line (will reshape on first order)
-	--	local ranks, files = RegimentFormation.dragToLayout(count, 0)
-	local files = math.min(count, 20)         -- up to 20 wide
+	-- Default layout: up to 20 wide, as many ranks as needed
+	local files = math.min(count, 20)
 	local ranks = math.ceil(count / files)
 	local slots = RegimentFormation.getSlots(anchorCF, count, ranks, files)
 	local slotIds = {}
 
 	for i, slotCF in ipairs(slots) do
-		local raisedCF = slotCF + Vector3.new(0, 4, 0)
-		local npc = spawnNpc(raisedCF)
-	--	npc.Humanoid:MoveTo(slotCF.Position)
-		--	npc.LastMoveTime = os.clock()
+		local npc = spawnNpc(slotCF + Vector3.new(0, 4, 0))
 		npc.RegimentTarget = slotCF.Position
 		npc.Humanoid:MoveTo(slotCF.Position)
 		npc.LastMoveTime = os.clock()
-		
 		slotIds[i] = npc.ShortId
 	end
 
@@ -243,13 +248,12 @@ local function spawnRegiment(player: Player, count: number)
 		files    = files,
 	}
 
-	print(string.format("[NpcManager] %s spawned regiment of %d (%dr x %df)",
+	print(string.format("[NpcSystem] %s spawned %d bots (%dr × %df)",
 		player.Name, count, ranks, files))
 end
 
--- ── Order handler ─────────────────────────────────────────────────────
--- Receives (anchorPos: Vector3, facingDir: Vector3) from the client.
--- Recomputes formation slots and issues fresh MoveTo for every bot.
+-- Issues new slot positions to every bot in the regiment.
+-- Called when the player left-clicks (move) or drag-releases (reshape + move).
 local function orderRegiment(player: Player, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local regiment = regiments[player]
 	if not regiment then return end
@@ -258,21 +262,22 @@ local function orderRegiment(player: Player, anchorPos: Vector3, facingDir: Vect
 	if flat.Magnitude < 0.01 then return end
 	flat = flat.Unit
 
-	-- Clamp incoming ranks/files so client can't send garbage
 	local count = #regiment.slots
 	ranks = math.clamp(ranks, 1, count)
+	files = math.clamp(files, 1, count)
 
 	local anchorCF = CFrame.lookAt(anchorPos, anchorPos + flat)
 	local slots    = RegimentFormation.getSlots(anchorCF, count, ranks, files)
 
 	for i, shortId in ipairs(regiment.slots) do
 		local npc = activeNpcs[shortId]
-		if npc and npc.Model and npc.Model.Parent then
-			npc.RegimentTarget = slots[i].Position
-			npc.Humanoid:MoveTo(slots[i].Position)
-			npc.LastMoveTime = os.clock()
-			npc.IsRegiment   = true
-		end
+		if not (npc and npc.Model and npc.Model.Parent) then continue end
+
+		npc.RegimentTarget = slots[i].Position
+		npc.MoveRetries    = 0
+		npc.IsRegiment     = true
+		npc.Humanoid:MoveTo(slots[i].Position)
+		npc.LastMoveTime   = os.clock()
 	end
 
 	regiment.anchorCF = anchorCF
@@ -280,24 +285,14 @@ local function orderRegiment(player: Player, anchorPos: Vector3, facingDir: Vect
 	regiment.files    = files
 end
 
-EvtOrder.OnServerEvent:Connect(function(player: Player, anchorPos, facingDir, ranks, files)
-	if typeof(anchorPos) ~= "Vector3"   then return end
-	if typeof(facingDir) ~= "Vector3"   then return end
-	if typeof(ranks)     ~= "number"    then return end
-	if typeof(files)     ~= "number"    then return end
-	if anchorPos.Magnitude > 10000      then return end
+-- ── Remote handlers ───────────────────────────────────────────────────
 
-	orderRegiment(player, anchorPos, facingDir, math.floor(ranks), math.floor(files))
-end)
-
--- ── Ready gate ────────────────────────────────────────────────────────
--- The client fires NpcReady once its handlers are wired.
--- Only then do we send the spawn batch and start streaming updates.
+-- Client fires NpcReady once all its OnClientEvent handlers are wired.
+-- Server responds with a batch of all currently live NPCs.
 EvtReady.OnServerEvent:Connect(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
 
-	-- Send all live NPCs in one reliable fire
 	local batch = {}
 	for shortId, npc in pairs(activeNpcs) do
 		if npc.Model and npc.Model.Parent then
@@ -311,15 +306,46 @@ EvtReady.OnServerEvent:Connect(function(player)
 	end
 end)
 
--- Remove player from ready set on leave
+-- Client fires NpcOrder on left-click (move) or drag-release (reshape).
+-- anchorPos = centre of front rank, facingDir = unit facing vector.
+EvtOrder.OnServerEvent:Connect(function(player, anchorPos, facingDir, ranks, files)
+	if typeof(anchorPos) ~= "Vector3" then return end
+	if typeof(facingDir) ~= "Vector3" then return end
+	if typeof(ranks)     ~= "number"  then return end
+	if typeof(files)     ~= "number"  then return end
+	if anchorPos.Magnitude > 10000    then return end
+
+	orderRegiment(player, anchorPos, facingDir, math.floor(ranks), math.floor(files))
+end)
+
 Players.PlayerRemoving:Connect(function(player)
 	despawnRegiment(player)
 	readyPlayers[player] = nil
-	farLastSent[player]  = nil   -- clean up
-	regiments[player] 	 = nil
+	farLastSent[player]  = nil
 end)
 
+-- ── Chat: /spawn n ────────────────────────────────────────────────────
+local function hookChat(player: Player)
+	player.Chatted:Connect(function(msg: string)
+		local raw = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s*$")
+		if not raw then return end
+		local count = tonumber(raw)
+		if count and count >= 1 then
+			spawnRegiment(player, count)
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(hookChat)
+for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
+
 -- ── Broadcast loop ────────────────────────────────────────────────────
+-- Runs on every Heartbeat, fires at NEAR_RATE and FAR_RATE independently.
+--
+-- Near list: only NPCs that moved (cfChanged), sent at 20 hz.
+-- Far list:  every live NPC regardless of movement, sent at 4 hz.
+--            Far bots that stand still still need keep-alives so the
+--            client replicator can keep extrapolating without timing out.
 local nearAccum = 0
 local farAccum  = 0
 
@@ -329,7 +355,6 @@ RunService.Heartbeat:Connect(function(dt)
 
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
-
 	if not doNear and not doFar then return end
 
 	if doNear then nearAccum -= NEAR_RATE end
@@ -338,12 +363,8 @@ RunService.Heartbeat:Connect(function(dt)
 	local timestamp = workspace:GetServerTimeNow()
 	local deadIds   = {}
 
-	-- [CHANGED] Two separate tables:
-	--   dirtyEntries  — NPCs that moved; used for near players (high freq)
-	--   allFarEntries — every live NPC; used for far keep-alive (low freq)
-	--   Far players need ALL npcs so stationary ones don't go dark.
-	local dirtyEntries  = {}
-	local allFarEntries = {}
+	local dirtyEntries  = {}  -- moved NPCs → near players
+	local allFarEntries = {}  -- all NPCs   → far players
 
 	for shortId, npc in pairs(activeNpcs) do
 		if not (npc.Model and npc.Model.Parent) then
@@ -351,6 +372,7 @@ RunService.Heartbeat:Connect(function(dt)
 			continue
 		end
 
+		-- Non-regiment bots wander; kick them if they've been idle too long
 		if not npc.IsRegiment and os.clock() - npc.LastMoveTime > IDLE_TIMEOUT then
 			pickNewTarget(npc)
 		end
@@ -358,26 +380,16 @@ RunService.Heartbeat:Connect(function(dt)
 		local cf = npc.Root.CFrame
 
 		if doFar then
-			-- Always include every live NPC in the far list
-			allFarEntries[#allFarEntries + 1] = {
-				shortId,
-				cf.Position,
-				getYaw(cf),
-			}
+			allFarEntries[#allFarEntries + 1] = { shortId, cf.Position, getYaw(cf) }
 		end
 
 		if doNear and cfChanged(cf, npc.LastSentCF) then
-			-- Only include moved NPCs in the near list
-			dirtyEntries[#dirtyEntries + 1] = {
-				shortId,
-				cf.Position,
-				getYaw(cf),
-			}
+			dirtyEntries[#dirtyEntries + 1] = { shortId, cf.Position, getYaw(cf) }
 			npc.LastSentCF = cf
 		end
 	end
 
-	-- Per-player: route each NPC to near or far based on distance
+	-- Per-player: bucket each NPC into near or far based on distance
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
 
@@ -401,26 +413,23 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if doFar then
 			for _, entry in ipairs(allFarEntries) do
-				local shortId = entry[1]
-				local dist    = playerPos and (entry[2] - playerPos).Magnitude or 0
+				local sid  = entry[1]
+				local dist = playerPos and (entry[2] - playerPos).Magnitude or 0
 				if dist > CULL_RADIUS then
-					local lastSent = playerFarSent[shortId] or 0
-					if now - lastSent >= FAR_RATE * 0.9 then
+					local last = playerFarSent[sid] or 0
+					if now - last >= FAR_RATE * 0.9 then
 						farList[#farList + 1] = entry
-						playerFarSent[shortId] = now
+						playerFarSent[sid] = now
 					end
 				end
 			end
 		end
 
-		if #nearList > 0 then
-			fireChunked(player, timestamp, nearList)
-		end
-		if #farList > 0 then
-			fireChunked(player, timestamp, farList)
-		end
+		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
+		if #farList  > 0 then fireChunked(player, timestamp, farList)  end
 	end
 
+	-- Clean up dead NPCs and notify all ready clients
 	for _, shortId in ipairs(deadIds) do
 		for player in pairs(readyPlayers) do
 			EvtDespawned:FireClient(player, shortId)
@@ -431,23 +440,3 @@ RunService.Heartbeat:Connect(function(dt)
 		activeNpcs[shortId] = nil
 	end
 end)
-
--- ── Chat command listener ─────────────────────────────────────────────
--- Wire up for players already in the server and ones who join later.
-local function hookChat(player: Player)
-	player.Chatted:Connect(function(message: string)
-		-- Match "/spawn n" case-insensitively, ignore leading spaces
-		local raw = message:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s*$")
-		if not raw then return end
-
-		local count = tonumber(raw)
-		if not count or count < 1 then return end
-
-		spawnRegiment(player, count)
-	end)
-end
-
-Players.PlayerAdded:Connect(hookChat)
-for _, player in ipairs(Players:GetPlayers()) do
-	hookChat(player)
-end
