@@ -1,38 +1,48 @@
 -->>>>>>>>>>>>
--- NPC_CLIENT (Client) — ready-gated
+-- NPC_SYSTEM_CLIENT
+-- Handles client-side rendering, network interpolation, and the UX for
+-- commanding regiments (visual previews and input handling).
+--
+-- The system uses "Replicators" to smooth out server movement via snapshots
+-- and "Animators" to drive procedural animations based on local velocity.
 -->>>>>>>>>>>>
 
+-- ── Services ──────────────────────────────────────────────────────────
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local Players          = game:GetService("Players")
 
-local localPlayer = Players.LocalPlayer
-local camera      = workspace.CurrentCamera
-
-local NpcReplicator = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
-local NpcAnimator = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
+-- ── Modules ───────────────────────────────────────────────────────────
+local NpcReplicator     = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
+local NpcAnimator       = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
 
+-- ── Configuration & Assets ────────────────────────────────────────────
 local CLIENT_MODEL  = ReplicatedStorage:WaitForChild("CLIENT")
+local DRAG_THRESHOLD = 3      -- Studs mouse must move to trigger "drag" mode
+local DOT_SIZE       = Vector3.new(1.2, 0.3, 1.2)
+local DOT_COLOR      = Color3.fromRGB(255, 215, 60)
 
+-- ── Remotes ───────────────────────────────────────────────────────────
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
 local EvtBatch     = Remotes:WaitForChild("NpcBatch")
 local EvtReady     = Remotes:WaitForChild("NpcReady")
-local EvtOrder    = Remotes:WaitForChild("NpcOrder")
+local EvtOrder     = Remotes:WaitForChild("NpcOrder")
+
+-- ── State Variables ───────────────────────────────────────────────────
+local localPlayer = Players.LocalPlayer
+local camera      = workspace.CurrentCamera
+local replicators = {}    -- [shortId] = NpcReplicator instance
+local animators   = {}    -- [shortId] = NpcAnimator instance
+local myRegimentCount = 0
 
 if not workspace:FindFirstChild("Npc_Registry") then
 	local folder  = Instance.new("Folder")
 	folder.Name   = "Npc_Registry"
 	folder.Parent = workspace
 end
-
-local replicators = {}
-
-local animators = {}  -- [shortId] = NpcAnimator
-
-local myRegimentCount = 0
 
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
@@ -103,7 +113,7 @@ updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
 -- ── Preview parts ─────────────────────────────────────────────────────
-local function makePart(color: Color3, size: Vector3)
+local function createPreviewPart(color: Color3, size: Vector3)
 	local p = Instance.new("Part")
 	p.Anchored     = true
 	p.CanCollide   = false
@@ -117,18 +127,15 @@ local function makePart(color: Color3, size: Vector3)
 end
 
 -- Arrow at centre-front showing facing direction
-local previewArrow = makePart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
+local previewArrow = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
 
 -- Pool of slot dots — grown on demand, never shrunk (Parts are cheap hidden)
 local slotDots  = {}
 local activeDots = 0
 
-local DOT_SIZE  = Vector3.new(1.2, 0.3, 1.2)
-local DOT_COLOR = Color3.fromRGB(255, 215, 60)
-
 local function ensurePool(needed: number)
 	while #slotDots < needed do
-		slotDots[#slotDots + 1] = makePart(DOT_COLOR, DOT_SIZE)
+		slotDots[#slotDots + 1] = createPreviewPart(DOT_COLOR, DOT_SIZE)
 	end
 end
 
@@ -164,13 +171,6 @@ local function hidePreview()
 end
 
 -- ── Shared slot computation ───────────────────────────────────────────
--- Returns slots + rankCentre given left-anchor, dragDir, count
-local function computeSlots(leftAnchor: Vector3, dragDirection: Vector3, count: number)
-	local ranks, files = RegimentFormation.dragToLayout(count, 0)
-	-- will be overridden by caller with real mag, this is just a safe default
-	return ranks, files
-end
-
 local function buildSlots(leftAnchor: Vector3, dir: Vector3, count: number, mag: number)
 	local ranks, files = RegimentFormation.dragToLayout(count, mag)
 	local width, depth = RegimentFormation.getPreviewSize(ranks, files)
@@ -192,10 +192,9 @@ local function raycastMouse(): Vector3?
 end
 
 -- ── Drag state ────────────────────────────────────────────────────────
-local DRAG_THRESHOLD = 3   -- studs before drag starts registering
-
 local dragActive = false
 local anchorPos  = nil
+local dragDir    = nil
 local facingDir  = nil
 local dragRanks  = 1
 local dragFiles  = 1
@@ -266,20 +265,16 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 
     if dragDir then
-        local _, rankCentre, facing, ranks, files =
-            buildSlots(anchorPos, dragDir, count,
-                (raycastMouse() and (raycastMouse() - anchorPos) or Vector3.zero).Magnitude)
+        local hit = raycastMouse()
+        local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
+        
+        local _, rankCentre, facingFinal, ranks, files =
+            buildSlots(anchorPos, dragDir, count, delta.Magnitude)
 
-        -- Use the values computed during last InputChanged (dragRanks/dragFiles)
-        -- since raycastMouse() on InputEnded is the same frame as the last move
-        local width, _ = RegimentFormation.getPreviewSize(dragRanks, dragFiles)
-        local facingFinal = Vector3.new(dragDir.Z, 0, -dragDir.X)
-        rankCentre = anchorPos + dragDir * (width / 2)
+        lastRanks = ranks
+        lastFiles = files
 
-        lastRanks = dragRanks
-        lastFiles = dragFiles
-
-        EvtOrder:FireServer(rankCentre, facingFinal, dragRanks, dragFiles)
+        EvtOrder:FireServer(rankCentre, facingFinal, ranks, files)
     else
         -- Plain click — click point is centre, reuse last layout
         local look      = camera.CFrame.LookVector
@@ -297,4 +292,3 @@ end)
 -- Signal the server only after all handlers above are connected.
 -- This is what eliminates the "did you forget OnClientEvent?" drop warning.
 EvtReady:FireServer()
-

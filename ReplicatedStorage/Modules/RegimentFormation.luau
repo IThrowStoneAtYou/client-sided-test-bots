@@ -15,7 +15,7 @@ local MIN_FILES    = 1
 -- Called by both the client (preview) and server (slot generation).
 function RegimentFormation.dragToLayout(count: number, dragMagnitude: number): (number, number)
 	-- files derived from width dragged, clamped between 1 and count
-	local files = math.max(1, math.round(dragMagnitude / RANK_SPACING))
+	local files = math.floor(dragMagnitude / RANK_SPACING) + 1
 	files = math.clamp(files, 1, count)   -- count = fully flat single rank
 	local ranks = math.ceil(count / files)
 	return ranks, files
@@ -24,7 +24,7 @@ end
 -->>>>>>>>>>>>
 -- Returns pixel width and depth of a formation for the client preview rect.
 function RegimentFormation.getPreviewSize(ranks: number, files: number): (number, number)
-	return files * RANK_SPACING, ranks * RANK_DEPTH
+	return (files - 1) * RANK_SPACING, (ranks - 1) * RANK_DEPTH
 end
 
 -->>>>>>>>>>>>

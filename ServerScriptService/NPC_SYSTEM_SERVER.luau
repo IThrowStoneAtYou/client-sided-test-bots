@@ -17,7 +17,7 @@ local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- ── Remotes (created externally in a Script or folder) ────────────────
+-- ── Networking Remotes ────────────────────────────────────────────────
 local Remotes      = ReplicatedStorage:WaitForChild("NpcRemotes")
 local EvtSpawned   = Remotes:WaitForChild("NpcSpawned")
 local EvtDespawned = Remotes:WaitForChild("NpcDespawned")
@@ -55,11 +55,10 @@ local IDLE_TIMEOUT  = 3
 -- ── State ─────────────────────────────────────────────────────────────
 local activeNpcs   = {}   -- [shortId] = npc table
 local nextShortId  = 1
-
 local readyPlayers = {}   -- [Player] = true
 local farLastSent  = {}   -- [Player] = { [shortId] = os.clock() }
 
--- regiments[player] = {
+-- regiments[player] = {  -- Maps a player to their controlled group of bots
 --   anchorCF : CFrame,
 --   slots    : { shortId },  -- index matches formation slot
 --   ranks    : number,
@@ -353,13 +352,12 @@ RunService.Heartbeat:Connect(function(dt)
 	nearAccum += dt
 	farAccum  += dt
 
+	-- Determine which update tier to run this frame
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
 	if not doNear and not doFar then return end
-
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
-
 	local timestamp = workspace:GetServerTimeNow()
 	local deadIds   = {}
 
@@ -372,13 +370,13 @@ RunService.Heartbeat:Connect(function(dt)
 			continue
 		end
 
-		-- Non-regiment bots wander; kick them if they've been idle too long
+		-- AI Logic: If bot is a free wanderer, check if it needs a new target
 		if not npc.IsRegiment and os.clock() - npc.LastMoveTime > IDLE_TIMEOUT then
 			pickNewTarget(npc)
 		end
 
+		-- Snapshot capturing
 		local cf = npc.Root.CFrame
-
 		if doFar then
 			allFarEntries[#allFarEntries + 1] = { shortId, cf.Position, getYaw(cf) }
 		end
