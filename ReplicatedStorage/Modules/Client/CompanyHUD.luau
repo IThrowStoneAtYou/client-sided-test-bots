@@ -28,10 +28,6 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-local function cardXOffset(i)
-	return -191 + (i - 1) * (CARD_W + CARD_GAP) + CARD_W / 2
-end
-
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD
 
@@ -53,7 +49,9 @@ function CompanyHUD.new(onSelectionChanged)
 	gui.Parent          = playerGui
 	self._gui = gui
 
-	for i = 1, 4 do self:_createCard(i) end
+	for i = 1, 4 do
+		self:_createCard(i) 
+	end
 	return self
 end
 
@@ -69,8 +67,12 @@ end
 -- Returns a sorted array of currently selected company indices.
 function CompanyHUD:getSelectedList(): {number}
 	local list = {}
-	for idx in pairs(self._selected) do list[#list + 1] = idx end
+	for idx in pairs(self._selected) do 
+		list[#list + 1] = idx 
+	end
+	
 	table.sort(list)
+	
 	return list
 end
 
@@ -94,9 +96,17 @@ function CompanyHUD:setSelected(index: number?)
 	self._selected = index and { [index] = true } or {}
 	self._onChanged(self:getSelectedList())
 	local dirty = {}
-	for idx in pairs(prev)       do dirty[idx] = true end
-	if index then dirty[index] = true end
-	for idx in pairs(dirty)      do self:_refreshCard(idx) end
+	for idx in pairs(prev) do 
+		dirty[idx] = true
+	end
+	
+	if index then
+		dirty[index] = true 
+	end
+	
+	for idx in pairs(dirty) do 
+		self:_refreshCard(idx)
+	end
 end
 
 -->>>>>>>>>>>>
@@ -108,6 +118,7 @@ function CompanyHUD:toggleSelected(index: number)
 	else
 		self._selected[index] = true
 	end
+	
 	self._onChanged(self:getSelectedList())
 	self:_refreshCard(index)
 end
@@ -127,9 +138,42 @@ function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
 			selChanged = true
 		end
 	end
-	if selChanged then self._onChanged(self:getSelectedList()) end
 
-	for i = 1, 4 do self:_refreshCard(i) end
+	self:_updateLayout()
+
+	if selChanged then 
+		self._onChanged(self:getSelectedList()) 
+	end
+
+	for i = 1, 4 do
+		self:_refreshCard(i)
+	end
+end
+
+-->>>>>>>>>>>>
+-- Recalculates horizontal positions for all active cards to keep them centered.
+function CompanyHUD:_updateLayout()
+	local activeIndices = {}
+	for i = 1, 4 do
+		if self._companies[i] then
+			table.insert(activeIndices, i)
+		end
+	end
+
+	local n = #activeIndices
+	if n == 0 then return end
+
+	local totalWidth = n * CARD_W + (n - 1) * CARD_GAP
+	local startX     = -totalWidth / 2
+
+	for slot, index in ipairs(activeIndices) do
+		local xOff = startX + (slot - 1) * (CARD_W + CARD_GAP) + CARD_W / 2
+		local cd   = self._cards[index]
+		if cd then
+			cd.raisedPos  = UDim2.new(0.5, xOff, 1, RAISED_OFF)
+			cd.restingPos = UDim2.new(0.5, xOff, 1, RESTING_OFF)
+		end
+	end
 end
 
 -- ── Internal ──────────────────────────────────────────────────────────
@@ -154,16 +198,15 @@ function CompanyHUD:_refreshCard(i: number)
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()
 end
 
-function CompanyHUD:_createCard(index: number)
-	local accent     = COMPANY_COLORS[index]
-	local xOff       = cardXOffset(index)
-	local raisedPos  = UDim2.new(0.5, xOff, 1, RAISED_OFF)
-	local restingPos = UDim2.new(0.5, xOff, 1, RESTING_OFF)
+function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss align...
+	local accent     = COMPANY_COLORS[index]	-- stupid but it work, even know ti take stupidlly long time.
+	local raisedPos  = UDim2.new(0.5, 0, 1, RAISED_OFF)
+	local restingPos = UDim2.new(0.5, 0, 1, RESTING_OFF)
 
 	local card = Instance.new("Frame")
 	card.Name                   = "Company" .. index
 	card.AnchorPoint            = Vector2.new(0.5, 1)
-	card.Position               = restingPos
+	card.Position               = restingPos  -- Will be updated by _updateLayout on first sync
 	card.Size                   = UDim2.new(0, CARD_W, 0, CARD_H)
 	card.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
 	card.BackgroundTransparency = 0.1
@@ -276,14 +319,14 @@ function CompanyHUD:_createCard(index: number)
 	btn.MouseEnter:Connect(function()
 		cd.hovered = true
 		if self._companies[index] then
-			TweenService:Create(card, SLIDE_TWEEN, { Position = raisedPos }):Play()
+			TweenService:Create(card, SLIDE_TWEEN, { Position = cd.raisedPos }):Play()
 		end
 	end)
 
 	btn.MouseLeave:Connect(function()
 		cd.hovered = false
 		if not self._selected[index] and self._companies[index] then
-			TweenService:Create(card, SLIDE_TWEEN, { Position = restingPos }):Play()
+			TweenService:Create(card, SLIDE_TWEEN, { Position = cd.restingPos }):Play()
 		end
 	end)
 

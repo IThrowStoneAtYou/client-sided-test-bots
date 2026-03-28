@@ -36,6 +36,7 @@ if not PhysicsService:IsCollisionGroupRegistered(NPC_COLLISION_GROUP) then
 	PhysicsService:RegisterCollisionGroup(NPC_COLLISION_GROUP)
 	print("NpcGroup")
 end
+
 -- Ensure NPCs in this group do not collide with each other
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, NPC_COLLISION_GROUP, false)
 
@@ -386,7 +387,9 @@ Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, 
 	if anchorPos.Magnitude > 10000 then return end
 
 	companyIndex = math.floor(companyIndex)
-	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
+	if companyIndex < 1 or companyIndex > MAX_COMPANIES then 
+		return
+	end
 
 	orderCompany(player, companyIndex, anchorPos, facingDir, math.floor(ranks), math.floor(files))
 end)
@@ -402,8 +405,10 @@ end)
 -- Parses chat commands to allow players to spawn their army
 local function hookChat(player: Player)
 	player.Chatted:Connect(function(msg: string)
-		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$")
-		if not (ncStr and nStr) then return end
+		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$") -- yes
+		if not (ncStr and nStr) then
+			return
+		end
 
 		local nc = tonumber(ncStr)
 		local n  = tonumber(nStr)
@@ -453,6 +458,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if doFar then
 			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
 		end
+		
 		if doNear and cfChanged(cf, npc.LastSentCF) then
 			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
 			npc.LastSentCF = cf

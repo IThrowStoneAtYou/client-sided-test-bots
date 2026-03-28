@@ -74,12 +74,16 @@ end
 
 local function applyHighlights(selectedList)
 	clearHighlights()
+	
 	for _, compIdx in ipairs(selectedList) do
 		local slots = companySlots[compIdx]
 		if not slots then continue end
+		
 		for shortId in pairs(slots) do
 			local rep = replicators[shortId]
-			if rep and rep.Client then addHighlight(rep.Client, compIdx) end
+			if rep and rep.Client then 
+				addHighlight(rep.Client, compIdx)
+			end
 		end
 	end
 end
@@ -93,11 +97,19 @@ end)
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
 	local clientModel   = CLIENT_MODEL:Clone()
+	local initialCF     = buildCFrame(pos, yaw)
+
 	local rep           = NpcReplicator.new(shortId, clientModel)
-	rep.Root.CFrame     = buildCFrame(pos, yaw)
+	rep.Root.CFrame     = initialCF
+	-- Initialize with current time to prevent the replicator from thinking it's "behind" immediately
+	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow()) 
+	
+	local anim          = NpcAnimator.new(clientModel)
+	rep:SetAnimator(anim)
+	
 	rep:Start()
 	replicators[shortId] = rep
-	animators[shortId]   = NpcAnimator.new(clientModel)
+	animators[shortId]   = anim
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
@@ -266,6 +278,7 @@ Network.NpcCompanySync.On(function(data)
 		for _, sid in ipairs(entry.slots) do slotSet[sid] = true end
 		companySlots[entry.index] = slotSet
 	end
+	
 	hud:syncCompanies(data)
 	applyHighlights(hud:getSelectedList())
 end)
@@ -289,6 +302,7 @@ local function raycastMouse()
 	local pos    = UserInputService:GetMouseLocation()
 	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
+	
 	return result and result.Position or nil
 end
 
@@ -320,13 +334,18 @@ UserInputService.InputChanged:Connect(function(input)
 
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then NpcPreview.hide() return end
+	if mag < DRAG_THRESHOLD then
+		NpcPreview.hide() return -- yea
+	end
 
 	-- delta direction IS the rightDir — drag left-to-right expands the formation
 	dragDir = delta.Unit
 
 	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
-	if #layouts == 0 then NpcPreview.hide() return end
+	if #layouts == 0 then 
+		NpcPreview.hide() return -- uh yea
+	end
+	
 	NpcPreview.update(layouts, facingDir)
 end)
 
@@ -362,7 +381,7 @@ UserInputService.InputEnded:Connect(function(input)
 		if facingDir.Magnitude < 0.01 then facingDir = Vector3.new(0, 0, -1) end
 		facingDir  = facingDir.Unit
 
-		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0) ✓
+		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
 		local rightDir   = Vector3.new(-facingDir.Z, 0, facingDir.X)
 		local totalWidth = getTotalWidthFromLastFormation(selectedList)
 
@@ -388,4 +407,7 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+
+-- to avoid server firing at client BEFORE client got a time to load it self.
+-- also work as late-join
 Network.NpcReady.Fire()
