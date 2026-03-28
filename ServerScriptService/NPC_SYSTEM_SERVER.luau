@@ -10,16 +10,18 @@ local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local PhysicsService    = game:GetService("PhysicsService")
+local TweenService     = game:GetService("TweenService")
 
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Shared:WaitForChild("NoobPath"))
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
+local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 -- ── Config ────────────────────────────────────────────────────────────
 local WALK_SPEED    = 14
-local CHUNK_SIZE    = 50
+local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 1000       -- Increased to match Napoleonic battlefield scale
@@ -30,16 +32,25 @@ local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         -- studs in front of player
 local COMPANY_GAP   = 8         -- studs between adjacent companies
 local RANK_SPACING  = 4.5       -- mirrors RegimentFormation constant
-local MOVE_RETRIES  = 5
+local MOVE_RETRIES  = 2 --5
 
 local NPC_COLLISION_GROUP = "NpcGroup"
+local CLIENT_NPC_GROUP = "ClientNpcGroup"
+
+-- register both
 if not PhysicsService:IsCollisionGroupRegistered(NPC_COLLISION_GROUP) then
 	PhysicsService:RegisterCollisionGroup(NPC_COLLISION_GROUP)
-	print("NpcGroup")
+end
+if not PhysicsService:IsCollisionGroupRegistered(CLIENT_NPC_GROUP) then
+	PhysicsService:RegisterCollisionGroup(CLIENT_NPC_GROUP)
 end
 
--- Ensure NPCs in this group do not collide with each other
+-- 1. Server to Server model: Server-side logic NPCs should not collide with each other
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, NPC_COLLISION_GROUP, false)
+-- 2. Client to Client model: Client-side visual NPCs should not collide with each other
+PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP, CLIENT_NPC_GROUP, false)
+-- 3 & 4. Server to Client / Client to Server model: Visual models should not collide with logic NPCs
+PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP, false)
 
 local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
@@ -75,15 +86,14 @@ end
 
 -->>>>>>>>>>>>
 -- Determines if an NPC has moved or rotated enough to justify a network update
-local function cfChanged(cf, lastCF)
-	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then
-		return true
-	end
+local function cfChanged(cf, lastCF, npc)
+	local threshold = (npc.IsRegiment and npc.RegimentTarget
+		and (cf.Position - npc.RegimentTarget).Magnitude < 3)
+		and 1.5  -- nearly arrived, be very lazy about updates
+		or DELTA_POS
 
-	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then
-		return true
-	end
-
+	if (cf.Position - lastCF.Position).Magnitude > threshold then return true end
+	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then return true end
 	return false
 end
 
@@ -139,6 +149,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 
 	local root     = model.HumanoidRootPart
 	local humanoid = model.Humanoid
+	humanoid.AutoRotate = true -- Ensures they turn to face their walk direction automatically
 	humanoid.WalkSpeed = WALK_SPEED
 
 	local cf = spawnCF or CFrame.new(
@@ -150,9 +161,9 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
+			--	part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
 			part.CanTouch = false -- Optimization: Server NPCs don't need to trigger Touched events
-			part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
+			--	part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
 			part.CollisionGroup = NPC_COLLISION_GROUP
 			part:SetNetworkOwner(nil)
 		end
@@ -160,7 +171,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 
 	local pathfinder = NoobPath.Humanoid(model, {
 		WaypointSpacing = 6,
-		AgentRadius = 2,
+		AgentRadius = 1.5, -- Reduced to prevent NPCs from thinking they are stuck near each other
 		AgentHeight = 5,
 	})
 
@@ -175,6 +186,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 		IsRegiment     = spawnCF ~= nil,
 		RegimentTarget = nil,
 		MoveRetries    = 0,
+		ActiveTween    = nil,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -182,19 +194,37 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 			pickNewTarget(npc)
 		else
 			npc.MoveRetries = 0
+			-- Smoothly rotate to match the formation facing
+			if npc.RegimentFacing then
+				if npc.ActiveTween then npc.ActiveTween:Cancel() end
+
+				local pos = npc.Root.Position
+				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
+
+				npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
+				npc.ActiveTween:Play()
+			end
 		end
 	end)
 
 	pathfinder.Trapped:Connect(function()
 		if not npc.IsRegiment then
+			print("trapped 0.5")
 			pickNewTarget(npc)
 			return
 		end
 
+		print("trapped 1")
+
 		npc.MoveRetries += 1
 		if npc.MoveRetries <= MOVE_RETRIES and npc.RegimentTarget then
-			npc.Pathfinder:Run(npc.RegimentTarget)
-			npc.LastMoveTime = os.clock()
+			task.delay(0.5 + math.random() * 0.5, function()  -- random 0.5–1s cooldown
+				if npc.Model and npc.Model.Parent then
+					npc.Pathfinder:Run(npc.RegimentTarget)
+					npc.LastMoveTime = os.clock()
+					print("trapped 2")
+				end
+			end)
 		end
 	end)
 
@@ -307,13 +337,13 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	if flatLook.Magnitude < 0.01 then 
 		flatLook = Vector3.new(0, 0, -1)
 	end
-	
+
 	flatLook = flatLook.Unit
 
 	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
 
 	local totalSpawnData = {}
-	
+
 	-- Default formation per company: up to 10 files wide
 	local files        = math.min(botCount, 10)
 	local ranks        = math.ceil(botCount / files)
@@ -327,18 +357,23 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	local lock = {}
 	local pending = companyCount * botCount  -- total NPCs to spawn
 	local results = {}                        -- will store { companyIndex, slotIndex, shortId, spawnData }
+	local companyAnchors = {}                 -- store unique anchors for each company
 
 	for i = 1, companyCount do
 		local centerOffset = startOffset + (i - 1) * (companyWidth + COMPANY_GAP) + companyWidth / 2
 		local anchorPos    = playerRoot.Position + flatLook * SPAWN_OFFSET + right * centerOffset
 		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
+		companyAnchors[i]  = anchorCF
 		local slots        = RegimentFormation.getSlots(anchorCF, botCount, ranks, files)
 		local slotIds      = {}
 
 		for j, slotCF in ipairs(slots) do
 			task.spawn(function()
+				-- We spawn them at the position, but let them keep their current rotation 
+				-- or face the formation direction if it's the initial spawn.
 				local npc, data = spawnNpc(slotCF + Vector3.new(0, 4, 0), true)
 				if npc then
+					npc.RegimentFacing = flatLook -- Assign the formation facing
 					npc.RegimentTarget = slotCF.Position
 					npc.Pathfinder:Run(slotCF.Position)
 					npc.LastMoveTime = os.clock()
@@ -373,14 +408,18 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					-- Build company tables
 					for idx = 1, companyCount do
 						local slotList = {}
-						if companiesSlots[idx] then
-							for _, sid in pairs(companiesSlots[idx]) do
-								slotList[#slotList + 1] = sid
+						local cSlots   = companiesSlots[idx]
+						if cSlots then
+							-- Preserve formation slot order
+							for sIdx = 1, botCount do
+								if cSlots[sIdx] then
+									table.insert(slotList, cSlots[sIdx])
+								end
 							end
 						end
-						
+
 						companies[player][idx] = {
-							anchorCF = anchorCF, -- use the same anchor for all? Actually each company has its own anchor
+							anchorCF = companyAnchors[idx],
 							slots    = slotList,
 							ranks    = ranks,
 							files    = files,
@@ -421,10 +460,17 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		end
 
 		npc.RegimentTarget = slots[i].Position
+		npc.RegimentFacing = flat -- Store facing for the "Reached" event
 		npc.MoveRetries    = 0
 		npc.IsRegiment     = true
-		-- Launch async pathfinding
+
+		-- Immediate stop and re-run to prevent pathing jitter
 		task.spawn(function()
+			if npc.ActiveTween then
+				npc.ActiveTween:Cancel()
+				npc.ActiveTween = nil
+			end
+			npc.Pathfinder:Stop()
 			npc.Pathfinder:Run(slots[i].Position)
 			npc.LastMoveTime = os.clock()
 		end)
@@ -545,7 +591,7 @@ RunService.Heartbeat:Connect(function(dt)
 			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
 		end
 
-		if doNear and cfChanged(cf, npc.LastSentCF) then
+		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
 			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
 			npc.LastSentCF = cf
 		end
