@@ -285,7 +285,6 @@ end
 -- Spawns nc companies of n bots each, side-by-side centered in front of the player.
 -->>>>>>>>>>>>
 -- Logic for bulk-spawning multiple companies in a line based on player facing direction
-
 -- Spawns nc companies of n bots each, side-by-side centered in front of the player.
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
@@ -389,76 +388,6 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	end
 end
 
---[[
-local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
-	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
-	botCount     = math.clamp(botCount, 1, MAX_BOTS)
-
-	local char = player.Character
-	if not char then return end
-	local playerRoot = char:FindFirstChild("HumanoidRootPart")
-	if not playerRoot then return end
-
-	despawnAllCompanies(player)
-	companies[player] = {}
-
-	local look = playerRoot.CFrame.LookVector
-	local flatLook = Vector3.new(look.X, 0, look.Z)
-	if flatLook.Magnitude < 0.01 then 
-		flatLook = Vector3.new(0, 0, -1)
-	end
-
-	flatLook = flatLook.Unit
-
-	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
-
---
-	local totalSpawnData = {}
-	-- Default formation per company: up to 10 files wide
-	local files        = math.min(botCount, 10)
-	local ranks        = math.ceil(botCount / files)
-	local companyWidth = (files - 1) * RANK_SPACING
-
-	-- Center all companies across the player's facing direction
-	local totalWidth  = companyCount * companyWidth + (companyCount - 1) * COMPANY_GAP
-	local startOffset = -totalWidth / 2
-
-	for i = 1, companyCount do
-		local centerOffset = startOffset + (i - 1) * (companyWidth + COMPANY_GAP) + companyWidth / 2
-		local anchorPos    = playerRoot.Position + flatLook * SPAWN_OFFSET + right * centerOffset
-		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
-		local slots        = RegimentFormation.getSlots(anchorCF, botCount, ranks, files)
-		local slotIds      = {}
-
-		for j, slotCF in ipairs(slots) do
-			local npc, data = spawnNpc(slotCF + Vector3.new(0, 4, 0), true)
-			npc.RegimentTarget = slotCF.Position
-			npc.Pathfinder:Run(slotCF.Position)
-			npc.LastMoveTime = os.clock()
-			slotIds[j] = npc.ShortId
-			table.insert(totalSpawnData, data)
-		end
-
-		companies[player][i] = {
-			anchorCF = anchorCF,
-			slots    = slotIds,
-			ranks    = ranks,
-			files    = files,
-		}
-	end
-
-	for p in pairs(readyPlayers) do
-		Network.NpcSpawn.Fire(p, {
-			Type = "Batch",
-			list = totalSpawnData
-		})
-	end
-
-	syncCompanies(player)
-	print(string.format("[NPC] %s spawned %d companies × %d bots each", player.Name, companyCount, botCount))
-end
---[[]]
-
 -->>>>>>>>>>>>
 -- Moves an existing company into a new formation at a target position
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
@@ -493,21 +422,6 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			npc.LastMoveTime = os.clock()
 		end)
 	end
-
---[[
-	for i, shortId in ipairs(company.slots) do
-		local npc = activeNpcs[shortId]
-		if not (npc and npc.Model and npc.Model.Parent) then 
-			continue 
-		end
-
-		npc.RegimentTarget = slots[i].Position
-		npc.MoveRetries    = 0
-		npc.IsRegiment     = true
-		npc.Pathfinder:Run(slots[i].Position)
-		npc.LastMoveTime   = os.clock()
-	end
-	--[[]]
 
 	company.anchorCF = anchorCF
 	company.ranks    = ranks

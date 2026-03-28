@@ -68,7 +68,7 @@ local function setHighlightVisible(clientModel, companyIndex, visible)
 		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
 		h.FillTransparency    = 0.62
 		h.OutlineTransparency = 0.1
-		h.DepthMode           = Enum.HighlightDepthMode.Occluded
+		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
 		h.Parent              = clientModel
 	end
 	h.Enabled = visible

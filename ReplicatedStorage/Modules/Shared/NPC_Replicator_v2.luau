@@ -11,8 +11,6 @@ local RunService = game:GetService("RunService")
 local NpcReplicator = {}
 NpcReplicator.__index = NpcReplicator
 
-local EXTRAPOLATION_HALFLIFE = 0.12 -- Time in seconds to damp velocity when data is stale
-
 -->>>>>>>>>>>>
 -- Self explanatory. This is a constructor of the class
 function NpcReplicator.new(id: string, clientModel: Model)
@@ -23,12 +21,9 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.Root = clientModel.HumanoidRootPart
 
 	self.Snapshots = {}
-	self.BufferTime = 0.2   -- Reduced slightly for snappier response
+	self.BufferTime = 0.3	--0.1
 	self.MaxBuffer = 20
-	self.MaxExtrapolation = 0.15 -- Reduced to prevent long-distance "ghosting"
-
-	self._renderAccumulator = 0
-	self._targetFps = 1/60 -- Lock logic to 60 FPS
+	self.MaxExtrapolation = 0.4 --0.25
 
 	self.LastPos = self.Root.Position
 	self.Animator = nil
@@ -40,7 +35,6 @@ function NpcReplicator.new(id: string, clientModel: Model)
 			part.CanCollide = false
 			part.CanTouch = false
 			part.CanQuery = false
-			part.Anchored = true -- Critical: prevents physics stuttering
 		end
 	end
 
@@ -141,15 +135,10 @@ end
 -- Extra info: If no future snapshot exist. An extrapolation will occur
 function NpcReplicator:Render(dt)
 	if not self.Snapshots then return end
-	
-	self._renderAccumulator += dt
-	if self._renderAccumulator < self._targetFps then
-		return
-	end
-
 	local latest = self.Snapshots[#self.Snapshots]
 	if not latest then return end
 
+	local isMoving = false
 	local renderTime = workspace:GetServerTimeNow() - self.BufferTime
 	local timeSinceLatest = renderTime - latest.t
 
@@ -170,26 +159,20 @@ function NpcReplicator:Render(dt)
 		self.Root.CFrame = s1.cf:Lerp(s2.cf, alpha)
 	else
 		-- Extrapolate or stay at latest position
-		local extrapolationDt = math.clamp(timeSinceLatest, 0, self.MaxExtrapolation)
-		
-		-- Damping: If the packet is stale, fade the velocity to zero
-		-- This prevents bots from "sliding" past their stop point
-		local damping = math.clamp(1 - (timeSinceLatest / self.MaxExtrapolation), 0, 1)
-		self.Root.CFrame = latest.cf + (latest.v * extrapolationDt * damping)
+		local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
+		self.Root.CFrame = latest.cf + latest.v * extrapolationDt
 	end
 
 	-- Calculate real visual speed to drive animations
 	local currentPos   = self.Root.Position
 	local actualDelta  = (currentPos - self.LastPos).Magnitude
-	local visualSpeed  = actualDelta / self._renderAccumulator
+	local visualSpeed  = actualDelta / (dt > 0 and dt or 0.01)
 	self.LastPos       = currentPos
 
 	if self.Animator then
 		-- Increased threshold slightly for line infantry march stability
 		self.Animator:SetWalking(visualSpeed > 1.5)
 	end
-
-	self._renderAccumulator = 0
 end
 
 -->>>>>>>>>>>>
