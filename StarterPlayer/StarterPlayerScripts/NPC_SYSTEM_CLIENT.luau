@@ -53,33 +53,39 @@ local function clearHighlights()
 	for _, rep in pairs(replicators) do
 		if rep.Client then
 			local h = rep.Client:FindFirstChild(HIGHLIGHT_TAG)
-			if h then h:Destroy() end
+			if h then h.Enabled = false end
 		end
 	end
 end
 
-local function addHighlight(clientModel, companyIndex)
+local function setHighlightVisible(clientModel, companyIndex, visible)
 	if not clientModel then return end
-	local existing = clientModel:FindFirstChild(HIGHLIGHT_TAG)
-	if existing then existing:Destroy() end
-	local h = Instance.new("Highlight")
-	h.Name                = HIGHLIGHT_TAG
-	h.FillColor           = CompanyHUD.getColor(companyIndex)
-	h.OutlineColor        = CompanyHUD.getColor(companyIndex)
-	h.FillTransparency    = 0.62
-	h.OutlineTransparency = 0.1
-	h.DepthMode           = Enum.HighlightDepthMode.Occluded
-	h.Parent              = clientModel
+	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
+	if not h then
+		h = Instance.new("Highlight")
+		h.Name                = HIGHLIGHT_TAG
+		h.FillColor           = CompanyHUD.getColor(companyIndex)
+		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
+		h.FillTransparency    = 0.62
+		h.OutlineTransparency = 0.1
+		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+		h.Parent              = clientModel
+	end
+	h.Enabled = visible
 end
 
 local function applyHighlights(selectedList)
 	clearHighlights()
+
 	for _, compIdx in ipairs(selectedList) do
 		local slots = companySlots[compIdx]
 		if not slots then continue end
+
 		for shortId in pairs(slots) do
 			local rep = replicators[shortId]
-			if rep and rep.Client then addHighlight(rep.Client, compIdx) end
+			if rep and rep.Client then 
+				setHighlightVisible(rep.Client, compIdx, true)
+			end
 		end
 	end
 end
@@ -93,15 +99,23 @@ end)
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
 	local clientModel   = CLIENT_MODEL:Clone()
+	local initialCF     = buildCFrame(pos, yaw)
+
 	local rep           = NpcReplicator.new(shortId, clientModel)
-	rep.Root.CFrame     = buildCFrame(pos, yaw)
+	rep.Root.CFrame     = initialCF
+	-- Initialize with current time to prevent the replicator from thinking it's "behind" immediately
+	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow()) 
+
+	local anim          = NpcAnimator.new(clientModel)
+	rep:SetAnimator(anim)
+
 	rep:Start()
 	replicators[shortId] = rep
-	animators[shortId]   = NpcAnimator.new(clientModel)
+	animators[shortId]   = anim
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
-			addHighlight(clientModel, compIdx)
+			setHighlightVisible(clientModel, compIdx, true)
 			break
 		end
 	end
@@ -263,9 +277,17 @@ Network.NpcCompanySync.On(function(data)
 	companySlots = {}
 	for _, entry in ipairs(data) do
 		local slotSet = {}
-		for _, sid in ipairs(entry.slots) do slotSet[sid] = true end
+		for _, sid in ipairs(entry.slots) do 
+			slotSet[sid] = true 
+			-- Pre-create highlight for the NPC so it is ready to toggle
+			local rep = replicators[sid]
+			if rep and rep.Client then
+				setHighlightVisible(rep.Client, entry.index, false)
+			end
+		end
 		companySlots[entry.index] = slotSet
 	end
+
 	hud:syncCompanies(data)
 	applyHighlights(hud:getSelectedList())
 end)
@@ -289,6 +311,7 @@ local function raycastMouse()
 	local pos    = UserInputService:GetMouseLocation()
 	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
+
 	return result and result.Position or nil
 end
 
@@ -320,13 +343,18 @@ UserInputService.InputChanged:Connect(function(input)
 
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then NpcPreview.hide() return end
+	if mag < DRAG_THRESHOLD then
+		NpcPreview.hide() return -- yea
+	end
 
 	-- delta direction IS the rightDir — drag left-to-right expands the formation
 	dragDir = delta.Unit
 
 	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
-	if #layouts == 0 then NpcPreview.hide() return end
+	if #layouts == 0 then 
+		NpcPreview.hide() return -- uh yea
+	end
+
 	NpcPreview.update(layouts, facingDir)
 end)
 
@@ -362,7 +390,7 @@ UserInputService.InputEnded:Connect(function(input)
 		if facingDir.Magnitude < 0.01 then facingDir = Vector3.new(0, 0, -1) end
 		facingDir  = facingDir.Unit
 
-		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0) ✓
+		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
 		local rightDir   = Vector3.new(-facingDir.Z, 0, facingDir.X)
 		local totalWidth = getTotalWidthFromLastFormation(selectedList)
 
@@ -388,4 +416,7 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+
+-- to avoid server firing at client BEFORE client got a time to load it self.
+-- also work as late-join
 Network.NpcReady.Fire()

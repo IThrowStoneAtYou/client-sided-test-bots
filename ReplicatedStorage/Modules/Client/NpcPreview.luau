@@ -23,7 +23,7 @@ local previewFolder = workspace:FindFirstChild("Client_Preview_Dots") or (functi
 	f.Name   = "Client_Preview_Dots"
 	f.Parent = workspace
 	return f
-end)()
+end)() -- huh
 
 local function createPreviewPart(color: Color3, size: Vector3)
 	local p = Instance.new("Part")

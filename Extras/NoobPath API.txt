@@ -1,0 +1,307 @@
+modules should be placed at Modules.Shared "NoobPath"
+NoobPath is a Pathfinding module script with Auto Timeout, Non-humanoid support and Waypoint adjustments!
+https://devforum.roblox.com/t/noobpath-easy-pathfinding/3254514
+
+DOCUMENTATION:
+CONSTRUCTOR:
+
+new(Character: Model, AgentParams: AgentParams | {AgentRadius : number, AgentHeight : number, AgentCanClimb : boolean, AgentCanJump : boolean, Costs : {}, WaypointSpacing : number, PathSettings : {SupportPartialPath : boolean}}, Move: (Vector3) -> nil, Jump: () -> nil, JumpFinished: RBXScriptSignal, MoveFinished: RBXScriptSignal)
+"Returns a new NoobPath object"
+
+Humanoid(Character: Model, AgentParams: AgentParams, Precise: boolean)
+"Returns a new NoobPath object initialized for humanoid, if Precise isn't abled, the agent will not pause pathfinding while in air(has always been the behavior of Humanoid()), potentially inaccurate but works exceptionally well for the default humanoid properties, normally the agent will pause path computing while in air."
+
+View(AgentParams: AgentParams)
+"Returns a new NoobPath object without initializing"
+PROPERTIES
+
+Timeout: boolean false
+"Automatically estimates time necessary to travel for each waypoint, trigger Trapped if failed to reach within double the threshold"
+
+Speed: number 16
+"Speed of the Agent in stud(s)/second, required to calculate time necessary to travel for each waypoint when Timeout is true"
+
+Visualize: boolean false
+"Displays visual waypoints and graph the route if (script's) attribute GraphPath is true"
+
+Character: Model
+"The Agent guided by NoobPath"
+
+Route: Route | {PathWaypoint}  READ ONLY
+"An array of waypoints navigating the Agent to the current Goal"
+
+Path: Path  PRIVATE
+"A Path object responsible for calculating the Route (not the Roblox Path object created from Pathfinding Service)"
+
+Index: number  READ ONLY
+"A number representing the index of the current waypoint"
+
+Idle: boolean  READ ONLY
+"Current Idle state of the NoobPath Object"
+
+InAir: boolean  READ ONLY
+"Current InAir state of the NoobPath Object"
+
+Estimate: {number}  READ ONLY
+"An array of numbers representing the time necessary for the Agent to travel from the waypoint of corresponding index in Route to the next waypoint (the last waypoint in Route don't have a time)"
+
+Destroying: boolean  READ ONLY
+"Indicates if the NoobPath object is destroying itself, set to true 2 frames before Destroy happens"
+
+Goal: Location | (Vector3 | BasePart | Model)  READ ONLY
+"The destination the Route is navigating the Agent to"
+
+Partial: boolean  READ ONLY
+"Indicates if the current Route is considered as a Partial Path (Route to the closest achievable Location around the Goal), a Partial Path will only be generated if it is allowed in the AgentParams"
+
+Move: (Vector3) -> nil
+"Move function of the Agent, should fire MoveFinished with a boolean representing whether Move is successfully completed"
+
+Jump: () -> nil
+"Jump function of the Agent, should fire JumpFinished once Jump is completed"
+EVENTS
+
+MoveFinished(Success : boolean)
+"Fires when Move function is completed (Success = false is equivalent to Trapped firing ReachFailed"
+
+JumpFinished
+"Fires when Jump function is completed"
+
+Overide
+"Fires when method Run or Stop is called"
+
+Reached(Waypoint: PathWaypoint, Partial: boolean)
+"Fires when the Agent reached the Goal (Waypoint is the last waypoint)"
+
+WaypointReached(Waypoint: PathWaypoint, NextWaypoint: PathWaypoint)
+"Fires when the Agent reached a waypoint inside Route (Waypoint is the current waypoint)"
+
+Error(ErrorType: "ComputationError" | "TargetUnreachable")
+"Fires when an Error occured"
+
+Trapped(TrapType: "ReachTimeout" | "ReachFailed")
+"Fires when the Agent is Trapped"
+
+Stopped
+"Fires when the Agent stop navigating and enters the Idle state (Idle = true)"
+
+OnDestroy
+"Fires a frame before the NoobPath object is destroyed"
+METHODS
+
+Compute(PointA: Vector3, PointB: Vector3)
+"Computes and updates the Route, adjust the Partial property (trigger Predict and/or Show depending on Timeout and Visualize properties)"
+
+Show()
+"Displays visual waypoints (also graph the Route if GraphPath attribute is true)"
+
+Hide()
+"Destroys all visual waypoints and graphical lines of the NoobPath object"
+
+Predict()
+"Estimates and updates the Estimate property"
+
+GetEstimateTotal()
+"Returns the sum of the Estimate"
+
+Activate  PRIVATE
+"Initialize the NoobPath object"
+
+PauseUntilLanded()
+"Pause the Agent's navigation until the Agent completed its current jump (does not yield)"
+
+ValidateRoute(Route: Route, Partial: boolean)
+"Returns true of the Route is valid, else nil (also trigger Error event if an Error presents, and call Arrive(Route, Partial) if only 1 waypoint exists in the Route"
+
+Run(Location: Location)
+"Starts the navigation of the Agent to Location (Fires Override; updates Goal, Index, Idle; call Compute, TravelNextWaypoint, and PauseUntilLanded if the InAir property is true)"
+
+Stop()
+"Stop the Agent, cancel the current navigation (Updates Idle and Fires Overide)
+
+GetWayPoint()
+"Returns the current waypoint (the waypoint the Agent is currently reaching)
+
+GetNextWaypoint()
+"Returns the next waypoint"
+
+GetLastWaypoint()
+"Returns the last waypoint"
+
+GetEstimateTime()
+"Returns the estimate of the time necessary to travel from the current waypoint to the next waypoint"
+
+CheckTimeout()
+"Checks whether the current waypoint is reached after double the estimate of time necessary to travel from the current waypoint to the next waypoint, and fire Trapped with ReachTimeout accordingly"
+
+TravelNextWaypoint()
+"Increased the Index by 1 and call TravelWaypoint (current waypoint is determined based on the Index)"
+
+TravelWaypoint()
+"Move the Agent to the current waypoint, Jump and call CheckForTimeout accordingly"
+
+Arrive(Route: Route, Partial: boolean)
+"Ends the navigation (fires Override, Reached; and set Idle to true)"
+
+Dump()
+"Destroys the uninitialized NoobPath object (created through View)"
+
+Destroy()
+"Destroys the initialized NoobPath object (created through either new or Humanoid)"
+
+
+All the example code assume you have a script inside a Humanoid Rig:
+local NoobPath = require(PathToNoobPath)
+
+local Guy = NoobPath.Humanoid(script.Parent, {WaypointSpacing = 10})
+-- Parameter 1 is a Character Model, Parameter 2 is AgentParams(Basically settings for pathfinding)
+
+
+Signal Implementation & Partial Demonstration Example:
+local NoobPath = require(PathToNoobPath)
+
+local Guy = NoobPath.Humanoid(script.Parent, {WaypointSpacing = 10, PathSettings = {SupportPartialPath = true})
+-- JumpDetectConnection will now disconnect on its own once the agent is destroyed
+
+if Guy.Idle then -- Access Character state through .Idle
+    print("Idle")
+end
+
+Guy.Reached:Connect(function(Waypoint, IsPartial)
+	print("Reached: " .. tostring(Waypoint) .. " | Partial: " .. tostring(IsPartial))
+	task.wait(0.1)
+	Guy:Run()
+end)
+
+Guy.WaypointReached:Connect(function(Waypoint, NextWaypoint)
+	print("WaypointReached: " .. tostring(Waypoint) .. " | NextWaypoint: " .. tostring(NextWaypoint))
+	Guy:Run()
+end)
+
+Guy.Error:Connect(function(ErrorType : string)
+	print("Error: ".. ErrorType)
+	task.wait(0.1)
+	Guy:Run()
+end)
+
+Guy.Trapped:Connect(function(TrapType : string)
+	print("Trapped: ".. TrapType) 
+	if script.Parent.Humanoid:GetState() ~= Enum.HumanoidStateType.Climbing then -- Climbing is slower than usual
+		Guy.Jump() -- Jump to unstuck
+	end
+	
+	Guy:Run()
+end)
+
+Guy.Timeout = true -- Off by default, it calculate time necessary to travel between Waypoints and Check if the Character arrived after that amount of time, Trapped will be fired if the Character didn't reach Waypoint in time
+Guy.Speed = 16 -- 16 by default, used to allow Timeout calculate time necessary to travel between Waypoints
+Guy.Visualize = true -- Off by default, basically generate visual spheres to represent Waypoints
+
+Guy:Run(workspace.SpawnLocation) -- If a Location is given to :Run(), it will be stored and become the default Location to go if there's no argument given
+-- Location : Vector3 | BasePart | Model
+
+
+Loop Implementation Example:
+local NoobPath = require(PathToNoobPath)
+local Guy = NoobPath.Humanoid(script.Parent, {WaypointSpacing = 10})
+
+Guy.Visualize = true
+
+while true do
+	task.wait()
+	Guy:Run(workspace.SpawnLocation)
+end
+
+
+Non-humanoid Example:
+local NoobPath = require(PathToNoobPath)
+
+-- NoobPath.Humanoid() pass in those functions & signals with humanoid defaults
+-- There's no JumpDetectConnection as you have to set things up manually
+local Guy = NoobPath.new(
+	script.Parent,
+	{WaypointSpacing = 10},
+	function(PositionToGo : Vector3)
+		-- custom logic to move the Character to PositionToGo
+	end,
+	function()
+		-- custom logic to make the Character Jump
+	end,
+	JumpFinishedSignal, -- place a signal here to indicate Finished Jumping, it can be Roblox Signal, BindableEvent.Event, or just use the GoodSignal inside the module
+	MoveFinishedSignal -- place a signal here to indicate Finished Moving, it can be Roblox Signal, BindableEvent.Event, or just use the GoodSignal inside the module
+)
+
+
+Custom Movement Example (AlignPosition):
+local GS = require(workspace.NoobPath.GoodSignal)
+local JumpS = GS.new()
+local MoveS = GS.new()
+
+local JumpC = JumpS:Connect(function()
+	print("JumpFinished")
+end)
+local MoveC = MoveS:Connect(function()
+	print("MoveFinished")
+end)
+
+local PrimaryPart = script.Parent.PrimaryPart
+
+local AlignPos = Instance.new("AlignPosition")
+AlignPos.Parent = PrimaryPart
+local Attachment = Instance.new("Attachment")
+Attachment.Parent = PrimaryPart
+AlignPos.Attachment0 = Attachment
+AlignPos.Mode = Enum.PositionAlignmentMode.OneAttachment
+AlignPos.MaxForce = 25000
+AlignPos.Responsiveness = 50
+
+local Guy
+Guy = require(workspace.NoobPath).new(
+	script.Parent,
+	{}, -- AgentParams
+	function(Pos)
+		print("Moved")
+		AlignPos.Position = Pos - PrimaryPart.PivotOffset.Position
+		
+		local Break = false
+		local C
+		C = Guy.Overide:Connect(function()
+			C:Disconnect()
+			Break = true
+		end)
+		
+		task.defer(function()
+			while not Break and (PrimaryPart:GetPivot().Position - Pos).Magnitude > 2 do
+				task.wait()
+			end
+			if not Break then
+				MoveS:Fire(true)
+			end
+		end)
+	end,
+	function()
+		-- Custom jumping is complex, I won't implement it in this example
+		JumpS:Fire()
+	end,
+	JumpS,
+	MoveS
+)
+Guy.Visualize = true
+
+Guy:Run(workspace.SpawnLocation)
+
+while task.wait(0.1) do
+	Guy:Run()
+end
+
+
+-- Remember to Destroy when not using
+local NoobPath = require(PathToNoobPath)
+local Guy, JumpDetectConnection = NoobPath.Humanoid(script.Parent, {WaypointSpacing = 10})
+-- Do Stuff
+Guy:Stop()
+-- Do Stuff
+JumpDetectConnection:Disconnect()
+Guy:Destroy()
+
+Methods & Signals & Variables not demonstrated in the examples are Private
