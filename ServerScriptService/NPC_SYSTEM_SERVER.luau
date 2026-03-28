@@ -9,9 +9,10 @@
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local PhysicsService    = game:GetService("PhysicsService")
 
 local Network           = require(game.ReplicatedStorage.Blink.Server)
-local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
+local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 
@@ -29,6 +30,14 @@ local SPAWN_OFFSET  = 16         -- studs in front of player
 local COMPANY_GAP   = 8         -- studs between adjacent companies
 local RANK_SPACING  = 4.5       -- mirrors RegimentFormation constant
 local MOVE_RETRIES  = 5
+
+local NPC_COLLISION_GROUP = "NpcGroup"
+if not PhysicsService:IsCollisionGroupRegistered(NPC_COLLISION_GROUP) then
+	PhysicsService:RegisterCollisionGroup(NPC_COLLISION_GROUP)
+	print("NpcGroup")
+end
+-- Ensure NPCs in this group do not collide with each other
+PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, NPC_COLLISION_GROUP, false)
 
 local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
@@ -50,7 +59,7 @@ local companies = {}
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
 	local dist  = minDist + math.random() * (radius - minDist)
-	
+
 	return Vector3.new(center.X + math.cos(angle) * dist, center.Y, center.Z + math.sin(angle) * dist)
 end
 
@@ -58,7 +67,7 @@ end
 -- Extracts the Y-axis rotation (Yaw) from a CFrame
 local function getYaw(cf)
 	local _, y, _ = cf:ToEulerAnglesYXZ()
-	
+
 	return y
 end
 
@@ -68,11 +77,11 @@ local function cfChanged(cf, lastCF)
 	if (cf.Position - lastCF.Position).Magnitude > DELTA_POS then
 		return true
 	end
-	
+
 	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then
 		return true
 	end
-	
+
 	return false
 end
 
@@ -81,9 +90,9 @@ local function getPlayerRootPos(player)
 	if not char then 
 		return nil 
 	end
-	
+
 	local root = char:FindFirstChild("HumanoidRootPart")
-	
+
 	return root and root.Position or nil
 end
 
@@ -98,12 +107,12 @@ end
 local function fireChunked(player, timestamp, entries)
 	for i = 1, #entries, CHUNK_SIZE do
 		local chunk = {}
-		
+
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
 			local e = entries[j]
 			chunk[#chunk + 1] = { id = e.id, pos = e.pos, yaw = e.yaw }
 		end
-		
+
 		Network.NpcBatch.Fire(player, timestamp, chunk)
 	end
 end
@@ -139,6 +148,7 @@ local function spawnNpc(spawnCF: CFrame?)
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
+			part.CollisionGroup = NPC_COLLISION_GROUP
 			part:SetNetworkOwner(nil)
 		end
 	end
@@ -160,7 +170,7 @@ local function spawnNpc(spawnCF: CFrame?)
 			pickNewTarget(npc)
 			return
 		end
-		
+
 		if reached then
 			npc.MoveRetries = 0
 		elseif npc.RegimentTarget then
@@ -195,7 +205,7 @@ end
 local function syncCompanies(player: Player)
 	local playerCompanies = companies[player]
 	local data = {}
-	
+
 	if playerCompanies then
 		for idx, company in pairs(playerCompanies) do
 			table.insert(data, {
@@ -204,10 +214,10 @@ local function syncCompanies(player: Player)
 				slots = company.slots,
 			})
 		end
-		
+
 		table.sort(data, function(a, b) return a.index < b.index end)
 	end
-	
+
 	Network.NpcCompanySync.Fire(player, data)
 end
 
@@ -218,7 +228,7 @@ local function despawnCompany(player: Player, companyIndex: number)
 	if not playerCompanies then
 		return 
 	end
-	
+
 	local company = playerCompanies[companyIndex]
 	if not company then 
 		return 
@@ -230,7 +240,7 @@ local function despawnCompany(player: Player, companyIndex: number)
 				Network.NpcDespawn.Fire(p, shortId)
 				if farLastSent[p] then farLastSent[p][shortId] = nil end
 			end
-			
+
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
 		end
@@ -242,11 +252,11 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	
+
 	for idx in pairs(playerCompanies) do
 		despawnCompany(player, idx)
 	end
-	
+
 	companies[player] = nil
 end
 
@@ -270,7 +280,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	if flatLook.Magnitude < 0.01 then 
 		flatLook = Vector3.new(0, 0, -1)
 	end
-	
+
 	flatLook = flatLook.Unit
 
 	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
@@ -335,7 +345,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		if not (npc and npc.Model and npc.Model.Parent) then 
 			continue 
 		end
-		
+
 		npc.RegimentTarget = slots[i].Position
 		npc.MoveRetries    = 0
 		npc.IsRegiment     = true
@@ -482,7 +492,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if #nearList > 0 then 
 			fireChunked(player, timestamp, nearList)
 		end
-		
+
 		if #farList  > 0 then 
 			fireChunked(player, timestamp, farList)
 		end
@@ -493,7 +503,7 @@ RunService.Heartbeat:Connect(function(dt)
 			Network.NpcDespawn.Fire(player, shortId)
 			if farLastSent[player] then farLastSent[player][shortId] = nil end
 		end
-		
+
 		activeNpcs[shortId] = nil
 	end
 end)

@@ -10,16 +10,15 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
 
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
+local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
-local DOT_SIZE       = Vector3.new(1.2, 0.3, 1.2)
 local HIGHLIGHT_TAG  = "CompanyHighlight"
 
 local RANK_SPACING = 4.5   -- must mirror RegimentFormation
@@ -43,7 +42,6 @@ local function ensureFolder(name)
 	end
 end
 ensureFolder("Npc_Registry")
-ensureFolder("Client_Preview_Dots")
 
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
@@ -117,28 +115,28 @@ end
 local function getTotalWidthFromLastFormation(selectedList): number
 	local total = 0
 	local nc    = 0
-	
+
 	for _, compIdx in ipairs(selectedList) do
 		local slots = companySlots[compIdx]
 		local count = 0
 		for _ in pairs(slots or {}) do
 			count += 1
 		end
-		
+
 		if count == 0 then 
 			continue 
 		end
-		
+
 		local f     = lastFormation[compIdx]
 		local files = f and f.files or math.min(count, 10)
 		total += (files - 1) * RANK_SPACING
 		nc    += 1
 	end
-	
+
 	if nc > 1 then 
 		total += (nc - 1) * COMPANY_GAP
 	end
-	
+
 	return total
 end
 
@@ -162,11 +160,11 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 	for _, compIdx in ipairs(selectedList) do
 		local slots = companySlots[compIdx]
 		local count = 0
-		
+
 		for _ in pairs(slots or {}) do 
 			count += 1 
 		end
-		
+
 		if count > 0 then
 			infos[#infos + 1] = { compIdx = compIdx, count = count }
 		end
@@ -199,7 +197,7 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 		end
 
 		local compWidth  = (files - 1) * RANK_SPACING
-		
+
 		-- Company anchor = center of this company's front rank
 		local compCenter = leftEdge + rightDir * (cursor + compWidth / 2)
 		cursor += compWidth + COMPANY_GAP
@@ -246,14 +244,14 @@ Network.NpcDespawn.On(function(shortId)
 	if not rep then 
 		return
 	end
-	
+
 	if rep.Client then 
 		rep.Client:Destroy()
 	end
-	
+
 	rep:Destroy()
 	replicators[shortId] = nil
-	
+
 	local anim = animators[shortId]
 	if anim then
 		anim:Destroy()
@@ -281,109 +279,11 @@ local function updateRayFilter()
 	if localPlayer.Character then 
 		table.insert(list, localPlayer.Character)
 	end
-	
+
 	rayParams.FilterDescendantsInstances = list
 end
 updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
-
-local function createPreviewPart(color, size)
-	local p = Instance.new("Part")
-	p.Anchored     = true
-	p.CanCollide   = false
-	p.CanQuery     = false
-	p.CastShadow   = false
-	p.Material     = Enum.Material.Neon
-	p.Color        = color
-	p.Size         = size
-	p.Transparency = 1
-	p.Parent       = workspace.Client_Preview_Dots
-	
-	return p
-end
-
-local previewArrow = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
-local slotDots     = {}
-local activeDots   = 0
-
-local function ensurePool(needed)
-	while #slotDots < needed do
-		slotDots[#slotDots + 1] = createPreviewPart(Color3.fromRGB(255, 215, 60), DOT_SIZE)
-	end
-end
-
-local function showColoredDots(entries)
-	ensurePool(#entries)
-	for i, e in ipairs(entries) do
-		slotDots[i].CFrame       = e.cf
-		slotDots[i].Color        = e.color
-		slotDots[i].Transparency = 0.3
-	end
-	for i = #entries + 1, activeDots do
-		slotDots[i].Transparency = 1
-	end
-	activeDots = #entries
-end
-
--->>>>>>>>>>>>
--- Places the arrow at the lateral midpoint between all company anchors.
-local function setArrow(layouts, facingDir)
-	if #layouts == 0 then return end
-	local anchorSum = Vector3.zero
-	local maxDepth  = 0
-	for _, layout in ipairs(layouts) do
-		anchorSum += layout.anchor
-		local _, depth = RegimentFormation.getPreviewSize(layout.ranks, layout.files)
-		if depth > maxDepth then maxDepth = depth end
-	end
-	local centre   = anchorSum / #layouts
-	local arrowLen = math.clamp(maxDepth * 0.3, 2, 6)
-	previewArrow.Size   = Vector3.new(0.4, 0.4, arrowLen)
-	previewArrow.CFrame = CFrame.lookAt(
-		centre + facingDir * (arrowLen / 2 + 0.5),
-		centre + facingDir * (arrowLen / 2 + 0.5) + facingDir
-	)
-	previewArrow.Transparency = 0
-end
-
-local function hidePreview()
-	for i = 1, activeDots do slotDots[i].Transparency = 1 end
-	activeDots = 0
-	previewArrow.Transparency = 1
-end
-
-local function spawnFadeDots(layouts, facingDir)
-	if #layouts == 0 then return end
-	local fadeInfo  = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-	local anchorSum = Vector3.zero
-	local maxDepth  = 0
-
-	for _, layout in ipairs(layouts) do
-		local _, depth = RegimentFormation.getPreviewSize(layout.ranks, layout.files)
-		if depth > maxDepth then maxDepth = depth end
-		anchorSum += layout.anchor
-		for _, slotCF in ipairs(layout.slots) do
-			local p = createPreviewPart(layout.color, DOT_SIZE)
-			p.CFrame       = slotCF
-			p.Transparency = 0.3
-			local t = TweenService:Create(p, fadeInfo, { Transparency = 1, Size = DOT_SIZE * 0.5 })
-			t:Play()
-			t.Completed:Connect(function() p:Destroy() end)
-		end
-	end
-
-	local centre   = anchorSum / #layouts
-	local arrowLen = math.clamp(maxDepth * 0.3, 2, 6)
-	local a = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, arrowLen))
-	a.CFrame = CFrame.lookAt(
-		centre + facingDir * (arrowLen / 2 + 0.5),
-		centre + facingDir * (arrowLen / 2 + 0.5) + facingDir
-	)
-	a.Transparency = 0
-	local t2 = TweenService:Create(a, fadeInfo, { Transparency = 1 })
-	t2:Play()
-	t2.Completed:Connect(function() a:Destroy() end)
-end
 
 local function raycastMouse()
 	local pos    = UserInputService:GetMouseLocation()
@@ -420,22 +320,14 @@ UserInputService.InputChanged:Connect(function(input)
 
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then hidePreview() return end
+	if mag < DRAG_THRESHOLD then NpcPreview.hide() return end
 
 	-- delta direction IS the rightDir — drag left-to-right expands the formation
 	dragDir = delta.Unit
 
 	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
-	if #layouts == 0 then return end
-
-	local dotEntries = {}
-	for _, layout in ipairs(layouts) do
-		for _, slotCF in ipairs(layout.slots) do
-			dotEntries[#dotEntries + 1] = { cf = slotCF, color = layout.color }
-		end
-	end
-	showColoredDots(dotEntries)
-	setArrow(layouts, facingDir)
+	if #layouts == 0 then NpcPreview.hide() return end
+	NpcPreview.update(layouts, facingDir)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
@@ -443,7 +335,7 @@ UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
 	dragActive = false
-	hidePreview()
+	NpcPreview.hide()
 
 	if not anchorPos or not hud:hasSelection() then
 		anchorPos = nil
@@ -473,7 +365,7 @@ UserInputService.InputEnded:Connect(function(input)
 		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0) ✓
 		local rightDir   = Vector3.new(-facingDir.Z, 0, facingDir.X)
 		local totalWidth = getTotalWidthFromLastFormation(selectedList)
-		
+
 		-- Back-compute leftEdge so the group is centered on anchorPos
 		local leftEdge   = anchorPos - rightDir * (totalWidth / 2)
 
@@ -486,7 +378,7 @@ UserInputService.InputEnded:Connect(function(input)
 		return
 	end
 
-	spawnFadeDots(layouts, facingDir)
+	NpcPreview.spawnFadeDots(layouts, facingDir)
 	for _, layout in ipairs(layouts) do
 		lastFormation[layout.compIdx] = { ranks = layout.ranks, files = layout.files }
 		Network.NpcOrderCommand.Fire(layout.anchor, facingDir, layout.ranks, layout.files, layout.compIdx)
