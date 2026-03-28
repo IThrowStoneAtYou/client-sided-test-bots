@@ -95,6 +95,7 @@ function CompanyHUD:setSelected(index: number?)
 	local prev = self._selected
 	self._selected = index and { [index] = true } or {}
 	self._onChanged(self:getSelectedList())
+	
 	local dirty = {}
 	for idx in pairs(prev) do 
 		dirty[idx] = true
@@ -202,6 +203,8 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	local accent     = COMPANY_COLORS[index]	-- stupid but it work, even know ti take stupidlly long time.
 	local raisedPos  = UDim2.new(0.5, 0, 1, RAISED_OFF)
 	local restingPos = UDim2.new(0.5, 0, 1, RESTING_OFF)
+	
+	print("_createCard", index )
 
 	local card = Instance.new("Frame")
 	card.Name                   = "Company" .. index

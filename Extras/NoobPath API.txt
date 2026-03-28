@@ -1,4 +1,6 @@
+modules should be placed at Modules.Shared "NoobPath"
 NoobPath is a Pathfinding module script with Auto Timeout, Non-humanoid support and Waypoint adjustments!
+https://devforum.roblox.com/t/noobpath-easy-pathfinding/3254514
 
 DOCUMENTATION:
 CONSTRUCTOR:

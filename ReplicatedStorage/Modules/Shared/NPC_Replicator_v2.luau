@@ -18,7 +18,7 @@ function NpcReplicator.new(id: string, clientModel: Model)
 
 	self.Id = id
 	self.Client = clientModel
-	self.Root = clientModel:WaitForChild("HumanoidRootPart")
+	self.Root = clientModel.HumanoidRootPart
 
 	self.Snapshots = {}
 	self.BufferTime = 0.3	--0.1
@@ -38,7 +38,7 @@ function NpcReplicator.new(id: string, clientModel: Model)
 		end
 	end
 
-	local humanoid = clientModel:FindFirstChildOfClass("Humanoid")
+	local humanoid = clientModel.Humanoid
 	if humanoid then
 		for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
 			if state ~= Enum.HumanoidStateType.None then
@@ -134,45 +134,45 @@ end
 -- Smoothing core logic. This is the function holding the entirety of the module
 -- Extra info: If no future snapshot exist. An extrapolation will occur
 function NpcReplicator:Render(dt)
-    if not self.Snapshots then return end
-    local latest = self.Snapshots[#self.Snapshots]
-    if not latest then return end
+	if not self.Snapshots then return end
+	local latest = self.Snapshots[#self.Snapshots]
+	if not latest then return end
 
-    local isMoving = false
-    local renderTime = workspace:GetServerTimeNow() - self.BufferTime
-    local timeSinceLatest = renderTime - latest.t
-    
-    local s1, s2
-    if #self.Snapshots >= 2 then
-        for i = #self.Snapshots - 1, 1, -1 do
-            if self.Snapshots[i].t <= renderTime then
-                s1 = self.Snapshots[i]
-                s2 = self.Snapshots[i + 1]
-                break
-            end
-        end
-    end
+	local isMoving = false
+	local renderTime = workspace:GetServerTimeNow() - self.BufferTime
+	local timeSinceLatest = renderTime - latest.t
 
-    if s1 and s2 then
-        -- Interpolate between two known points
-        local alpha = math.clamp((renderTime - s1.t) / (s2.t - s1.t), 0, 1)
-        self.Root.CFrame = s1.cf:Lerp(s2.cf, alpha)
-    else
-        -- Extrapolate or stay at latest position
-        local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
-        self.Root.CFrame = latest.cf + latest.v * extrapolationDt
-    end
+	local s1, s2
+	if #self.Snapshots >= 2 then
+		for i = #self.Snapshots - 1, 1, -1 do
+			if self.Snapshots[i].t <= renderTime then
+				s1 = self.Snapshots[i]
+				s2 = self.Snapshots[i + 1]
+				break
+			end
+		end
+	end
 
-    -- Calculate real visual speed to drive animations
-    local currentPos = self.Root.Position
-    local visualSpeed = (currentPos - self.LastPos).Magnitude / (dt > 0 and dt or 0.01)
-    self.LastPos = currentPos
+	if s1 and s2 then
+		-- Interpolate between two known points
+		local alpha = math.clamp((renderTime - s1.t) / (s2.t - s1.t), 0, 1)
+		self.Root.CFrame = s1.cf:Lerp(s2.cf, alpha)
+	else
+		-- Extrapolate or stay at latest position
+		local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
+		self.Root.CFrame = latest.cf + latest.v * extrapolationDt
+	end
 
-    -- Update linked animator state
-    if self.Animator then
-        -- Threshold of 0.5 studs/sec to account for micro-jitter
-        self.Animator:SetWalking(visualSpeed > 0.5)
-    end
+	-- Calculate real visual speed to drive animations
+	local currentPos   = self.Root.Position
+	local actualDelta  = (currentPos - self.LastPos).Magnitude
+	local visualSpeed  = actualDelta / (dt > 0 and dt or 0.01)
+	self.LastPos       = currentPos
+
+	if self.Animator then
+		-- Increased threshold slightly for line infantry march stability
+		self.Animator:SetWalking(visualSpeed > 1.5)
+	end
 end
 
 -->>>>>>>>>>>>

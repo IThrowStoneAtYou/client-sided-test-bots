@@ -13,15 +13,16 @@ local PhysicsService    = game:GetService("PhysicsService")
 
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local NoobPath          = require(ReplicatedStorage.Modules.Shared:WaitForChild("NoobPath"))
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 
 -- ── Config ────────────────────────────────────────────────────────────
 local WALK_SPEED    = 14
-local CHUNK_SIZE    = 12
+local CHUNK_SIZE    = 50
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
-local CULL_RADIUS   = 350
+local CULL_RADIUS   = 1000       -- Increased to match Napoleonic battlefield scale
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
 local MAX_BOTS      = 300        -- per company
@@ -123,21 +124,21 @@ end
 local function pickNewTarget(npc)
 	npc.Target       = randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN)
 	npc.LastMoveTime = os.clock()
-	npc.Humanoid:MoveTo(npc.Target)
+	npc.Pathfinder:Run(npc.Target)
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
 -->>>>>>>>>>>>
 -- Creates a new NPC entity, sets network ownership to server, and registers it in the system
-local function spawnNpc(spawnCF: CFrame?)
+local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 	local shortId   = nextShortId
 	nextShortId     = nextShortId + 1
 
 	local model    = SERVER_MODEL:Clone()
 	model.Name     = "NPC_" .. shortId
 
-	local root     = model:WaitForChild("HumanoidRootPart")
-	local humanoid = model:WaitForChild("Humanoid")
+	local root     = model.HumanoidRootPart
+	local humanoid = model.Humanoid
 	humanoid.WalkSpeed = WALK_SPEED
 
 	local cf = spawnCF or CFrame.new(
@@ -149,16 +150,26 @@ local function spawnNpc(spawnCF: CFrame?)
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
+			part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
+			part.CanTouch = false -- Optimization: Server NPCs don't need to trigger Touched events
+			part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
 			part.CollisionGroup = NPC_COLLISION_GROUP
 			part:SetNetworkOwner(nil)
 		end
 	end
+
+	local pathfinder = NoobPath.Humanoid(model, {
+		WaypointSpacing = 6,
+		AgentRadius = 2,
+		AgentHeight = 5,
+	})
 
 	local npc = {
 		ShortId        = shortId,
 		Model          = model,
 		Root           = root,
 		Humanoid       = humanoid,
+		Pathfinder     = pathfinder,
 		LastMoveTime   = 0,
 		LastSentCF     = cf,
 		IsRegiment     = spawnCF ~= nil,
@@ -166,20 +177,24 @@ local function spawnNpc(spawnCF: CFrame?)
 		MoveRetries    = 0,
 	}
 
-	humanoid.MoveToFinished:Connect(function(reached)
+	pathfinder.Reached:Connect(function()
+		if not npc.IsRegiment then
+			pickNewTarget(npc)
+		else
+			npc.MoveRetries = 0
+		end
+	end)
+
+	pathfinder.Trapped:Connect(function()
 		if not npc.IsRegiment then
 			pickNewTarget(npc)
 			return
 		end
 
-		if reached then
-			npc.MoveRetries = 0
-		elseif npc.RegimentTarget then
-			npc.MoveRetries += 1
-			if npc.MoveRetries <= MOVE_RETRIES then
-				humanoid:MoveTo(npc.RegimentTarget)
-				npc.LastMoveTime = os.clock()
-			end
+		npc.MoveRetries += 1
+		if npc.MoveRetries <= MOVE_RETRIES and npc.RegimentTarget then
+			npc.Pathfinder:Run(npc.RegimentTarget)
+			npc.LastMoveTime = os.clock()
 		end
 	end)
 
@@ -187,16 +202,18 @@ local function spawnNpc(spawnCF: CFrame?)
 
 	activeNpcs[shortId] = npc
 
-	for player in pairs(readyPlayers) do
-		Network.NpcSpawn.Fire(player, {
-			Type = "Single",
-			id   = shortId,
-			pos  = cf.Position,
-			yaw  = getYaw(cf),
-		})
+	if not suppressNotify then
+		for player in pairs(readyPlayers) do
+			Network.NpcSpawn.Fire(player, {
+				Type = "Single",
+				id   = shortId,
+				pos  = cf.Position,
+				yaw  = getYaw(cf),
+			})
+		end
 	end
 
-	return npc
+	return npc, { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
 end
 
 -- ── Company Management ────────────────────────────────────────────────
@@ -242,6 +259,10 @@ local function despawnCompany(player: Player, companyIndex: number)
 				if farLastSent[p] then farLastSent[p][shortId] = nil end
 			end
 
+			if activeNpcs[shortId].Pathfinder then
+				activeNpcs[shortId].Pathfinder:Destroy()
+			end
+
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
 		end
@@ -264,6 +285,111 @@ end
 -- Spawns nc companies of n bots each, side-by-side centered in front of the player.
 -->>>>>>>>>>>>
 -- Logic for bulk-spawning multiple companies in a line based on player facing direction
+
+-- Spawns nc companies of n bots each, side-by-side centered in front of the player.
+local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
+	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
+	botCount     = math.clamp(botCount, 1, MAX_BOTS)
+
+	local char = player.Character
+	if not char then return end
+	local playerRoot = char:FindFirstChild("HumanoidRootPart")
+	if not playerRoot then return end
+
+	despawnAllCompanies(player)
+	companies[player] = {}
+
+	local look = playerRoot.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.01 then 
+		flatLook = Vector3.new(0, 0, -1)
+	end
+	flatLook = flatLook.Unit
+
+	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
+
+	local totalSpawnData = {}
+	-- Default formation per company: up to 10 files wide
+	local files        = math.min(botCount, 10)
+	local ranks        = math.ceil(botCount / files)
+	local companyWidth = (files - 1) * RANK_SPACING
+
+	-- Center all companies across the player's facing direction
+	local totalWidth  = companyCount * companyWidth + (companyCount - 1) * COMPANY_GAP
+	local startOffset = -totalWidth / 2
+
+	-- For thread‑safe collection of spawned NPC data
+	local lock = {}
+	local pending = companyCount * botCount  -- total NPCs to spawn
+	local results = {}                        -- will store { companyIndex, slotIndex, shortId, spawnData }
+
+	for i = 1, companyCount do
+		local centerOffset = startOffset + (i - 1) * (companyWidth + COMPANY_GAP) + companyWidth / 2
+		local anchorPos    = playerRoot.Position + flatLook * SPAWN_OFFSET + right * centerOffset
+		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
+		local slots        = RegimentFormation.getSlots(anchorCF, botCount, ranks, files)
+		local slotIds      = {}
+
+		for j, slotCF in ipairs(slots) do
+			task.spawn(function()
+				local npc, data = spawnNpc(slotCF + Vector3.new(0, 4, 0), true)
+				if npc then
+					npc.RegimentTarget = slotCF.Position
+					npc.Pathfinder:Run(slotCF.Position)
+					npc.LastMoveTime = os.clock()
+					-- Store the result thread‑safely
+					local resultData = {
+						companyIndex = i,
+						slotIndex = j,
+						shortId = npc.ShortId,
+						spawnData = data,
+					}
+					table.insert(results, resultData)
+				end
+
+				pending = pending - 1
+				if pending == 0 then
+					-- All spawns finished – assemble data and send batch
+					local allSpawnData = {}
+					local companiesSlots = {}
+					for _, res in ipairs(results) do
+						allSpawnData[#allSpawnData + 1] = res.spawnData
+						if not companiesSlots[res.companyIndex] then
+							companiesSlots[res.companyIndex] = {}
+						end
+						companiesSlots[res.companyIndex][res.slotIndex] = res.shortId
+					end
+
+					-- Send spawn batch to all ready players
+					for p in pairs(readyPlayers) do
+						Network.NpcSpawn.Fire(p, { Type = "Batch", list = allSpawnData })
+					end
+
+					-- Build company tables
+					for idx = 1, companyCount do
+						local slotList = {}
+						if companiesSlots[idx] then
+							for _, sid in pairs(companiesSlots[idx]) do
+								slotList[#slotList + 1] = sid
+							end
+						end
+						companies[player][idx] = {
+							anchorCF = anchorCF, -- use the same anchor for all? Actually each company has its own anchor
+							slots    = slotList,
+							ranks    = ranks,
+							files    = files,
+						}
+					end
+
+					syncCompanies(player)
+					print(string.format("[NPC] %s spawned %d companies × %d bots each", player.Name, companyCount, botCount))
+				end
+			end)
+		end
+	end
+end
+
+--[[
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
 	botCount     = math.clamp(botCount, 1, MAX_BOTS)
@@ -286,6 +412,8 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 
 	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
 
+--
+	local totalSpawnData = {}
 	-- Default formation per company: up to 10 files wide
 	local files        = math.min(botCount, 10)
 	local ranks        = math.ceil(botCount / files)
@@ -303,11 +431,12 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		local slotIds      = {}
 
 		for j, slotCF in ipairs(slots) do
-			local npc = spawnNpc(slotCF + Vector3.new(0, 4, 0))
+			local npc, data = spawnNpc(slotCF + Vector3.new(0, 4, 0), true)
 			npc.RegimentTarget = slotCF.Position
-			npc.Humanoid:MoveTo(slotCF.Position)
+			npc.Pathfinder:Run(slotCF.Position)
 			npc.LastMoveTime = os.clock()
 			slotIds[j] = npc.ShortId
+			table.insert(totalSpawnData, data)
 		end
 
 		companies[player][i] = {
@@ -318,9 +447,17 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		}
 	end
 
+	for p in pairs(readyPlayers) do
+		Network.NpcSpawn.Fire(p, {
+			Type = "Batch",
+			list = totalSpawnData
+		})
+	end
+
 	syncCompanies(player)
 	print(string.format("[NPC] %s spawned %d companies × %d bots each", player.Name, companyCount, botCount))
 end
+--[[]]
 
 -->>>>>>>>>>>>
 -- Moves an existing company into a new formation at a target position
@@ -350,9 +487,27 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		npc.RegimentTarget = slots[i].Position
 		npc.MoveRetries    = 0
 		npc.IsRegiment     = true
-		npc.Humanoid:MoveTo(slots[i].Position)
+		-- Launch async pathfinding
+		task.spawn(function()
+			npc.Pathfinder:Run(slots[i].Position)
+			npc.LastMoveTime = os.clock()
+		end)
+	end
+
+--[[
+	for i, shortId in ipairs(company.slots) do
+		local npc = activeNpcs[shortId]
+		if not (npc and npc.Model and npc.Model.Parent) then 
+			continue 
+		end
+
+		npc.RegimentTarget = slots[i].Position
+		npc.MoveRetries    = 0
+		npc.IsRegiment     = true
+		npc.Pathfinder:Run(slots[i].Position)
 		npc.LastMoveTime   = os.clock()
 	end
+	--[[]]
 
 	company.anchorCF = anchorCF
 	company.ranks    = ranks
@@ -383,7 +538,7 @@ end)
 Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, companyIndex)
 	if not companies[player] then return end
 	if typeof(anchorPos) ~= "Vector3" then return end
-	if typeof(facingDir) ~= "Vector3" then return end
+	if typeof(facingDir) ~= "Vector3" then return end -- huh
 	if anchorPos.Magnitude > 10000 then return end
 
 	companyIndex = math.floor(companyIndex)
@@ -435,9 +590,17 @@ RunService.Heartbeat:Connect(function(dt)
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
 
-	if not doNear and not doFar then return end
-	if doNear then nearAccum -= NEAR_RATE end
-	if doFar  then farAccum  -= FAR_RATE  end
+	if not doNear and not doFar then
+		return 
+	end
+
+	if doNear then
+		nearAccum -= NEAR_RATE 
+	end
+
+	if doFar  then
+		farAccum  -= FAR_RATE 
+	end
 
 	local timestamp     = workspace:GetServerTimeNow()
 	local deadIds       = {}
@@ -458,7 +621,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if doFar then
 			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
 		end
-		
+
 		if doNear and cfChanged(cf, npc.LastSentCF) then
 			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
 			npc.LastSentCF = cf
@@ -467,7 +630,10 @@ RunService.Heartbeat:Connect(function(dt)
 
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
-		if not farLastSent[player] then farLastSent[player] = {} end
+		if not farLastSent[player] then
+			farLastSent[player] = {} 
+		end
+
 		local playerFarSent = farLastSent[player]
 
 		local nearList = {}
@@ -477,7 +643,9 @@ RunService.Heartbeat:Connect(function(dt)
 		if doNear then
 			for _, entry in ipairs(dirtyEntries) do
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then nearList[#nearList + 1] = entry end
+				if dist <= CULL_RADIUS then
+					nearList[#nearList + 1] = entry
+				end
 			end
 		end
 
@@ -507,7 +675,10 @@ RunService.Heartbeat:Connect(function(dt)
 	for _, shortId in ipairs(deadIds) do
 		for player in pairs(readyPlayers) do
 			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
+
+			if farLastSent[player] then 
+				farLastSent[player][shortId] = nil 
+			end
 		end
 
 		activeNpcs[shortId] = nil
