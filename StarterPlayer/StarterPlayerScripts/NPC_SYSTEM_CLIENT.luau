@@ -41,6 +41,7 @@ local function ensureFolder(name)
 		f.Parent = workspace
 	end
 end
+
 ensureFolder("Npc_Registry")
 
 local function buildCFrame(pos, yaw)
@@ -53,7 +54,9 @@ local function clearHighlights()
 	for _, rep in pairs(replicators) do
 		if rep.Client then
 			local h = rep.Client:FindFirstChild(HIGHLIGHT_TAG)
-			if h then h.Enabled = false end
+			if h then 
+				h.Enabled = false
+			end
 		end
 	end
 end
@@ -61,6 +64,7 @@ end
 local function setHighlightVisible(clientModel, companyIndex, visible)
 	if not clientModel then return end
 	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
+	
 	if not h then
 		h = Instance.new("Highlight")
 		h.Name                = HIGHLIGHT_TAG
@@ -71,6 +75,7 @@ local function setHighlightVisible(clientModel, companyIndex, visible)
 		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
 		h.Parent              = clientModel
 	end
+	
 	h.Enabled = visible
 end
 
@@ -103,6 +108,7 @@ local function registerNpc(shortId, pos, yaw)
 
 	local rep           = NpcReplicator.new(shortId, clientModel)
 	rep.Root.CFrame     = initialCF
+	
 	-- Initialize with current time to prevent the replicator from thinking it's "behind" immediately
 	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow()) 
 
@@ -275,6 +281,7 @@ end)
 
 Network.NpcCompanySync.On(function(data)
 	companySlots = {}
+	
 	for _, entry in ipairs(data) do
 		local slotSet = {}
 		for _, sid in ipairs(entry.slots) do 
@@ -285,6 +292,7 @@ Network.NpcCompanySync.On(function(data)
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
+		
 		companySlots[entry.index] = slotSet
 	end
 
@@ -304,6 +312,7 @@ local function updateRayFilter()
 
 	rayParams.FilterDescendantsInstances = list
 end
+
 updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
@@ -360,6 +369,7 @@ end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if not dragActive then return end
+	
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
 	dragActive = false

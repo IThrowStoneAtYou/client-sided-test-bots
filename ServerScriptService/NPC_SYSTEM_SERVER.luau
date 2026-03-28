@@ -233,7 +233,9 @@ local function syncCompanies(player: Player)
 			})
 		end
 
-		table.sort(data, function(a, b) return a.index < b.index end)
+		table.sort(data, function(a, b) 
+			return a.index < b.index
+		end)
 	end
 
 	Network.NpcCompanySync.Fire(player, data)
@@ -256,7 +258,9 @@ local function despawnCompany(player: Player, companyIndex: number)
 		if activeNpcs[shortId] then
 			for p in pairs(readyPlayers) do
 				Network.NpcDespawn.Fire(p, shortId)
-				if farLastSent[p] then farLastSent[p][shortId] = nil end
+				if farLastSent[p] then 
+					farLastSent[p][shortId] = nil
+				end
 			end
 
 			if activeNpcs[shortId].Pathfinder then
@@ -303,11 +307,13 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	if flatLook.Magnitude < 0.01 then 
 		flatLook = Vector3.new(0, 0, -1)
 	end
+	
 	flatLook = flatLook.Unit
 
 	local right = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
 
 	local totalSpawnData = {}
+	
 	-- Default formation per company: up to 10 files wide
 	local files        = math.min(botCount, 10)
 	local ranks        = math.ceil(botCount / files)
@@ -372,6 +378,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 								slotList[#slotList + 1] = sid
 							end
 						end
+						
 						companies[player][idx] = {
 							anchorCF = anchorCF, -- use the same anchor for all? Actually each company has its own anchor
 							slots    = slotList,
@@ -489,7 +496,9 @@ local function hookChat(player: Player)
 end
 
 Players.PlayerAdded:Connect(hookChat)
-for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
+for _, p in ipairs(Players:GetPlayers()) do
+	hookChat(p)
+end
 
 -- ── Broadcast Loop ────────────────────────────────────────────────────
 local nearAccum = 0

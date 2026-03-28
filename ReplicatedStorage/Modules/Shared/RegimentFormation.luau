@@ -19,7 +19,9 @@ function RegimentFormation.dragToLayout(count: number, dragMagnitude: number): (
 	-- files derived from width dragged, clamped between 1 and count
 	local files = math.floor(dragMagnitude / RANK_SPACING) + 1
 	files = math.clamp(files, 1, count)   -- count = fully flat single rank
+	
 	local ranks = math.ceil(count / files)
+	
 	return ranks, files
 end
 
