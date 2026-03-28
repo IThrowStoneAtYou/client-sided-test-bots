@@ -1,40 +1,39 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
--- Version 3.2.0
--- Description: 
--- This script handles the local player's interaction with the NPC system.
--- It manages the HUD, selection logic, movement previews (dots/arrows), 
--- and acts as the bridge between network events and client-side replicators.
+-- Version 3.5.0
+-- Description:
+-- Single company: click = left edge, drag right = expand width.
+-- Multi company: left edge of company 1 at click, drag right until right edge of last company.
+-- Plain click: troops center on click point, facing derived from camera.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
 
-local NpcReplicator     = require(ReplicatedStorage.Modules:WaitForChild("NPC_Replicator_v2"))
-local NpcAnimator       = require(ReplicatedStorage.Modules:WaitForChild("NpcAnimator"))
-local RegimentFormation = require(ReplicatedStorage.Modules:WaitForChild("RegimentFormation"))
+local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
+local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
+local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
+local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
-local DOT_SIZE       = Vector3.new(1.2, 0.3, 1.2)
-local DOT_COLOR      = Color3.fromRGB(255, 215, 60)
+local HIGHLIGHT_TAG  = "CompanyHighlight"
+
+local RANK_SPACING = 4.5   -- must mirror RegimentFormation
+local COMPANY_GAP  = 8
 
 local Network = require(game.ReplicatedStorage.Blink.Client)
 
 -- ── State ─────────────────────────────────────────────────────────────
-local localPlayer     = Players.LocalPlayer
-local camera          = workspace.CurrentCamera
-local replicators     = {}
-local animators       = {}
-local myCompanies     = {}   -- [companyIndex] = { count }
-local companySlots    = {}   -- [companyIndex] = { [shortId] = true }
-local selectedCompany = nil
-local lastFormation   = {}   -- [companyIndex] = { ranks, files }
+local localPlayer   = Players.LocalPlayer
+local camera        = workspace.CurrentCamera
+local replicators   = {}
+local animators     = {}
+local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
+local lastFormation = {}   -- [companyIndex] = { ranks, files }
 
--->>>>>>>>>>>>
--- Ensures workspace folders exist for organized NPC storage and preview dots
 local function ensureFolder(name)
 	if not workspace:FindFirstChild(name) then
 		local f = Instance.new("Folder")
@@ -43,43 +42,13 @@ local function ensureFolder(name)
 	end
 end
 ensureFolder("Npc_Registry")
-ensureFolder("Client_Preview_Dots")
 
--->>>>>>>>>>>>
--- Helper to construct a CFrame from position and Y-axis rotation (Yaw)
 local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 end
 
--- ── HUD Constants ─────────────────────────────────────────────────────
-local ROMAN          = { "I", "II", "III", "IV" }
-local COMPANY_COLORS = {
-	Color3.fromRGB(65,  105, 210),  -- I:   Royal Blue
-	Color3.fromRGB(200, 55,  55),   -- II:  Red
-	Color3.fromRGB(55,  170, 90),   -- III: Green
-	Color3.fromRGB(210, 160, 35),   -- IV:  Gold
-}
+-- ── Highlights ────────────────────────────────────────────────────────
 
-local CARD_W      = 88
-local CARD_H      = 122
-local CARD_GAP    = 10
-local PEEK_H      = 30                             -- px visible when collapsed
-local RAISED_OFF  = -18                            -- Y offset from screen bottom when raised
-local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H) -- = -18 + 92 = 74
-
-local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-
--- Horizontal center offsets for each card (centered around screen midpoint)
--- Total span = 4*88 + 3*10 = 382 → left edge at -191, each card width+gap = 98
-local function cardXOffset(i)
-	return -191 + (i - 1) * (CARD_W + CARD_GAP) + CARD_W / 2
-end
-
--- ── Highlight Helpers ─────────────────────────────────────────────────
-local HIGHLIGHT_TAG = "CompanyHighlight"
-
--->>>>>>>>>>>>
--- Removes the selection highlights from all NPCs currently rendered
 local function clearHighlights()
 	for _, rep in pairs(replicators) do
 		if rep.Client then
@@ -89,43 +58,38 @@ local function clearHighlights()
 	end
 end
 
--->>>>>>>>>>>>
--- Adds a visual highlight to a specific NPC model based on its company color
 local function addHighlight(clientModel, companyIndex)
 	if not clientModel then return end
 	local existing = clientModel:FindFirstChild(HIGHLIGHT_TAG)
 	if existing then existing:Destroy() end
-
-	local color = COMPANY_COLORS[companyIndex]
 	local h = Instance.new("Highlight")
 	h.Name                = HIGHLIGHT_TAG
-	h.FillColor           = color
-	h.OutlineColor        = color
+	h.FillColor           = CompanyHUD.getColor(companyIndex)
+	h.OutlineColor        = CompanyHUD.getColor(companyIndex)
 	h.FillTransparency    = 0.62
 	h.OutlineTransparency = 0.1
 	h.DepthMode           = Enum.HighlightDepthMode.Occluded
 	h.Parent              = clientModel
 end
 
--->>>>>>>>>>>>
--- Applies highlights to all NPCs belonging to the currently selected company
-local function applyHighlights(companyIndex)
+local function applyHighlights(selectedList)
 	clearHighlights()
-	if not companyIndex then return end
-	local slots = companySlots[companyIndex]
-	if not slots then return end
-
-	for shortId in pairs(slots) do
-		local rep = replicators[shortId]
-		if rep and rep.Client then
-			addHighlight(rep.Client, companyIndex)
+	for _, compIdx in ipairs(selectedList) do
+		local slots = companySlots[compIdx]
+		if not slots then continue end
+		for shortId in pairs(slots) do
+			local rep = replicators[shortId]
+			if rep and rep.Client then addHighlight(rep.Client, compIdx) end
 		end
 	end
 end
 
+-- ── HUD ───────────────────────────────────────────────────────────────
+local hud = CompanyHUD.new(function(selectedList)
+	applyHighlights(selectedList)
+end)
+
 -- ── NPC Registration ──────────────────────────────────────────────────
--->>>>>>>>>>>>
--- Spawns the client-side representation of an NPC and initializes its replicator/animator
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
 	local clientModel   = CLIENT_MODEL:Clone()
@@ -135,231 +99,127 @@ local function registerNpc(shortId, pos, yaw)
 	replicators[shortId] = rep
 	animators[shortId]   = NpcAnimator.new(clientModel)
 
-	-- Highlight if already selected and this NPC belongs to selected company
-	if selectedCompany
-		and companySlots[selectedCompany]
-		and companySlots[selectedCompany][shortId]
-	then
-		addHighlight(clientModel, selectedCompany)
+	for _, compIdx in ipairs(hud:getSelectedList()) do
+		if companySlots[compIdx] and companySlots[compIdx][shortId] then
+			addHighlight(clientModel, compIdx)
+			break
+		end
 	end
 end
 
--- ── HUD ───────────────────────────────────────────────────────────────
-local PlayerGui = localPlayer:WaitForChild("PlayerGui")
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name            = "CompanyHUD"
-screenGui.ResetOnSpawn    = false
-screenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-screenGui.IgnoreGuiInset  = true
-screenGui.Parent          = PlayerGui
-
--- Cards table: [i] = { frame, countLabel, stroke, hovered, raisedPos, restingPos }
-local companyCards = {}
+-- ── Formation Layout ──────────────────────────────────────────────────
 
 -->>>>>>>>>>>>
--- Updates a specific UI card's state (Selected, Hovered, or Hidden)
-local function refreshCard(i)
-	local cd      = companyCards[i]
-	local company = myCompanies[i]
-	local isSel   = selectedCompany == i
+-- Returns the total horizontal span of all selected companies using lastFormation,
+-- used to back-compute the left edge for plain clicks.
+local function getTotalWidthFromLastFormation(selectedList): number
+	local total = 0
+	local nc    = 0
 
-	cd.frame.Visible = company ~= nil
-	if not company then return end
-
-	cd.countLabel.Text          = tostring(company.count)
-	cd.stroke.Thickness         = isSel and 3 or 1.5
-	cd.stroke.Transparency      = isSel and 0 or 0.6
-	cd.frame.BackgroundColor3   = isSel
-		and Color3.fromRGB(26, 30, 50)
-		or  Color3.fromRGB(14, 14, 22)
-
-	local shouldRaise = isSel or cd.hovered
-	TweenService:Create(cd.frame, SLIDE_TWEEN, {
-		Position = shouldRaise and cd.raisedPos or cd.restingPos
-	}):Play()
-end
-
--->>>>>>>>>>>>
--- Force-refreshes the UI state for all 4 company slots
-local function updateAllCards()
-	for i = 1, 4 do refreshCard(i) end
-end
-
--->>>>>>>>>>>>
--- Changes the active company selection and updates visual highlights
-local function setSelectedCompany(idx)
-	local prev = selectedCompany
-	selectedCompany = idx
-	applyHighlights(idx)
-
-	-- Refresh both the previously selected and newly selected card
-	if prev then refreshCard(prev) end
-	if idx  then refreshCard(idx)  end
-end
-
--->>>>>>>>>>>>
--- Constructs the UI elements for a company card and binds hover/click events
-local function createCard(index: number)
-	local accent     = COMPANY_COLORS[index]
-	local xOff       = cardXOffset(index)
-	local raisedPos  = UDim2.new(0.5, xOff, 1, RAISED_OFF)
-	local restingPos = UDim2.new(0.5, xOff, 1, RESTING_OFF)
-
-	-- Card frame
-	local card = Instance.new("Frame")
-	card.Name                   = "Company" .. index
-	card.AnchorPoint            = Vector2.new(0.5, 1)
-	card.Position               = restingPos
-	card.Size                   = UDim2.new(0, CARD_W, 0, CARD_H)
-	card.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
-	card.BackgroundTransparency = 0.1
-	card.Visible                = false
-	card.Parent                 = screenGui
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 9)
-	corner.Parent = card
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color        = accent
-	stroke.Thickness    = 1.5
-	stroke.Transparency = 0.6
-	stroke.Parent       = card
-
-	-- Accent bar
-	local bar = Instance.new("Frame")
-	bar.Size             = UDim2.new(1, 0, 0, 7)
-	bar.BackgroundColor3 = accent
-	bar.BorderSizePixel  = 0
-	bar.ZIndex           = 2
-	bar.Parent           = card
-
-	local barCorner = Instance.new("UICorner")
-	barCorner.CornerRadius = UDim.new(0, 9)
-	barCorner.Parent = bar
-
-	local barFill = Instance.new("Frame")
-	barFill.Size             = UDim2.new(1, 0, 0, 5)
-	barFill.Position         = UDim2.new(0, 0, 1, -5)
-	barFill.BackgroundColor3 = accent
-	barFill.BorderSizePixel  = 0
-	barFill.ZIndex           = 2
-	barFill.Parent           = bar
-
-	-- "COMPANY" label
-	local compTitle = Instance.new("TextLabel")
-	compTitle.Size               = UDim2.new(1, 0, 0, 14)
-	compTitle.Position           = UDim2.new(0, 0, 0, 12)
-	compTitle.BackgroundTransparency = 1
-	compTitle.Text               = "COMPANY"
-	compTitle.TextColor3         = Color3.fromRGB(145, 145, 160)
-	compTitle.TextSize           = 9
-	compTitle.Font               = Enum.Font.GothamBold
-	compTitle.TextXAlignment     = Enum.TextXAlignment.Center
-	compTitle.ZIndex             = 2
-	compTitle.Parent             = card
-
-	-- Roman numeral
-	local romanLabel = Instance.new("TextLabel")
-	romanLabel.Size              = UDim2.new(1, 0, 0, 26)
-	romanLabel.Position          = UDim2.new(0, 0, 0, 24)
-	romanLabel.BackgroundTransparency = 1
-	romanLabel.Text              = ROMAN[index]
-	romanLabel.TextColor3        = accent
-	romanLabel.TextSize          = 22
-	romanLabel.Font              = Enum.Font.GothamBold
-	romanLabel.TextXAlignment    = Enum.TextXAlignment.Center
-	romanLabel.ZIndex            = 2
-	romanLabel.Parent            = card
-
-	-- Divider
-	local divider = Instance.new("Frame")
-	divider.Size             = UDim2.new(0.6, 0, 0, 1)
-	divider.Position         = UDim2.new(0.2, 0, 0, 54)
-	divider.BackgroundColor3 = accent
-	divider.BackgroundTransparency = 0.5
-	divider.BorderSizePixel  = 0
-	divider.ZIndex           = 2
-	divider.Parent           = card
-
-	-- Bot count
-	local countLabel = Instance.new("TextLabel")
-	countLabel.Size              = UDim2.new(1, 0, 0, 40)
-	countLabel.Position          = UDim2.new(0, 0, 0, 58)
-	countLabel.BackgroundTransparency = 1
-	countLabel.Text              = "0"
-	countLabel.TextColor3        = Color3.fromRGB(230, 230, 230)
-	countLabel.TextSize          = 36
-	countLabel.Font              = Enum.Font.GothamBold
-	countLabel.TextXAlignment    = Enum.TextXAlignment.Center
-	countLabel.ZIndex            = 2
-	countLabel.Parent            = card
-
-	-- "MEN" label
-	local menLabel = Instance.new("TextLabel")
-	menLabel.Size               = UDim2.new(1, 0, 0, 14)
-	menLabel.Position           = UDim2.new(0, 0, 0, 98)
-	menLabel.BackgroundTransparency = 1
-	menLabel.Text               = "MEN"
-	menLabel.TextColor3         = Color3.fromRGB(110, 110, 125)
-	menLabel.TextSize           = 9
-	menLabel.Font               = Enum.Font.Gotham
-	menLabel.TextXAlignment     = Enum.TextXAlignment.Center
-	menLabel.ZIndex             = 2
-	menLabel.Parent             = card
-
-	-- Click/hover button (covers whole card)
-	local btn = Instance.new("TextButton")
-	btn.Size               = UDim2.new(1, 0, 1, 0)
-	btn.BackgroundTransparency = 1
-	btn.Text               = ""
-	btn.ZIndex             = 10
-	btn.Parent             = card
-
-	local cd = {
-		frame      = card,
-		countLabel = countLabel,
-		stroke     = stroke,
-		hovered    = false,
-		raisedPos  = raisedPos,
-		restingPos = restingPos,
-	}
-	
-	companyCards[index] = cd
-
-	btn.MouseEnter:Connect(function()
-		cd.hovered = true
-		if myCompanies[index] then
-			TweenService:Create(card, SLIDE_TWEEN, { Position = raisedPos }):Play()
+	for _, compIdx in ipairs(selectedList) do
+		local slots = companySlots[compIdx]
+		local count = 0
+		for _ in pairs(slots or {}) do
+			count += 1
 		end
-	end)
 
-	btn.MouseLeave:Connect(function()
-		cd.hovered = false
-		if selectedCompany ~= index and myCompanies[index] then
-			TweenService:Create(card, SLIDE_TWEEN, { Position = restingPos }):Play()
+		if count == 0 then 
+			continue 
 		end
-	end)
 
-	btn.MouseButton1Click:Connect(function()
-		if not myCompanies[index] then return end
-		if selectedCompany == index then
-			setSelectedCompany(nil)
+		local f     = lastFormation[compIdx]
+		local files = f and f.files or math.min(count, 10)
+		total += (files - 1) * RANK_SPACING
+		nc    += 1
+	end
+
+	if nc > 1 then 
+		total += (nc - 1) * COMPANY_GAP
+	end
+
+	return total
+end
+
+-->>>>>>>>>>>>
+-- Core layout function. All placement is LEFT-BASED.
+--
+-- leftEdge     : world position of the left edge of the leftmost company.
+-- rightDir     : unit vector pointing "right" across the formation line.
+--               facingDir is derived as 90° CCW: (rightDir.Z, 0, -rightDir.X).
+-- totalDragMag : total drag distance covering ALL companies + gaps.
+--               nil = use lastFormation ranks/files per company.
+--
+-- For single company:  totalDragMag == width of that one company.
+-- For multi company:   totalDragMag == sum of all company widths + all gaps.
+local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDragMag)
+	-- Facing is always perpendicular to the right/drag direction
+	local facingDir = Vector3.new(rightDir.Z, 0, -rightDir.X)
+
+	-- Collect valid companies
+	local infos = {}
+	for _, compIdx in ipairs(selectedList) do
+		local slots = companySlots[compIdx]
+		local count = 0
+
+		for _ in pairs(slots or {}) do 
+			count += 1 
+		end
+
+		if count > 0 then
+			infos[#infos + 1] = { compIdx = compIdx, count = count }
+		end
+	end
+
+	if #infos == 0 then 
+		return {}, facingDir 
+	end
+
+	local nc = #infos
+
+	-- Per-company drag magnitude: subtract all gaps then divide evenly
+	local perCompanyMag
+	if totalDragMag then
+		local gapTotal  = (nc - 1) * COMPANY_GAP
+		perCompanyMag   = math.max((totalDragMag - gapTotal) / nc, 0)
+	end
+
+	local cursor = 0   -- running offset from leftEdge along rightDir (studs)
+	local result = {}
+
+	for _, info in ipairs(infos) do
+		local ranks, files
+		if perCompanyMag then
+			ranks, files = RegimentFormation.dragToLayout(info.count, perCompanyMag)
 		else
-			setSelectedCompany(index)
+			local f = lastFormation[info.compIdx]
+			files   = f and f.files or math.min(info.count, 10)
+			ranks   = f and f.ranks or math.ceil(info.count / files)
 		end
-	end)
-end
 
-for i = 1, 4 do 
-	createCard(i)
+		local compWidth  = (files - 1) * RANK_SPACING
+
+		-- Company anchor = center of this company's front rank
+		local compCenter = leftEdge + rightDir * (cursor + compWidth / 2)
+		cursor += compWidth + COMPANY_GAP
+
+		local anchorCF = CFrame.lookAt(compCenter, compCenter + facingDir)
+		local slots    = RegimentFormation.getSlots(anchorCF, info.count, ranks, files)
+
+		result[#result + 1] = {
+			compIdx = info.compIdx,
+			anchor  = compCenter,
+			ranks   = ranks,
+			files   = files,
+			slots   = slots,
+			color   = CompanyHUD.getColor(info.compIdx),
+		}
+	end
+
+	return result, facingDir
 end
 
 -- ── Event Handlers ────────────────────────────────────────────────────
 
--->>>>>>>>>>>>
--- Handles initial spawning of NPCs (either one-by-one or in bulk batches)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
 		registerNpc(data.id, data.pos, data.yaw)
@@ -370,8 +230,6 @@ Network.NpcSpawn.On(function(data)
 	end
 end)
 
--->>>>>>>>>>>>
--- Receives high-frequency position updates and pushes them to the interpolation buffer
 Network.NpcBatch.On(function(timestamp, chunk)
 	for _, entry in ipairs(chunk) do
 		local rep = replicators[entry.id]
@@ -381,15 +239,16 @@ Network.NpcBatch.On(function(timestamp, chunk)
 	end
 end)
 
--->>>>>>>>>>>>
--- Cleans up an NPC from the client world when it is despawned on the server
 Network.NpcDespawn.On(function(shortId)
 	local rep = replicators[shortId]
-	if not rep then return end
-	if rep.Client then 
-		rep.Client:Destroy() 
+	if not rep then 
+		return
 	end
-	
+
+	if rep.Client then 
+		rep.Client:Destroy()
+	end
+
 	rep:Destroy()
 	replicators[shortId] = nil
 
@@ -400,168 +259,32 @@ Network.NpcDespawn.On(function(shortId)
 	end
 end)
 
--->>>>>>>>>>>>
--- Syncs the client's knowledge of which NPCs belong to which of their 4 companies
 Network.NpcCompanySync.On(function(data)
-	myCompanies  = {}
 	companySlots = {}
-
 	for _, entry in ipairs(data) do
-		myCompanies[entry.index] = { count = entry.count }
 		local slotSet = {}
-		for _, sid in ipairs(entry.slots) do
-			slotSet[sid] = true
-		end
+		for _, sid in ipairs(entry.slots) do slotSet[sid] = true end
 		companySlots[entry.index] = slotSet
 	end
-
-	-- Deselect if company no longer exists
-	if selectedCompany and not myCompanies[selectedCompany] then
-		selectedCompany = nil
-	end
-
-	applyHighlights(selectedCompany)
-	updateAllCards()
+	hud:syncCompanies(data)
+	applyHighlights(hud:getSelectedList())
 end)
 
--- ── Raycast / Preview ─────────────────────────────────────────────────
+-- ── Raycast / Preview Parts ───────────────────────────────────────────
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
--->>>>>>>>>>>>
--- Updates the raycast filter so move orders don't hit NPCs or the local character
 local function updateRayFilter()
 	local list = { workspace:WaitForChild("Npc_Registry") }
-	if localPlayer.Character then
+	if localPlayer.Character then 
 		table.insert(list, localPlayer.Character)
 	end
-	
+
 	rayParams.FilterDescendantsInstances = list
 end
-
--->>>>>>>>>>>>
--- Creates a neon part used for visual feedback during the movement drag/preview
 updateRayFilter()
 localPlayer.CharacterAdded:Connect(updateRayFilter)
 
-local function createPreviewPart(color, size)
-	local p = Instance.new("Part")
-	p.Anchored     = true
-	p.CanCollide   = false
-	p.CanQuery     = false
-	p.CastShadow   = false
-	
-	p.Material     = Enum.Material.Neon
-	p.Color        = color
-	p.Size         = size
-	p.Transparency = 1
-	p.Parent       = workspace.Client_Preview_Dots
-	
-	return p
-end
-
-local previewArrow = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, 4))
-local slotDots     = {}
-local activeDots   = 0
-
--->>>>>>>>>>>>
--- Maintains a pool of parts to show formation dots without constant instancing
-local function ensurePool(needed)
-	while #slotDots < needed do
-		slotDots[#slotDots + 1] = createPreviewPart(DOT_COLOR, DOT_SIZE)
-	end
-end
-
-local function showDots(slots)
-	-->>>>>>>>>>>>
-	-- Positions and reveals the formation dots based on calculated slot positions
-	ensurePool(#slots)
-	
-	for i, slotCF in ipairs(slots) do
-		slotDots[i].CFrame       = slotCF
-		slotDots[i].Transparency = 0.3
-	end
-	
-	for i = #slots + 1, activeDots do
-		slotDots[i].Transparency = 1
-	end
-	
-	activeDots = #slots
-end
-
--->>>>>>>>>>>>
--- Positions the "Facing" arrow in front of the formation preview
-local function setArrow(centre, facing, depth)
-	local arrowLen      = math.clamp(depth * 0.3, 2, 6)
-	previewArrow.Size   = Vector3.new(0.4, 0.4, arrowLen)
-	previewArrow.CFrame = CFrame.lookAt(
-		centre + facing * (arrowLen / 2 + 0.5),
-		centre + facing * (arrowLen / 2 + 0.5) + facing
-	)
-	
-	previewArrow.Transparency = 0
-end
-
--->>>>>>>>>>>>
--- Hides all preview elements (dots and arrow)
-local function hidePreview()
-	for i = 1, activeDots do
-		slotDots[i].Transparency = 1 
-	end
-	
-	activeDots = 0
-	previewArrow.Transparency = 1
-end
-
--->>>>>>>>>>>>
--- Creates a temporary visual "ghost" formation that fades out after an order is given
-local function spawnFadeDots(slots, anchor, facing, depth)
-	local fadeInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-	for _, slotCF in ipairs(slots) do
-		local p = createPreviewPart(DOT_COLOR, DOT_SIZE)
-		p.CFrame       = slotCF
-		p.Transparency = 0.3
-		
-		local t = TweenService:Create(p, fadeInfo, { Transparency = 1, Size = DOT_SIZE * 0.5 })
-		t:Play()
-		
-		t.Completed:Connect(function()
-			p:Destroy()
-		end)
-	end
-
-	local arrowLen = math.clamp(depth * 0.3, 2, 6)
-	local a = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, arrowLen))
-	
-	a.CFrame = CFrame.lookAt(
-		anchor + facing * (arrowLen / 2 + 0.5),
-		anchor + facing * (arrowLen / 2 + 0.5) + facing
-	)
-	
-	a.Transparency = 0
-	
-	local t2 = TweenService:Create(a, fadeInfo, { Transparency = 1 })
-	t2:Play()
-	
-	t2.Completed:Connect(function() 
-		a:Destroy() 
-	end)
-end
-
--->>>>>>>>>>>>
--- Interfaces with RegimentFormation module to calculate slot data for the preview
-local function buildSlots(leftAnchor, dir, count, mag)
-	local ranks, files = RegimentFormation.dragToLayout(count, mag)
-	local width, depth = RegimentFormation.getPreviewSize(ranks, files)
-	local facing       = Vector3.new(dir.Z, 0, -dir.X)
-	local rankCentre   = leftAnchor + dir * (width / 2)
-	local anchorCF     = CFrame.lookAt(rankCentre, rankCentre + facing)
-	local slots        = RegimentFormation.getSlots(anchorCF, count, ranks, files)
-	return slots, rankCentre, facing, ranks, files, width, depth
-end
-
--->>>>>>>>>>>>
--- Utility to get the world position of the mouse on the terrain/floor
 local function raycastMouse()
 	local pos    = UserInputService:GetMouseLocation()
 	local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
@@ -571,31 +294,13 @@ end
 
 -- ── Drag & Order ──────────────────────────────────────────────────────
 local dragActive = false
-local anchorPos  = nil
-local dragDir    = nil
-
-local function getSelectedCount()
-	if not selectedCompany then return 0 end
-	local c = myCompanies[selectedCompany]
-	return c and c.count or 0
-end
-
-local function getLastFormation()
-	local f = selectedCompany and lastFormation[selectedCompany]
-	return (f and f.ranks or 1), (f and f.files or 1)
-end
-
-local function saveFormation(ranks, files)
-	if not selectedCompany then return end
-	lastFormation[selectedCompany] = { ranks = ranks, files = files }
-end
+local anchorPos  = nil   -- left edge of company 1 (world space)
+local dragDir    = nil   -- last known rightDir unit vector (nil until drag threshold crossed)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then 
-		return 
-	end
-	if not selectedCompany then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+	if not hud:hasSelection() then return end
 
 	local hit = raycastMouse()
 	if not hit then return end
@@ -607,9 +312,7 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement then 
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
 	if not anchorPos then return end
 
 	local hit = raycastMouse()
@@ -617,72 +320,72 @@ UserInputService.InputChanged:Connect(function(input)
 
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then hidePreview()
-		return 
-	end
+	if mag < DRAG_THRESHOLD then NpcPreview.hide() return end
 
-	dragDir     = delta.Unit
-	local count = getSelectedCount()
-	if count < 1 then return end
+	-- delta direction IS the rightDir — drag left-to-right expands the formation
+	dragDir = delta.Unit
 
-	local slots, rankCentre, facing, _, _, _, depth = buildSlots(anchorPos, dragDir, count, mag)
-	showDots(slots)
-	setArrow(rankCentre, facing, depth)
+	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
+	if #layouts == 0 then NpcPreview.hide() return end
+	NpcPreview.update(layouts, facingDir)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-		return
-	end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
 	dragActive = false
-	hidePreview()
+	NpcPreview.hide()
 
-	if not anchorPos or not selectedCompany then
+	if not anchorPos or not hud:hasSelection() then
 		anchorPos = nil
 		dragDir   = nil
 		return
 	end
 
-	local count = getSelectedCount()
-	if count == 0 then
-		anchorPos = nil
-		dragDir   = nil
-		return
-	end
-
-	local finalSlots, finalAnchor, finalFacing, finalRanks, finalFiles, finalDepth
+	local selectedList = hud:getSelectedList()
+	local layouts, facingDir
 
 	if dragDir then
-		local hit   = raycastMouse()
-		local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
-		local slots, rankCentre, facing, ranks, files, _, depth = 
-			buildSlots(anchorPos, dragDir, count, delta.Magnitude)
-		
-		finalSlots, finalAnchor, finalFacing           = slots, rankCentre, facing
-		finalRanks,  finalFiles,  finalDepth           = ranks, files, depth
+		-- Drag: get final mouse pos for most accurate magnitude
+		local hit      = raycastMouse()
+		local delta    = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
+		local mag      = delta.Magnitude
+		local finalDir = (mag > DRAG_THRESHOLD) and delta.Unit or dragDir
+		local finalMag = math.max(mag, DRAG_THRESHOLD)
+
+		layouts, facingDir = computeCompanyLayouts(selectedList, anchorPos, finalDir, finalMag)
 	else
-		local look  = camera.CFrame.LookVector
-		finalFacing = Vector3.new(look.X, 0, look.Z)
-		finalFacing = finalFacing.Magnitude > 0.01 and finalFacing.Unit or Vector3.new(0, 0, -1)
-		finalAnchor = anchorPos
-		finalRanks, finalFiles = getLastFormation()
-		
-		local _, depth = RegimentFormation.getPreviewSize(finalRanks, finalFiles)
-		finalDepth     = depth
-		
-		local anchorCF = CFrame.lookAt(finalAnchor, finalAnchor + finalFacing)
-		finalSlots     = RegimentFormation.getSlots(anchorCF, count, finalRanks, finalFiles)
+		-- Plain click: derive rightDir from camera facing, center group on anchorPos
+		local look = camera.CFrame.LookVector
+		facingDir  = Vector3.new(look.X, 0, look.Z)
+		if facingDir.Magnitude < 0.01 then facingDir = Vector3.new(0, 0, -1) end
+		facingDir  = facingDir.Unit
+
+		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0) ✓
+		local rightDir   = Vector3.new(-facingDir.Z, 0, facingDir.X)
+		local totalWidth = getTotalWidthFromLastFormation(selectedList)
+
+		-- Back-compute leftEdge so the group is centered on anchorPos
+		local leftEdge   = anchorPos - rightDir * (totalWidth / 2)
+
+		layouts, facingDir = computeCompanyLayouts(selectedList, leftEdge, rightDir, nil)
 	end
 
-	saveFormation(finalRanks, finalFiles)
-	spawnFadeDots(finalSlots, finalAnchor, finalFacing, finalDepth)
-	Network.NpcOrderCommand.Fire(finalAnchor, finalFacing, finalRanks, finalFiles, selectedCompany)
+	if #layouts == 0 then
+		anchorPos = nil
+		dragDir   = nil
+		return
+	end
+
+	NpcPreview.spawnFadeDots(layouts, facingDir)
+	for _, layout in ipairs(layouts) do
+		lastFormation[layout.compIdx] = { ranks = layout.ranks, files = layout.files }
+		Network.NpcOrderCommand.Fire(layout.anchor, facingDir, layout.ranks, layout.files, layout.compIdx)
+	end
 
 	anchorPos = nil
 	dragDir   = nil
 end)
 
--- this to avoid the server firing the event before the client is ready, and causing issues.
 Network.NpcReady.Fire()

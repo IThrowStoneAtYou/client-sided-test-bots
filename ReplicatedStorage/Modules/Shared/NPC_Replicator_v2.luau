@@ -26,7 +26,16 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.MaxExtrapolation = 0.4 --0.25
 
 	self.Connections = {}
-	
+
+	-- Disable collisions for the client-side visual model
+	for _, part in ipairs(clientModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part.CanTouch = false
+			part.CanQuery = false
+		end
+	end
+
 	self.Client.Parent = workspace.Npc_Registry
 
 	return self
@@ -136,10 +145,10 @@ function NpcReplicator:Render()
 	if dt <= 0 then return end
 	if dt > self.MaxExtrapolation then
 		dt = self.MaxExtrapolation
- 	end
+	end
 
 	self.Root.CFrame = latest.cf + latest.v * dt
-	
+
 	if workspace:GetServerTimeNow() - latest.t > 1 then
 		self:Destroy()
 	end
@@ -152,15 +161,15 @@ function NpcReplicator:Destroy()
 		conn:Disconnect()
 	end
 	self.Connections = {}
-	
+
 	-->>>>>>>>>>>>
 	-- These lines below are optional. can re-enable it if dont want to destroy entity manually
 	-->>>>>>>>>>>>
-	
+
 	if self.Client then
 		self.Client:Destroy()
 	end
-	
+
 	self.Snapshots = nil
 end
 

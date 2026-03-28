@@ -85,7 +85,7 @@ function NpcAnimator:Destroy()
 	if self._trackIdle then
 		self._trackIdle:Stop()
 	end
-	
+
 	if self._trackWalk then
 		self._trackWalk:Stop() 
 	end
