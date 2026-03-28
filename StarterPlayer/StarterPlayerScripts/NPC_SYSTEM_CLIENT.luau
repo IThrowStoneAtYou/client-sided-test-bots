@@ -192,7 +192,7 @@ local function setSelectedCompany(idx)
 	local prev = selectedCompany
 	selectedCompany = idx
 	applyHighlights(idx)
-	
+
 	-- Refresh both the previously selected and newly selected card
 	if prev then refreshCard(prev) end
 	if idx  then refreshCard(idx)  end
@@ -325,6 +325,7 @@ local function createCard(index: number)
 		raisedPos  = raisedPos,
 		restingPos = restingPos,
 	}
+	
 	companyCards[index] = cd
 
 	btn.MouseEnter:Connect(function()
@@ -351,7 +352,9 @@ local function createCard(index: number)
 	end)
 end
 
-for i = 1, 4 do createCard(i) end
+for i = 1, 4 do 
+	createCard(i)
+end
 
 -- ── Event Handlers ────────────────────────────────────────────────────
 
@@ -383,7 +386,10 @@ end)
 Network.NpcDespawn.On(function(shortId)
 	local rep = replicators[shortId]
 	if not rep then return end
-	if rep.Client then rep.Client:Destroy() end
+	if rep.Client then 
+		rep.Client:Destroy() 
+	end
+	
 	rep:Destroy()
 	replicators[shortId] = nil
 
@@ -426,7 +432,10 @@ rayParams.FilterType = Enum.RaycastFilterType.Exclude
 -- Updates the raycast filter so move orders don't hit NPCs or the local character
 local function updateRayFilter()
 	local list = { workspace:WaitForChild("Npc_Registry") }
-	if localPlayer.Character then table.insert(list, localPlayer.Character) end
+	if localPlayer.Character then
+		table.insert(list, localPlayer.Character)
+	end
+	
 	rayParams.FilterDescendantsInstances = list
 end
 
@@ -441,11 +450,13 @@ local function createPreviewPart(color, size)
 	p.CanCollide   = false
 	p.CanQuery     = false
 	p.CastShadow   = false
+	
 	p.Material     = Enum.Material.Neon
 	p.Color        = color
 	p.Size         = size
 	p.Transparency = 1
 	p.Parent       = workspace.Client_Preview_Dots
+	
 	return p
 end
 
@@ -462,16 +473,19 @@ local function ensurePool(needed)
 end
 
 local function showDots(slots)
--->>>>>>>>>>>>
--- Positions and reveals the formation dots based on calculated slot positions
+	-->>>>>>>>>>>>
+	-- Positions and reveals the formation dots based on calculated slot positions
 	ensurePool(#slots)
+	
 	for i, slotCF in ipairs(slots) do
 		slotDots[i].CFrame       = slotCF
 		slotDots[i].Transparency = 0.3
 	end
+	
 	for i = #slots + 1, activeDots do
 		slotDots[i].Transparency = 1
 	end
+	
 	activeDots = #slots
 end
 
@@ -484,13 +498,17 @@ local function setArrow(centre, facing, depth)
 		centre + facing * (arrowLen / 2 + 0.5),
 		centre + facing * (arrowLen / 2 + 0.5) + facing
 	)
+	
 	previewArrow.Transparency = 0
 end
 
 -->>>>>>>>>>>>
 -- Hides all preview elements (dots and arrow)
 local function hidePreview()
-	for i = 1, activeDots do slotDots[i].Transparency = 1 end
+	for i = 1, activeDots do
+		slotDots[i].Transparency = 1 
+	end
+	
 	activeDots = 0
 	previewArrow.Transparency = 1
 end
@@ -503,21 +521,31 @@ local function spawnFadeDots(slots, anchor, facing, depth)
 		local p = createPreviewPart(DOT_COLOR, DOT_SIZE)
 		p.CFrame       = slotCF
 		p.Transparency = 0.3
+		
 		local t = TweenService:Create(p, fadeInfo, { Transparency = 1, Size = DOT_SIZE * 0.5 })
 		t:Play()
-		t.Completed:Connect(function() p:Destroy() end)
+		
+		t.Completed:Connect(function()
+			p:Destroy()
+		end)
 	end
 
 	local arrowLen = math.clamp(depth * 0.3, 2, 6)
 	local a = createPreviewPart(Color3.fromRGB(255, 255, 255), Vector3.new(0.4, 0.4, arrowLen))
+	
 	a.CFrame = CFrame.lookAt(
 		anchor + facing * (arrowLen / 2 + 0.5),
 		anchor + facing * (arrowLen / 2 + 0.5) + facing
 	)
+	
 	a.Transparency = 0
+	
 	local t2 = TweenService:Create(a, fadeInfo, { Transparency = 1 })
 	t2:Play()
-	t2.Completed:Connect(function() a:Destroy() end)
+	
+	t2.Completed:Connect(function() 
+		a:Destroy() 
+	end)
 end
 
 -->>>>>>>>>>>>
@@ -564,7 +592,9 @@ end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then 
+		return 
+	end
 	if not selectedCompany then return end
 
 	local hit = raycastMouse()
@@ -577,7 +607,9 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement then 
+		return
+	end
 	if not anchorPos then return end
 
 	local hit = raycastMouse()
@@ -585,7 +617,9 @@ UserInputService.InputChanged:Connect(function(input)
 
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
-	if mag < DRAG_THRESHOLD then hidePreview() return end
+	if mag < DRAG_THRESHOLD then hidePreview()
+		return 
+	end
 
 	dragDir     = delta.Unit
 	local count = getSelectedCount()
@@ -598,7 +632,9 @@ end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if not dragActive then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+		return
+	end
 
 	dragActive = false
 	hidePreview()
@@ -621,8 +657,9 @@ UserInputService.InputEnded:Connect(function(input)
 	if dragDir then
 		local hit   = raycastMouse()
 		local delta = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
-		local slots, rankCentre, facing, ranks, files, _, depth =
+		local slots, rankCentre, facing, ranks, files, _, depth = 
 			buildSlots(anchorPos, dragDir, count, delta.Magnitude)
+		
 		finalSlots, finalAnchor, finalFacing           = slots, rankCentre, facing
 		finalRanks,  finalFiles,  finalDepth           = ranks, files, depth
 	else
@@ -631,8 +668,10 @@ UserInputService.InputEnded:Connect(function(input)
 		finalFacing = finalFacing.Magnitude > 0.01 and finalFacing.Unit or Vector3.new(0, 0, -1)
 		finalAnchor = anchorPos
 		finalRanks, finalFiles = getLastFormation()
+		
 		local _, depth = RegimentFormation.getPreviewSize(finalRanks, finalFiles)
 		finalDepth     = depth
+		
 		local anchorCF = CFrame.lookAt(finalAnchor, finalAnchor + finalFacing)
 		finalSlots     = RegimentFormation.getSlots(anchorCF, count, finalRanks, finalFiles)
 	end

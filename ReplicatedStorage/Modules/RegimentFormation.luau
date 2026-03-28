@@ -34,7 +34,7 @@ end
 -- Returns { CFrame, ... } for each slot.
 -- anchorCF: centre of the FRONT rank, LookVector = facing direction.
 function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: number, files: number): {CFrame}
--- Logic: Iterates through NPC count and calculates relative offsets for each rank and file.
+	-- Logic: Iterates through NPC count and calculates relative offsets for each rank and file.
 	local slots  = {}
 	local right  = anchorCF.RightVector
 	local look   = anchorCF.LookVector
