@@ -53,23 +53,25 @@ local function clearHighlights()
 	for _, rep in pairs(replicators) do
 		if rep.Client then
 			local h = rep.Client:FindFirstChild(HIGHLIGHT_TAG)
-			if h then h:Destroy() end
+			if h then h.Enabled = false end
 		end
 	end
 end
 
-local function addHighlight(clientModel, companyIndex)
+local function setHighlightVisible(clientModel, companyIndex, visible)
 	if not clientModel then return end
-	local existing = clientModel:FindFirstChild(HIGHLIGHT_TAG)
-	if existing then existing:Destroy() end
-	local h = Instance.new("Highlight")
-	h.Name                = HIGHLIGHT_TAG
-	h.FillColor           = CompanyHUD.getColor(companyIndex)
-	h.OutlineColor        = CompanyHUD.getColor(companyIndex)
-	h.FillTransparency    = 0.62
-	h.OutlineTransparency = 0.1
-	h.DepthMode           = Enum.HighlightDepthMode.Occluded
-	h.Parent              = clientModel
+	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
+	if not h then
+		h = Instance.new("Highlight")
+		h.Name                = HIGHLIGHT_TAG
+		h.FillColor           = CompanyHUD.getColor(companyIndex)
+		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
+		h.FillTransparency    = 0.62
+		h.OutlineTransparency = 0.1
+		h.DepthMode           = Enum.HighlightDepthMode.Occluded
+		h.Parent              = clientModel
+	end
+	h.Enabled = visible
 end
 
 local function applyHighlights(selectedList)
@@ -82,7 +84,7 @@ local function applyHighlights(selectedList)
 		for shortId in pairs(slots) do
 			local rep = replicators[shortId]
 			if rep and rep.Client then 
-				addHighlight(rep.Client, compIdx)
+				setHighlightVisible(rep.Client, compIdx, true)
 			end
 		end
 	end
@@ -113,7 +115,7 @@ local function registerNpc(shortId, pos, yaw)
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
-			addHighlight(clientModel, compIdx)
+			setHighlightVisible(clientModel, compIdx, true)
 			break
 		end
 	end
@@ -275,7 +277,14 @@ Network.NpcCompanySync.On(function(data)
 	companySlots = {}
 	for _, entry in ipairs(data) do
 		local slotSet = {}
-		for _, sid in ipairs(entry.slots) do slotSet[sid] = true end
+		for _, sid in ipairs(entry.slots) do 
+			slotSet[sid] = true 
+			-- Pre-create highlight for the NPC so it is ready to toggle
+			local rep = replicators[sid]
+			if rep and rep.Client then
+				setHighlightVisible(rep.Client, entry.index, false)
+			end
+		end
 		companySlots[entry.index] = slotSet
 	end
 

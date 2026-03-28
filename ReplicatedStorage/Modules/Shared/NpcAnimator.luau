@@ -23,9 +23,10 @@ NpcAnimator.__index = NpcAnimator
 function NpcAnimator.new(model: Model)
 	local self = setmetatable({}, NpcAnimator)
 
-	local humanoid = model:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	local root     = model:WaitForChild("HumanoidRootPart")
+	-- Use direct access since the model is cloned from a known template
+	local humanoid = model.Humanoid
+	local animator = humanoid.Animator
+	local root     = model.HumanoidRootPart
 
 	-- Load tracks onto this model's Animator
 	self._trackIdle = animator:LoadAnimation(ANIM_IDLE)
