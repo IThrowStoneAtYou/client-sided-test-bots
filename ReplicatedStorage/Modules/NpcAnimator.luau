@@ -1,5 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_ANIMATOR
+-- Version 1.0.0
 -- Manages Idle / Walk animation state for a client NPC model.
 -- Fully decoupled from NpcReplicator — derives speed from its own
 -- position delta each frame so no replicator changes are needed.
@@ -22,6 +23,9 @@ local FADE_TIME = 0.2
 local NpcAnimator = {}
 NpcAnimator.__index = NpcAnimator
 
+-->>>>>>>>>>>>
+-- Constructor for the animator. 
+-- Binds to RenderStepped to monitor model movement speed.
 function NpcAnimator.new(model: Model)
 	local self = setmetatable({}, NpcAnimator)
 
@@ -50,6 +54,9 @@ function NpcAnimator.new(model: Model)
 	return self
 end
 
+-->>>>>>>>>>>>
+-- Internal update loop. 
+-- Calculates speed (studs/s) and triggers animation blends if thresholds are crossed.
 function NpcAnimator:_update(dt: number)
 	local pos   = self._root.Position
 	local speed = (pos - self._prevPos).Magnitude / dt

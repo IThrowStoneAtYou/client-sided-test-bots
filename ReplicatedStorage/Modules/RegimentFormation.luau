@@ -1,6 +1,9 @@
 -->>>>>>>>>>>>
 -- REGIMENT_FORMATION
--- Pure math module. No services, no state.
+-- Version 1.1.0
+-- Description:
+-- Pure math module used to calculate formation layouts. 
+-- It has no external dependencies and maintains no state.
 -->>>>>>>>>>>>
 
 local RegimentFormation = {}
@@ -22,6 +25,7 @@ end
 
 -->>>>>>>>>>>>
 -- Returns pixel width and depth of a formation for the client preview rect.
+-- Used to center arrows and calculate fade dot geometry.
 function RegimentFormation.getPreviewSize(ranks: number, files: number): (number, number)
 	return (files - 1) * RANK_SPACING, (ranks - 1) * RANK_DEPTH
 end
@@ -29,8 +33,8 @@ end
 -->>>>>>>>>>>>
 -- Returns { CFrame, ... } for each slot.
 -- anchorCF: centre of the FRONT rank, LookVector = facing direction.
--- ranks / files: from dragToLayout.
 function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: number, files: number): {CFrame}
+	-- Logic: Iterates through NPC count and calculates relative offsets for each rank and file.
 	local slots  = {}
 	local right  = anchorCF.RightVector
 	local look   = anchorCF.LookVector
