@@ -14,7 +14,7 @@ local TweenService     = game:GetService("TweenService")
 
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
-local NoobPath          = require(ReplicatedStorage.Modules.Shared:WaitForChild("NoobPath"))
+local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -27,7 +27,7 @@ local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 1000       -- Increased to match Napoleonic battlefield scale
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local MAX_BOTS      = 300        -- per company
+local MAX_BOTS      = 140        -- per company
 local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         -- studs in front of player
 local COMPANY_GAP   = 8         -- studs between adjacent companies
@@ -161,7 +161,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			--	part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
+			part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
 			part.CanTouch = false -- Optimization: Server NPCs don't need to trigger Touched events
 			--	part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
 			part.CollisionGroup = NPC_COLLISION_GROUP
@@ -470,6 +470,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 				npc.ActiveTween:Cancel()
 				npc.ActiveTween = nil
 			end
+			
 			npc.Pathfinder:Stop()
 			npc.Pathfinder:Run(slots[i].Position)
 			npc.LastMoveTime = os.clock()

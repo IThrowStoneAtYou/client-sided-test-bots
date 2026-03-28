@@ -116,7 +116,7 @@ local function registerNpc(shortId, pos, yaw)
 	local anim          = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
---	rep:Start()
+--	rep:Start() -- unless, not used, eat shit ton of frames.
 
 	replicators[shortId] = rep
 	animators[shortId]   = anim

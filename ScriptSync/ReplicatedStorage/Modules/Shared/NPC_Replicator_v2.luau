@@ -181,13 +181,20 @@ function NpcReplicator:Render(dt, serverTime)
 	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
 	self.LastPos      = currentPos
 
-	local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
-	if self.Animator then
+	-- Throttle animation distance checks
+	if self.Animator and (not self._lastAnimCheck or tick() - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = tick()
+		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
 		if dist < 150 then
-			self.Animator:SetWalking(visualSpeed > 1.5)
+			self._isNear = true
 		else
+			self._isNear = false
 			self.Animator:SetWalking(false)
 		end
+	end
+
+	if self.Animator and self._isNear then
+		self.Animator:SetWalking(visualSpeed > 1.5)
 	end
 
 	if timeSinceLatest > self.MaxExtrapolation then
