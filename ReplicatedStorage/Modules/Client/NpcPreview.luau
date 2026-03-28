@@ -22,6 +22,7 @@ local previewFolder = workspace:FindFirstChild("Client_Preview_Dots") or (functi
 	local f = Instance.new("Folder")
 	f.Name   = "Client_Preview_Dots"
 	f.Parent = workspace
+	
 	return f
 end)() -- huh
 
@@ -36,6 +37,7 @@ local function createPreviewPart(color: Color3, size: Vector3)
 	p.Size         = size
 	p.Transparency = 1
 	p.Parent       = previewFolder
+	
 	return p
 end
 
@@ -55,7 +57,10 @@ end
 -- Updates the active preview dots and arrow based on the calculated layouts.
 function NpcPreview.update(layouts, facingDir: Vector3)
 	local needed = 0
-	for _, l in ipairs(layouts) do needed += #l.slots end
+	for _, l in ipairs(layouts) do
+		needed += #l.slots 
+	end
+	
 	ensurePool(needed)
 
 	local dotIdx    = 1
@@ -65,7 +70,9 @@ function NpcPreview.update(layouts, facingDir: Vector3)
 	for _, l in ipairs(layouts) do
 		anchorSum += l.anchor
 		local _, depth = RegimentFormation.getPreviewSize(l.ranks, l.files)
-		if depth > maxDepth then maxDepth = depth end
+		if depth > maxDepth then
+			maxDepth = depth 
+		end
 
 		for _, slotCF in ipairs(l.slots) do
 			local dot = slotDots[dotIdx]
@@ -94,7 +101,10 @@ end
 -->>>>>>>>>>>>
 -- Hides all active preview elements.
 function NpcPreview.hide()
-	for i = 1, activeDots do slotDots[i].Transparency = 1 end
+	for i = 1, activeDots do
+		slotDots[i].Transparency = 1
+	end
+	
 	activeDots = 0
 	previewArrow.Transparency = 1
 end
@@ -116,9 +126,13 @@ function NpcPreview.spawnFadeDots(layouts, facingDir: Vector3)
 			local p = createPreviewPart(l.color, DOT_SIZE)
 			p.CFrame       = slotCF
 			p.Transparency = 0.3
+			
 			local t = TweenService:Create(p, FADE_INFO, { Transparency = 1, Size = DOT_SIZE * 0.5 })
 			t:Play()
-			t.Completed:Connect(function() p:Destroy() end)
+			
+			t.Completed:Connect(function()
+				p:Destroy()
+			end)
 		end
 	end
 
@@ -131,9 +145,13 @@ function NpcPreview.spawnFadeDots(layouts, facingDir: Vector3)
 		centre + facingDir * (arrowLen / 2 + 0.5) + facingDir
 	)
 	a.Transparency = 0
+	
 	local t2 = TweenService:Create(a, FADE_INFO, { Transparency = 1 })
 	t2:Play()
-	t2.Completed:Connect(function() a:Destroy() end)
+	
+	t2.Completed:Connect(function()
+		a:Destroy()
+	end)
 end
 
 return NpcPreview
