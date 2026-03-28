@@ -10,6 +10,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
@@ -115,7 +116,8 @@ local function registerNpc(shortId, pos, yaw)
 	local anim          = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
-	rep:Start()
+--	rep:Start() -- unless, not used, eat shit ton of frames.
+
 	replicators[shortId] = rep
 	animators[shortId]   = anim
 
@@ -426,6 +428,13 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+-- ── Central render loop (runs once, drives all replicators) ───────────
+RunService.RenderStepped:Connect(function(dt)
+	local serverTime = workspace:GetServerTimeNow()
+	for _, rep in pairs(replicators) do
+		rep:Render(dt, serverTime)
+	end
+end)
 
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join

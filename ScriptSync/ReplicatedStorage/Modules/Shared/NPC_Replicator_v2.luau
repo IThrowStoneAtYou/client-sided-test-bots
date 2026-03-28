@@ -8,6 +8,9 @@
 
 local RunService = game:GetService("RunService")
 
+local NPC_COLLISION_GROUP = "NpcGroup"
+local CLIENT_NPC_GROUP = "ClientNpcGroup"
+
 local NpcReplicator = {}
 NpcReplicator.__index = NpcReplicator
 
@@ -21,29 +24,38 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.Root = clientModel.HumanoidRootPart
 
 	self.Snapshots = {}
-	self.BufferTime = 0.3	--0.1
-	self.MaxBuffer = 20
-	self.MaxExtrapolation = 0.4 --0.25
+	self.BufferTime = 0.1  -- was 0.3, too much latency buffer
+	self.MaxBuffer = 20    -- revert back to 20
+	self.MaxExtrapolation = 0.2  -- was 0.4
 
 	self.LastPos = self.Root.Position
 	self.Animator = nil
 	self.Connections = {}
 
-	-- Disable collisions for the client-side visual model
 	for _, part in ipairs(clientModel:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.CanCollide = false
+			part.CollisionGroup = CLIENT_NPC_GROUP
 			part.CanTouch = false
 			part.CanQuery = false
 		end
 	end
 
-	local humanoid = clientModel.Humanoid
+	-- Humanoid resets CanCollide after state changes, so lock it
+	local humanoid = clientModel:FindFirstChildOfClass("Humanoid")
 	if humanoid then
+		humanoid.PlatformStand = true  -- forces humanoid to stop fighting physics
 		for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
 			if state ~= Enum.HumanoidStateType.None then
 				humanoid:SetStateEnabled(state, false)
 			end
+		end
+		humanoid:ChangeState(Enum.HumanoidStateType.Physics)  -- puts it in full manual control mode
+	end
+
+	-- Disable again AFTER state changes since humanoid may have re-enabled some
+	for _, part in ipairs(clientModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
 		end
 	end
 
@@ -98,6 +110,8 @@ function NpcReplicator:PushNetworkSnapshot(cf, timestamp) -- modded
 		v  = velocity,
 	})
 
+	self._dirty = true
+
 	while #self.Snapshots > self.MaxBuffer do
 		table.remove(self.Snapshots, 1)
 	end
@@ -125,21 +139,22 @@ end
 -->>>>>>>>>>>>
 -- Connects the render loop
 function NpcReplicator:StartRender()
-	self.Connections.Render = RunService.RenderStepped:Connect(function(dt)
-		self:Render(dt)
-	end)
+	--	self.Connections.Render = RunService.RenderStepped:Connect(function(dt)
+	--		self:Render(dt)
+	--	end)
 end
 
 -->>>>>>>>>>>>
 -- Smoothing core logic. This is the function holding the entirety of the module
 -- Extra info: If no future snapshot exist. An extrapolation will occur
-function NpcReplicator:Render(dt)
+function NpcReplicator:Render(dt, serverTime)
 	if not self.Snapshots then return end
 	local latest = self.Snapshots[#self.Snapshots]
 	if not latest then return end
 
-	local isMoving = false
-	local renderTime = workspace:GetServerTimeNow() - self.BufferTime
+	if not self._dirty then return end
+
+	local renderTime = (serverTime or workspace:GetServerTimeNow()) - self.BufferTime
 	local timeSinceLatest = renderTime - latest.t
 
 	local s1, s2
@@ -154,24 +169,36 @@ function NpcReplicator:Render(dt)
 	end
 
 	if s1 and s2 then
-		-- Interpolate between two known points
 		local alpha = math.clamp((renderTime - s1.t) / (s2.t - s1.t), 0, 1)
 		self.Root.CFrame = s1.cf:Lerp(s2.cf, alpha)
 	else
-		-- Extrapolate or stay at latest position
 		local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
 		self.Root.CFrame = latest.cf + latest.v * extrapolationDt
 	end
 
-	-- Calculate real visual speed to drive animations
-	local currentPos   = self.Root.Position
-	local actualDelta  = (currentPos - self.LastPos).Magnitude
-	local visualSpeed  = actualDelta / (dt > 0 and dt or 0.01)
-	self.LastPos       = currentPos
+	local currentPos  = self.Root.Position
+	local actualDelta = (currentPos - self.LastPos).Magnitude
+	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
+	self.LastPos      = currentPos
 
-	if self.Animator then
-		-- Increased threshold slightly for line infantry march stability
+	-- Throttle animation distance checks
+	if self.Animator and (not self._lastAnimCheck or tick() - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = tick()
+		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
+		if dist < 150 then
+			self._isNear = true
+		else
+			self._isNear = false
+			self.Animator:SetWalking(false)
+		end
+	end
+
+	if self.Animator and self._isNear then
 		self.Animator:SetWalking(visualSpeed > 1.5)
+	end
+
+	if timeSinceLatest > self.MaxExtrapolation then
+		self._dirty = false
 	end
 end
 
