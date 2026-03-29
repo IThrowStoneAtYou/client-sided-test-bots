@@ -10,6 +10,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
+local RunService 		= game:GetService("RunService")
 
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
@@ -64,7 +65,7 @@ end
 local function setHighlightVisible(clientModel, companyIndex, visible)
 	if not clientModel then return end
 	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
-	
+
 	if not h then
 		h = Instance.new("Highlight")
 		h.Name                = HIGHLIGHT_TAG
@@ -75,7 +76,7 @@ local function setHighlightVisible(clientModel, companyIndex, visible)
 		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
 		h.Parent              = clientModel
 	end
-	
+
 	h.Enabled = visible
 end
 
@@ -108,14 +109,15 @@ local function registerNpc(shortId, pos, yaw)
 
 	local rep           = NpcReplicator.new(shortId, clientModel)
 	rep.Root.CFrame     = initialCF
-	
+
 	-- Initialize with current time to prevent the replicator from thinking it's "behind" immediately
 	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow()) 
 
 	local anim          = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
-	rep:Start()
+	--	rep:Start() -- unless, not used, eat shit ton of frames.
+
 	replicators[shortId] = rep
 	animators[shortId]   = anim
 
@@ -147,8 +149,14 @@ local function getTotalWidthFromLastFormation(selectedList): number
 			continue 
 		end
 
+		local soldierCount = math.max(0, count - 1)
+		if soldierCount == 0 then
+			nc += 1
+			continue
+		end
+
 		local f     = lastFormation[compIdx]
-		local files = f and f.files or math.min(count, 10)
+		local files = f and f.files or math.min(soldierCount, 10)
 		total += (files - 1) * RANK_SPACING
 		nc    += 1
 	end
@@ -207,23 +215,29 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 	local result = {}
 
 	for _, info in ipairs(infos) do
+		local soldierCount = math.max(0, info.count - 1)
 		local ranks, files
-		if perCompanyMag then
-			ranks, files = RegimentFormation.dragToLayout(info.count, perCompanyMag)
+
+		if soldierCount > 0 then
+			if perCompanyMag then
+				ranks, files = RegimentFormation.dragToLayout(soldierCount, perCompanyMag)
+			else
+				local f = lastFormation[info.compIdx]
+				files   = f and f.files or math.min(soldierCount, 10)
+				ranks   = f and f.ranks or math.ceil(soldierCount / files)
+			end
 		else
-			local f = lastFormation[info.compIdx]
-			files   = f and f.files or math.min(info.count, 10)
-			ranks   = f and f.ranks or math.ceil(info.count / files)
+			ranks, files = 1, 1
 		end
 
-		local compWidth  = (files - 1) * RANK_SPACING
+		local compWidth  = (soldierCount > 0) and (files - 1) * RANK_SPACING or 0
 
 		-- Company anchor = center of this company's front rank
 		local compCenter = leftEdge + rightDir * (cursor + compWidth / 2)
 		cursor += compWidth + COMPANY_GAP
 
 		local anchorCF = CFrame.lookAt(compCenter, compCenter + facingDir)
-		local slots    = RegimentFormation.getSlots(anchorCF, info.count, ranks, files)
+		local slots    = (soldierCount > 0) and RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files) or {}
 
 		result[#result + 1] = {
 			compIdx = info.compIdx,
@@ -281,7 +295,7 @@ end)
 
 Network.NpcCompanySync.On(function(data)
 	companySlots = {}
-	
+
 	for _, entry in ipairs(data) do
 		local slotSet = {}
 		for _, sid in ipairs(entry.slots) do 
@@ -292,7 +306,7 @@ Network.NpcCompanySync.On(function(data)
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
-		
+
 		companySlots[entry.index] = slotSet
 	end
 
@@ -369,7 +383,7 @@ end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if not dragActive then return end
-	
+
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
 	dragActive = false
@@ -401,7 +415,8 @@ UserInputService.InputEnded:Connect(function(input)
 		facingDir  = facingDir.Unit
 
 		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
-		local rightDir   = Vector3.new(-facingDir.Z, 0, facingDir.X)
+		-- Added a fallback for rightDir to ensure cross product stability
+		local rightDir   = facingDir:Cross(Vector3.new(0, 1, 0)).Unit
 		local totalWidth = getTotalWidthFromLastFormation(selectedList)
 
 		-- Back-compute leftEdge so the group is centered on anchorPos
@@ -426,6 +441,33 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+-- ── Central render loop (runs once, drives all replicators) ───────────
+RunService.RenderStepped:Connect(function(dt)
+	local serverTime = workspace:GetServerTimeNow()
+	local parts   = {}
+	local cframes = {}
+
+	for _, rep in pairs(replicators) do
+		local cf = rep:ComputeCFrame(dt, serverTime)
+		if cf then
+			parts[#parts + 1]   = rep.Root
+			cframes[#cframes + 1] = cf
+		end
+	end
+
+	if #parts > 0 then
+		workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
+	end
+end)
+
+--[[
+RunService.RenderStepped:Connect(function(dt)
+	local serverTime = workspace:GetServerTimeNow()
+	for _, rep in pairs(replicators) do
+		rep:Render(dt, serverTime)
+	end
+end)
+--[[]]
 
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join
