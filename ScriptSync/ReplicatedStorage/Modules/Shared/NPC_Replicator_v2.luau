@@ -172,11 +172,13 @@ function NpcReplicator:ComputeCFrame(dt, serverTime)
 	end
 
 	self._frameCounter += 1
-	if self._frameCounter % (self._frameSkip + 1) ~= 0 then
-		return nil  -- skip this frame
-	end
+	local shouldUpdatePhysics = (self._frameCounter % (self._frameSkip + 1) == 0)
 
 	local renderTime = (serverTime or workspace:GetServerTimeNow()) - self.BufferTime
+	
+	-- If we aren't updating this frame and we have a cached result, 
+	-- we can exit early but we still need the animator to know we are "moving"
+	
 	local timeSinceLatest = renderTime - latest.t
 
 	local s1, s2
@@ -198,6 +200,10 @@ function NpcReplicator:ComputeCFrame(dt, serverTime)
 		local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
 		newCF = latest.cf + latest.v * extrapolationDt
 	end
+	
+	if not shouldUpdatePhysics then
+		return nil
+	end
 
 	-- Animation logic stays here (reads position, doesn't write CFrame)
 	local currentPos  = newCF.Position
@@ -205,8 +211,8 @@ function NpcReplicator:ComputeCFrame(dt, serverTime)
 	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
 	self.LastPos      = currentPos
 
-	if self.Animator and (not self._lastAnimCheck or tick() - self._lastAnimCheck > 0.5) then
-		self._lastAnimCheck = tick()
+	if self.Animator and (not self._lastAnimCheck or os.clock() - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = os.clock()
 		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
 		self._isNear = dist < 150
 		if not self._isNear then

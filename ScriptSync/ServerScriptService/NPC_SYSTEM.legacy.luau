@@ -32,6 +32,8 @@ local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         
 local COMPANY_GAP   = 8         
 local RANK_SPACING  = 4.5       
+local RANK_DEPTH    = 5
+local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
 
 local NPC_COLLISION_GROUP = "NpcGroup"
@@ -179,9 +181,12 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 			local pComps = companies[npc.CompanyOwner]
 			if pComps and pComps[npc.CompanyIndex] then
 				local comp = pComps[npc.CompanyIndex]
-				-- Calculate width based on company files to make pacing scale
-				local paceWidth = (comp.files * RANK_SPACING) / 2
-				local targetCF = comp.anchorCF * CFrame.new(paceWidth * npc.PaceDirection, 0, 8)
+
+				-- Dynamically calculate width and total depth to stay behind the last rank
+				local paceWidth = ((comp.files - 1) * RANK_SPACING) / 2
+				local totalDepth = (comp.ranks - 1) * RANK_DEPTH
+				local dynamicZ = totalDepth + FLAG_OFFSET_Z
+				local targetCF = comp.anchorCF * CFrame.new(paceWidth * npc.PaceDirection, 0, dynamicZ)
 
 				npc.RegimentTarget = targetCF.Position
 				npc.Pathfinder:Run(npc.RegimentTarget)
@@ -324,9 +329,11 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 				local targetCF
 
 				if isBearer then
-					-- [LENGTH LOGIC] Calculate half-width of the line for pacing
-					local halfWidth = (files * RANK_SPACING) / 2
-					targetCF = anchorCF * CFrame.new(halfWidth, 0, 8) 
+					-- Position bearer behind the last rank at the right edge
+					local halfWidth = ((files - 1) * RANK_SPACING) / 2
+					local totalDepth = (ranks - 1) * RANK_DEPTH
+					local dynamicZ = totalDepth + FLAG_OFFSET_Z
+					targetCF = anchorCF * CFrame.new(halfWidth, 0, dynamicZ)
 				else
 					targetCF = slots[j - 1]
 				end
@@ -423,9 +430,11 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 
 		-- [FLAG BEARER LOGIC] Assign separate movement logic for bearer
 		if npc.IsFlagBearer then
-			-- [LENGTH LOGIC] Dynamic width update
-			local halfWidth = (files * RANK_SPACING) / 2
-			targetCF = anchorCF * CFrame.new(halfWidth * npc.PaceDirection, 0, 8)
+			-- Adjust pacing limits based on new formation width and depth
+			local halfWidth = ((files - 1) * RANK_SPACING) / 2
+			local totalDepth = (ranks - 1) * RANK_DEPTH
+			local dynamicZ = totalDepth + FLAG_OFFSET_Z
+			targetCF = anchorCF * CFrame.new(halfWidth * npc.PaceDirection, 0, dynamicZ)
 		else
 			targetCF = slots[soldierIdx]
 			soldierIdx += 1
