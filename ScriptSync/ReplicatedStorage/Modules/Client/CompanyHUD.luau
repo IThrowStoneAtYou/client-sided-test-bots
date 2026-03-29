@@ -204,7 +204,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	local raisedPos  = UDim2.new(0.5, 0, 1, RAISED_OFF)
 	local restingPos = UDim2.new(0.5, 0, 1, RESTING_OFF)
 	
-	print("_createCard", index )
+--	print("_createCard", index )
 
 	local card = Instance.new("Frame")
 	card.Name                   = "Company" .. index
@@ -219,12 +219,14 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0, 9)
 	corner.Parent = card
+	corner.Name = "cornor"
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color        = accent
 	stroke.Thickness    = 1.5
 	stroke.Transparency = 0.6
 	stroke.Parent       = card
+	stroke.Name				= "stroke"
 
 	local bar = Instance.new("Frame")
 	bar.Size             = UDim2.new(1, 0, 0, 7)
@@ -232,10 +234,12 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	bar.BorderSizePixel  = 0
 	bar.ZIndex           = 2
 	bar.Parent           = card
+	bar.Name				= "bar"
 
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(0, 9)
 	barCorner.Parent = bar
+	barCorner.Name				= "barCorner"
 
 	local barFill = Instance.new("Frame")
 	barFill.Size             = UDim2.new(1, 0, 0, 5)
@@ -244,6 +248,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	barFill.BorderSizePixel  = 0
 	barFill.ZIndex           = 2
 	barFill.Parent           = bar
+	barFill.Name				= "barFill"
 
 	local compTitle = Instance.new("TextLabel")
 	compTitle.Size               = UDim2.new(1, 0, 0, 14)
@@ -256,6 +261,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	compTitle.TextXAlignment     = Enum.TextXAlignment.Center
 	compTitle.ZIndex             = 2
 	compTitle.Parent             = card
+	compTitle.Name				= "compTitle"
 
 	local romanLabel = Instance.new("TextLabel")
 	romanLabel.Size              = UDim2.new(1, 0, 0, 26)
@@ -268,6 +274,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	romanLabel.TextXAlignment    = Enum.TextXAlignment.Center
 	romanLabel.ZIndex            = 2
 	romanLabel.Parent            = card
+	romanLabel.Name				= "romanLabel"
 
 	local divider = Instance.new("Frame")
 	divider.Size             = UDim2.new(0.6, 0, 0, 1)
@@ -277,6 +284,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	divider.BorderSizePixel  = 0
 	divider.ZIndex           = 2
 	divider.Parent           = card
+	divider.Name				= "divider"
 
 	local countLabel = Instance.new("TextLabel")
 	countLabel.Size              = UDim2.new(1, 0, 0, 40)
@@ -289,6 +297,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	countLabel.TextXAlignment    = Enum.TextXAlignment.Center
 	countLabel.ZIndex            = 2
 	countLabel.Parent            = card
+	countLabel.Name				= "countLabel"
 
 	local menLabel = Instance.new("TextLabel")
 	menLabel.Size               = UDim2.new(1, 0, 0, 14)
@@ -301,6 +310,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	menLabel.TextXAlignment     = Enum.TextXAlignment.Center
 	menLabel.ZIndex             = 2
 	menLabel.Parent             = card
+	menLabel.Name				= "menLabel"
 
 	local btn = Instance.new("TextButton")
 	btn.Size               = UDim2.new(1, 0, 1, 0)
@@ -308,6 +318,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	btn.Text               = ""
 	btn.ZIndex             = 10
 	btn.Parent             = card
+	btn.Name				= "btn"
 
 	local cd = {
 		frame      = card,
