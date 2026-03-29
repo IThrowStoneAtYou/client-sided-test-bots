@@ -10,7 +10,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local RunService 		= game:GetService("RunService")
 
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
