@@ -345,6 +345,18 @@ local dragDir    = nil   -- last known rightDir unit vector (nil until drag thre
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
+
+	if input.KeyCode == Enum.KeyCode.Q then
+		if hud:hasSelection() then
+			hud:setSelected(nil)
+		else
+			for compIdx in pairs(companySlots) do
+				hud:toggleSelected(compIdx)
+			end
+		end
+		return
+	end
+
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 	if not hud:hasSelection() then return end
 
@@ -459,15 +471,6 @@ RunService.RenderStepped:Connect(function(dt)
 		workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
 	end
 end)
-
---[[
-RunService.RenderStepped:Connect(function(dt)
-	local serverTime = workspace:GetServerTimeNow()
-	for _, rep in pairs(replicators) do
-		rep:Render(dt, serverTime)
-	end
-end)
---[[]]
 
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join
