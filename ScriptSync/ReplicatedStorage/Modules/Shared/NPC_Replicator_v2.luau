@@ -31,6 +31,9 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.LastPos = self.Root.Position
 	self.Animator = nil
 	self.Connections = {}
+	
+	self._frameSkip    = 0
+	self._frameCounter = 0
 
 	for _, part in ipairs(clientModel:GetDescendants()) do
 		if part:IsA("BasePart") then
@@ -147,6 +150,82 @@ end
 -->>>>>>>>>>>>
 -- Smoothing core logic. This is the function holding the entirety of the module
 -- Extra info: If no future snapshot exist. An extrapolation will occur
+
+-- In NpcReplicator.luau, rename Render to ComputeCFrame and return the result
+function NpcReplicator:ComputeCFrame(dt, serverTime)
+	if not self.Snapshots then return nil end
+	local latest = self.Snapshots[#self.Snapshots]
+	if not latest then return nil end
+	if not self._dirty then return nil end
+	
+	if self._frameCounter % 30 == 0 then
+		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
+		if dist < 60 then
+			self._frameSkip = 0   -- full 60fps
+		elseif dist < 150 then
+			self._frameSkip = 1   -- every 2nd frame
+		elseif dist < 300 then
+			self._frameSkip = 3   -- every 4th frame
+		else
+			self._frameSkip = 5   -- every 6th frame
+		end
+	end
+
+	self._frameCounter += 1
+	if self._frameCounter % (self._frameSkip + 1) ~= 0 then
+		return nil  -- skip this frame
+	end
+
+	local renderTime = (serverTime or workspace:GetServerTimeNow()) - self.BufferTime
+	local timeSinceLatest = renderTime - latest.t
+
+	local s1, s2
+	if #self.Snapshots >= 2 then
+		for i = #self.Snapshots - 1, 1, -1 do
+			if self.Snapshots[i].t <= renderTime then
+				s1 = self.Snapshots[i]
+				s2 = self.Snapshots[i + 1]
+				break
+			end
+		end
+	end
+
+	local newCF
+	if s1 and s2 then
+		local alpha = math.clamp((renderTime - s1.t) / (s2.t - s1.t), 0, 1)
+		newCF = s1.cf:Lerp(s2.cf, alpha)
+	else
+		local extrapolationDt = math.max(0, math.min(timeSinceLatest, self.MaxExtrapolation))
+		newCF = latest.cf + latest.v * extrapolationDt
+	end
+
+	-- Animation logic stays here (reads position, doesn't write CFrame)
+	local currentPos  = newCF.Position
+	local actualDelta = (currentPos - self.LastPos).Magnitude
+	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
+	self.LastPos      = currentPos
+
+	if self.Animator and (not self._lastAnimCheck or tick() - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = tick()
+		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
+		self._isNear = dist < 150
+		if not self._isNear then
+			self.Animator:SetWalking(false)
+		end
+	end
+
+	if self.Animator and self._isNear then
+		self.Animator:SetWalking(visualSpeed > 1.5)
+	end
+
+	if timeSinceLatest > self.MaxExtrapolation then
+		self._dirty = false
+	end
+
+	return newCF
+end
+
+--[[
 function NpcReplicator:Render(dt, serverTime)
 	if not self.Snapshots then return end
 	local latest = self.Snapshots[#self.Snapshots]
@@ -201,6 +280,7 @@ function NpcReplicator:Render(dt, serverTime)
 		self._dirty = false
 	end
 end
+--[[]]
 
 -->>>>>>>>>>>>
 -- Self explanatory
