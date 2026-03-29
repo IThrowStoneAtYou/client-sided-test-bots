@@ -17,6 +17,7 @@ local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
 local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
+local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompassHUD"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
@@ -34,6 +35,13 @@ local replicators   = {}
 local animators     = {}
 local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
 local lastFormation = {}   -- [companyIndex] = { ranks, files }
+
+local BEARER_MODE_CENTER = 0
+local BEARER_MODE_LEFT   = 1
+local BEARER_MODE_RIGHT  = 2
+local BEARER_MODE_PACING = 3
+
+local bearerMode = {}  -- [companyIndex] = number, mirrors server state
 
 local function ensureFolder(name)
 	if not workspace:FindFirstChild(name) then
@@ -101,6 +109,8 @@ local hud = CompanyHUD.new(function(selectedList)
 	applyHighlights(selectedList)
 end)
 
+local compass = CompassHUD.new()
+
 -- ── NPC Registration ──────────────────────────────────────────────────
 local function registerNpc(shortId, pos, yaw)
 	if replicators[shortId] then return end
@@ -116,7 +126,7 @@ local function registerNpc(shortId, pos, yaw)
 	local anim          = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
-	--	rep:Start() -- unless, not used, eat shit ton of frames.
+--	rep:Start() -- unless, not used, eat shit ton of frames.
 
 	replicators[shortId] = rep
 	animators[shortId]   = anim
@@ -126,6 +136,19 @@ local function registerNpc(shortId, pos, yaw)
 			setHighlightVisible(clientModel, compIdx, true)
 			break
 		end
+	end
+end
+
+local function fireBearerMode(mode: number)
+	local selectedList = hud:getSelectedList()
+	if #selectedList == 0 then return end
+	for _, compIdx in ipairs(selectedList) do
+		if not companySlots[compIdx] then
+			continue 
+		end
+		
+		Network.BearerModeCommand.Fire(compIdx, mode)
+		bearerMode[compIdx] = mode
 	end
 end
 
@@ -306,6 +329,8 @@ Network.NpcCompanySync.On(function(data)
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
+		
+		bearerMode[entry.index] = BEARER_MODE_CENTER
 
 		companySlots[entry.index] = slotSet
 	end
@@ -355,6 +380,37 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			end
 		end
 		return
+	end
+	
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		local key = input.KeyCode
+
+		if key == Enum.KeyCode.H then
+			fireBearerMode(BEARER_MODE_LEFT)
+			return
+		elseif key == Enum.KeyCode.J then
+			fireBearerMode(BEARER_MODE_CENTER)
+			return
+		elseif key == Enum.KeyCode.K then
+			fireBearerMode(BEARER_MODE_RIGHT)
+			return
+		elseif key == Enum.KeyCode.L then
+			-- pacing only toggles from J; otherwise resets to J first
+			local selectedList = hud:getSelectedList()
+			if #selectedList == 0 then return end
+			for _, compIdx in ipairs(selectedList) do
+				if not companySlots[compIdx] then
+					continue 
+				end
+				
+				local current = bearerMode[compIdx] or BEARER_MODE_CENTER
+				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or  BEARER_MODE_CENTER
+				
+				Network.BearerModeCommand.Fire(compIdx, next)
+				bearerMode[compIdx] = next
+			end
+			return
+		end
 	end
 
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
@@ -423,7 +479,10 @@ UserInputService.InputEnded:Connect(function(input)
 		-- Plain click: derive rightDir from camera facing, center group on anchorPos
 		local look = camera.CFrame.LookVector
 		facingDir  = Vector3.new(look.X, 0, look.Z)
-		if facingDir.Magnitude < 0.01 then facingDir = Vector3.new(0, 0, -1) end
+		if facingDir.Magnitude < 0.01 then 
+			facingDir = Vector3.new(0, 0, -1)
+		end
+		
 		facingDir  = facingDir.Unit
 
 		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
@@ -458,6 +517,9 @@ RunService.RenderStepped:Connect(function(dt)
 	local serverTime = workspace:GetServerTimeNow()
 	local parts   = {}
 	local cframes = {}
+
+	-- Update Compass
+	compass:Update(camera.CFrame)
 
 	for _, rep in pairs(replicators) do
 		local cf = rep:ComputeCFrame(dt, serverTime)

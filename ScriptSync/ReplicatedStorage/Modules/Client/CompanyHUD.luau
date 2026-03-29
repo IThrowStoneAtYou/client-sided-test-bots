@@ -212,7 +212,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	card.Position               = restingPos  -- Will be updated by _updateLayout on first sync
 	card.Size                   = UDim2.new(0, CARD_W, 0, CARD_H)
 	card.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
-	card.BackgroundTransparency = 0.1
+	card.BackgroundTransparency = 0.4 -- Increased transparency to match the new compass style
 	card.Visible                = false
 	card.Parent                 = self._gui
 

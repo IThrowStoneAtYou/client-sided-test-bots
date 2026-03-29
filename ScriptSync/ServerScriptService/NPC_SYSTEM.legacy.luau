@@ -30,11 +30,19 @@ local DELTA_ROT     = 0.01
 local MAX_BOTS      = 140        
 local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         
-local COMPANY_GAP   = 8         
-local RANK_SPACING  = 4.5       
+local COMPANY_GAP   = 10         
+local RANK_SPACING  = 4.7 --5       
 local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
+
+local BEARER_MODE_CENTER    = 0   -- j : static, behind centre
+local BEARER_MODE_LEFT      = 1   -- h : front-left corner
+local BEARER_MODE_RIGHT     = 2   -- k : front-right corner
+local BEARER_MODE_PACING    = 3   -- l : left↔right behind last rank
+
+local BEARER_SIDE_OFFSET_X = 5   -- studs outward beyond the corner soldier
+local BEARER_SIDE_OFFSET_Z = 3   -- studs back so it's beside rank 1, not in front
 
 local NPC_COLLISION_GROUP = "NpcGroup"
 local CLIENT_NPC_GROUP = "ClientNpcGroup"
@@ -113,6 +121,32 @@ local function pickNewTarget(npc)
 	npc.Pathfinder:Run(npc.Target)
 end
 
+local function getBearerTarget(npc, comp)
+	local anchorCF   = comp.anchorCF
+	local halfWidth  = ((comp.files - 1) * RANK_SPACING) / 2
+	local totalDepth = (comp.ranks - 1) * RANK_DEPTH
+	local dynamicZ   = totalDepth + FLAG_OFFSET_Z
+
+	local mode = npc.BearerMode
+
+	if mode == BEARER_MODE_LEFT then
+		-- front-left corner of the formation (negative X = left)
+		return anchorCF * CFrame.new(-(halfWidth + BEARER_SIDE_OFFSET_X), 0, BEARER_SIDE_OFFSET_Z)
+
+	elseif mode == BEARER_MODE_RIGHT then
+		-- front-right corner of the formation
+		return anchorCF * CFrame.new(halfWidth + BEARER_SIDE_OFFSET_X, 0, BEARER_SIDE_OFFSET_Z)
+
+	elseif mode == BEARER_MODE_PACING then
+		-- pacing: go to whichever side PaceDirection points to
+		return anchorCF * CFrame.new(halfWidth * npc.PaceDirection, 0, dynamicZ)
+
+	else
+		-- BEARER_MODE_CENTER (j) : static centre behind last rank
+		return anchorCF * CFrame.new(0, 0, dynamicZ)
+	end
+end
+
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
 local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 	local shortId   = nextShortId
@@ -174,34 +208,26 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 			pickNewTarget(npc)
 
 			-- [FLAG BEARER LOGIC] Pacing trigger
-		elseif npc.IsFlagBearer then
-			npc.MoveRetries = 0
-			npc.PaceDirection = -(npc.PaceDirection or 1) -- Flip Left to Right
-
-			local pComps = companies[npc.CompanyOwner]
-			if pComps and pComps[npc.CompanyIndex] then
-				local comp = pComps[npc.CompanyIndex]
-
-				-- Dynamically calculate width and total depth to stay behind the last rank
-				local paceWidth = ((comp.files - 1) * RANK_SPACING) / 2
-				local totalDepth = (comp.ranks - 1) * RANK_DEPTH
-				local dynamicZ = totalDepth + FLAG_OFFSET_Z
-				local targetCF = comp.anchorCF * CFrame.new(paceWidth * npc.PaceDirection, 0, dynamicZ)
-
-				npc.RegimentTarget = targetCF.Position
-				npc.Pathfinder:Run(npc.RegimentTarget)
+			elseif npc.IsFlagBearer and npc.IsPacing then
+				npc.MoveRetries = 0
+				npc.PaceDirection = -(npc.PaceDirection or 1)
+				local pComps = companies[npc.CompanyOwner]
+				if pComps and pComps[npc.CompanyIndex] then
+					local comp     = pComps[npc.CompanyIndex]
+					local targetCF = getBearerTarget(npc, comp)
+					npc.RegimentTarget = targetCF.Position
+					npc.Pathfinder:Run(npc.RegimentTarget)
+				end
+			elseif npc.IsRegiment then
+				npc.MoveRetries = 0
+				if npc.RegimentFacing then
+					if npc.ActiveTween then npc.ActiveTween:Cancel() end
+					local pos = npc.Root.Position
+					local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
+					npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
+					npc.ActiveTween:Play()
+				end
 			end
-
-		else
-			npc.MoveRetries = 0
-			if npc.RegimentFacing then
-				if npc.ActiveTween then npc.ActiveTween:Cancel() end
-				local pos = npc.Root.Position
-				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
-				npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
-				npc.ActiveTween:Play()
-			end
-		end
 	end)
 
 	pathfinder.Trapped:Connect(function()
@@ -329,11 +355,9 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 				local targetCF
 
 				if isBearer then
-					-- Position bearer behind the last rank at the right edge
-					local halfWidth = ((files - 1) * RANK_SPACING) / 2
 					local totalDepth = (ranks - 1) * RANK_DEPTH
-					local dynamicZ = totalDepth + FLAG_OFFSET_Z
-					targetCF = anchorCF * CFrame.new(halfWidth, 0, dynamicZ)
+					local dynamicZ   = totalDepth + FLAG_OFFSET_Z
+					targetCF = anchorCF * CFrame.new(0, 0, dynamicZ)  -- centre, not halfWidth
 				else
 					targetCF = slots[j - 1]
 				end
@@ -347,8 +371,10 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					npc.CompanyIndex = i
 
 					if isBearer then
-						npc.IsFlagBearer = true
+						npc.IsFlagBearer  = true
 						npc.PaceDirection = 1
+						npc.BearerMode    = BEARER_MODE_CENTER  -- ADD
+						npc.IsPacing      = false               -- ADD
 					end
 
 					npc.Pathfinder:Run(targetCF.Position)
@@ -430,11 +456,11 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 
 		-- [FLAG BEARER LOGIC] Assign separate movement logic for bearer
 		if npc.IsFlagBearer then
-			-- Adjust pacing limits based on new formation width and depth
-			local halfWidth = ((files - 1) * RANK_SPACING) / 2
-			local totalDepth = (ranks - 1) * RANK_DEPTH
-			local dynamicZ = totalDepth + FLAG_OFFSET_Z
-			targetCF = anchorCF * CFrame.new(halfWidth * npc.PaceDirection, 0, dynamicZ)
+			targetCF = getBearerTarget(npc, {
+				anchorCF = anchorCF,
+				ranks    = ranks,
+				files    = files,
+			})
 		else
 			targetCF = slots[soldierIdx]
 			soldierIdx += 1
@@ -489,6 +515,40 @@ Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, 
 	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
 
 	orderCompany(player, companyIndex, anchorPos, facingDir, math.floor(ranks), math.floor(files))
+end)
+
+Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
+	if not companies[player] then return end
+
+	companyIndex = math.floor(companyIndex)
+	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
+
+	local comp = companies[player][companyIndex]
+	if not comp then return end
+
+	local mode = math.clamp(math.floor(modeRaw), 0, 3)
+
+	for _, shortId in ipairs(comp.slots) do
+		local npc = activeNpcs[shortId]
+		if not (npc and npc.IsFlagBearer) then continue end
+
+		-- L is only valid from J; if not in J, redirect to J instead
+		if mode == BEARER_MODE_PACING and npc.BearerMode ~= BEARER_MODE_CENTER then
+			mode = BEARER_MODE_CENTER
+		end
+
+		npc.BearerMode    = mode
+		npc.IsPacing      = (mode == BEARER_MODE_PACING)
+		npc.PaceDirection = 1  -- reset pace side on any mode change
+
+		npc.Pathfinder:Stop()
+		local targetCF = getBearerTarget(npc, comp)
+		npc.RegimentTarget = targetCF.Position
+		npc.MoveRetries    = 0
+		npc.Pathfinder:Run(npc.RegimentTarget)
+
+		break  -- one bearer per company
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(player)
