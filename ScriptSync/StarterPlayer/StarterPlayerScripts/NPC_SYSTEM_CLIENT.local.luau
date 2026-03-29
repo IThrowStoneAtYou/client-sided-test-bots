@@ -431,10 +431,30 @@ end)
 -- ── Central render loop (runs once, drives all replicators) ───────────
 RunService.RenderStepped:Connect(function(dt)
 	local serverTime = workspace:GetServerTimeNow()
+	local parts   = {}
+	local cframes = {}
+
+	for _, rep in pairs(replicators) do
+		local cf = rep:ComputeCFrame(dt, serverTime)
+		if cf then
+			parts[#parts + 1]   = rep.Root
+			cframes[#cframes + 1] = cf
+		end
+	end
+
+	if #parts > 0 then
+		workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
+	end
+end)
+
+--[[
+RunService.RenderStepped:Connect(function(dt)
+	local serverTime = workspace:GetServerTimeNow()
 	for _, rep in pairs(replicators) do
 		rep:Render(dt, serverTime)
 	end
 end)
+--[[]]
 
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join

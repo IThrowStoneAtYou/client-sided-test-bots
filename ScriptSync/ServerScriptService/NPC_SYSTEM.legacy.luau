@@ -163,7 +163,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 		if part:IsA("BasePart") then
 			part.Transparency = 1 -- Hide server logic parts to save client rendering overhead
 			part.CanTouch = false -- Optimization: Server NPCs don't need to trigger Touched events
-			--	part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
+			part.CanQuery = false -- Optimization: Server NPCs don't need to be hit by Raycasts
 			part.CollisionGroup = NPC_COLLISION_GROUP
 			part:SetNetworkOwner(nil)
 		end
@@ -196,7 +196,9 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 			npc.MoveRetries = 0
 			-- Smoothly rotate to match the formation facing
 			if npc.RegimentFacing then
-				if npc.ActiveTween then npc.ActiveTween:Cancel() end
+				if npc.ActiveTween then 
+					npc.ActiveTween:Cancel() 
+				end
 
 				local pos = npc.Root.Position
 				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
@@ -363,7 +365,9 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		local centerOffset = startOffset + (i - 1) * (companyWidth + COMPANY_GAP) + companyWidth / 2
 		local anchorPos    = playerRoot.Position + flatLook * SPAWN_OFFSET + right * centerOffset
 		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
+		
 		companyAnchors[i]  = anchorCF
+		
 		local slots        = RegimentFormation.getSlots(anchorCF, botCount, ranks, files)
 		local slotIds      = {}
 
@@ -377,6 +381,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					npc.RegimentTarget = slotCF.Position
 					npc.Pathfinder:Run(slotCF.Position)
 					npc.LastMoveTime = os.clock()
+					
 					-- Store the result thread‑safely
 					local resultData = {
 						companyIndex = i,
@@ -436,6 +441,7 @@ end
 
 -->>>>>>>>>>>>
 -- Moves an existing company into a new formation at a target position
+
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
