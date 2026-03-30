@@ -12,8 +12,8 @@ local MUSKET_TEMPLATE = ReplicatedStorage.AnimShared.Npc.Item.Musket:WaitForChil
 local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musket")
 
 -- How long to linger in each "hold" animation (seconds)
-local MAKE_READY_IDLE_HOLD = 1.5
-local AIM_IDLE_HOLD        = 1.2
+local MAKE_READY_IDLE_HOLD = 1.0
+local AIM_IDLE_HOLD        = 1.0
 local RELOAD_IDLE_HOLD     = 1.0
 
 local MusketUtils = {}
@@ -89,7 +89,7 @@ function MusketUtils.new(clientModel: Model)
 			return nil
 		end
 		local track = animator:LoadAnimation(anim)
-		track.Priority = Enum.AnimationPriority.Action
+		track.Priority = Enum.AnimationPriority.Action2
 		return track
 	end
 
@@ -106,7 +106,7 @@ function MusketUtils.new(clientModel: Model)
 
 	-- Idle is the resting state — lower priority so walk can show through
 	if self._tracks.Idle then
-		self._tracks.Idle.Priority = Enum.AnimationPriority.Core
+		self._tracks.Idle.Priority = Enum.AnimationPriority.Action
 		self._tracks.Idle:Play(0.2)
 	end
 
