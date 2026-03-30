@@ -18,6 +18,7 @@ local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
 local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
 local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompassHUD"))
+local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
@@ -35,6 +36,9 @@ local replicators   = {}
 local animators     = {}
 local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
 local lastFormation = {}   -- [companyIndex] = { ranks, files }
+local musketUtils = {}   -- [shortId] = MusketUtils instance
+local canAttack   = {}   -- [companyIndex] = boolean (true by default)
+local bearerIds   = {}   -- [shortId] = true
 
 local BEARER_MODE_CENTER = 0
 local BEARER_MODE_LEFT   = 1
@@ -130,6 +134,8 @@ local function registerNpc(shortId, pos, yaw)
 
 	replicators[shortId] = rep
 	animators[shortId]   = anim
+	
+	musketUtils[shortId] = MusketUtils.new(clientModel)
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
@@ -314,24 +320,55 @@ Network.NpcDespawn.On(function(shortId)
 		anim:Destroy()
 		animators[shortId] = nil
 	end
+	
+	-- ADD
+	local mu = musketUtils[shortId]
+	if mu then
+		mu:Destroy()
+		musketUtils[shortId] = nil
+	end
+
+	bearerIds[shortId] = nil  -- ADD
 end)
 
 Network.NpcCompanySync.On(function(data)
 	companySlots = {}
+	bearerIds    = {}   -- reset on full sync
 
 	for _, entry in ipairs(data) do
+		-- slots[1] is always the bearer (server inserts bearer first)
+		local bearerId = entry.slots[1]
+		if bearerId then
+			bearerIds[bearerId] = true
+			-- Remove musket if it was attached before we knew it was a bearer
+			local mu = musketUtils[bearerId]
+			if mu then
+				mu:Destroy()
+				musketUtils[bearerId] = nil
+			end
+		end
+
+		-- Sync canAttack state for all soldiers in this company
+		local compCanShoot = canAttack[entry.index] ~= false  -- true by default
+		for i = 2, #entry.slots do
+			local sid = entry.slots[i]
+			local mu  = musketUtils[sid]
+			if mu then
+				mu:SetCanShoot(compCanShoot)
+			end
+		end
+
 		local slotSet = {}
-		for _, sid in ipairs(entry.slots) do 
-			slotSet[sid] = true 
-			-- Pre-create highlight for the NPC so it is ready to toggle
+		for _, sid in ipairs(entry.slots) do
+			slotSet[sid] = true
 			local rep = replicators[sid]
 			if rep and rep.Client then
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
-		
-		bearerMode[entry.index] = BEARER_MODE_CENTER
 
+		bearerMode[entry.index]  = BEARER_MODE_CENTER
+		canAttack[entry.index]   = canAttack[entry.index] ~= false  -- preserve existing or default true
 		companySlots[entry.index] = slotSet
 	end
 
@@ -408,6 +445,28 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				
 				Network.BearerModeCommand.Fire(compIdx, next)
 				bearerMode[compIdx] = next
+			end
+		elseif key == Enum.KeyCode.E then
+			local selectedList = hud:getSelectedList()
+			if #selectedList == 0 then return end
+
+			for _, compIdx in ipairs(selectedList) do
+				if not companySlots[compIdx] then continue end
+
+				local newState    = not (canAttack[compIdx] ~= false)
+				canAttack[compIdx] = newState
+
+				-- Update HUD icon
+				hud:setCanAttack(compIdx, newState)
+
+				-- Push to all musket instances in this company
+				local slots = companySlots[compIdx]
+				for shortId in pairs(slots) do
+					local mu = musketUtils[shortId]
+					if mu then
+						mu:SetCanShoot(newState)
+					end
+				end
 			end
 			return
 		end

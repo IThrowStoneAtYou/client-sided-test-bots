@@ -39,6 +39,8 @@ function CompanyHUD.new(onSelectionChanged)
 	self._companies   = {}   -- { [index] = { count } }
 	self._cards       = {}
 	self._onChanged   = onSelectionChanged or function() end
+	self._canAttackIcons = {}   -- ADD: [index] = ImageLabel
+	self._infoPanels     = {}   -- ADD: [index] = Frame
 
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local gui = Instance.new("ScreenGui")
@@ -70,10 +72,21 @@ function CompanyHUD:getSelectedList(): {number}
 	for idx in pairs(self._selected) do 
 		list[#list + 1] = idx 
 	end
-	
+
 	table.sort(list)
-	
+
 	return list
+end
+
+-->>>>>>>>>>>>
+-- Updates the can-attack icon visual for a given company index.
+function CompanyHUD:setCanAttack(index: number, enabled: boolean)
+	local icon = self._canAttackIcons[index]
+	if not icon then return end
+	icon.ImageTransparency = enabled and 0 or 0.65
+	icon.ImageColor3       = enabled
+		and Color3.fromRGB(255, 255, 255)
+		or  Color3.fromRGB(120, 120, 120)
 end
 
 -->>>>>>>>>>>>
@@ -95,16 +108,16 @@ function CompanyHUD:setSelected(index: number?)
 	local prev = self._selected
 	self._selected = index and { [index] = true } or {}
 	self._onChanged(self:getSelectedList())
-	
+
 	local dirty = {}
 	for idx in pairs(prev) do 
 		dirty[idx] = true
 	end
-	
+
 	if index then
 		dirty[index] = true 
 	end
-	
+
 	for idx in pairs(dirty) do 
 		self:_refreshCard(idx)
 	end
@@ -119,7 +132,7 @@ function CompanyHUD:toggleSelected(index: number)
 	else
 		self._selected[index] = true
 	end
-	
+
 	self._onChanged(self:getSelectedList())
 	self:_refreshCard(index)
 end
@@ -188,6 +201,12 @@ function CompanyHUD:_refreshCard(i: number)
 	cd.frame.Visible = company ~= nil
 	if not company then return end
 
+	-- ADD: show info panel only when this is the sole selected company
+	local isOnlySelected = isSel and (#self:getSelectedList() == 1)
+	if cd.infoPanel then
+		cd.infoPanel.Visible = isOnlySelected
+	end
+
 	cd.countLabel.Text        = tostring(company.count)
 	cd.stroke.Thickness       = isSel and 3   or 1.5
 	cd.stroke.Transparency    = isSel and 0   or 0.6
@@ -203,8 +222,8 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	local accent     = COMPANY_COLORS[index]	-- stupid but it work, even know ti take stupidlly long time.
 	local raisedPos  = UDim2.new(0.5, 0, 1, RAISED_OFF)
 	local restingPos = UDim2.new(0.5, 0, 1, RESTING_OFF)
-	
---	print("_createCard", index )
+
+	--	print("_createCard", index )
 
 	local card = Instance.new("Frame")
 	card.Name                   = "Company" .. index
@@ -320,6 +339,159 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	btn.Parent             = card
 	btn.Name				= "btn"
 
+	local PANEL_W = 160
+	local PANEL_H = 124
+
+	local infoPanel = Instance.new("Frame")
+	infoPanel.Name                   = "InfoPanel"
+	infoPanel.Size                   = UDim2.new(0, PANEL_W, 0, PANEL_H)
+	infoPanel.Position               = UDim2.new(0.5, 0, 0, -6)
+	infoPanel.AnchorPoint            = Vector2.new(0.5, 1)
+	infoPanel.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
+	infoPanel.BackgroundTransparency = 0.1
+	infoPanel.Visible                = false
+	infoPanel.ZIndex                 = 3
+	infoPanel.Parent                 = card
+
+	local panelCorner = Instance.new("UICorner")
+	panelCorner.CornerRadius = UDim.new(0, 9)
+	panelCorner.Parent       = infoPanel
+
+	local panelStroke = Instance.new("UIStroke")
+	panelStroke.Color        = accent
+	panelStroke.Thickness    = 1.5
+	panelStroke.Transparency = 0.5
+	panelStroke.Parent       = infoPanel
+
+	-- Company name
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size               = UDim2.new(1, 0, 0, 16)
+	nameLabel.Position           = UDim2.new(0, 0, 0, 7)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text               = "COMPANY " .. ROMAN[index]
+	nameLabel.TextColor3         = accent
+	nameLabel.Font               = Enum.Font.GothamBold
+	nameLabel.TextSize           = 11
+	nameLabel.TextXAlignment     = Enum.TextXAlignment.Center
+	nameLabel.ZIndex             = 4
+	nameLabel.Parent             = infoPanel
+
+	-- Helper: builds a labelled stat bar
+	local function makeBar(labelText, barColor, yPos)
+		local lbl = Instance.new("TextLabel")
+		lbl.Size               = UDim2.new(1, -12, 0, 9)
+		lbl.Position           = UDim2.new(0, 6, 0, yPos)
+		lbl.BackgroundTransparency = 1
+		lbl.Text               = labelText
+		lbl.TextColor3         = Color3.fromRGB(130, 130, 145)
+		lbl.Font               = Enum.Font.GothamBold
+		lbl.TextSize           = 8
+		lbl.TextXAlignment     = Enum.TextXAlignment.Left
+		lbl.ZIndex             = 4
+		lbl.Parent             = infoPanel
+
+		local barBg = Instance.new("Frame")
+		barBg.Size             = UDim2.new(1, -12, 0, 14)
+		barBg.Position         = UDim2.new(0, 6, 0, yPos + 11)
+		barBg.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+		barBg.BorderSizePixel  = 0
+		barBg.ZIndex           = 4
+		barBg.Parent           = infoPanel
+
+		local barCornerInner = Instance.new("UICorner")
+		barCornerInner.CornerRadius = UDim.new(0, 3)
+		barCornerInner.Parent       = barBg
+
+		local barFill = Instance.new("Frame")
+		barFill.Size             = UDim2.new(1, 0, 1, 0)
+		barFill.BackgroundColor3 = barColor
+		barFill.BackgroundTransparency = 0.3
+		barFill.BorderSizePixel  = 0
+		barFill.ZIndex           = 5
+		barFill.Parent           = barBg
+
+		local barFillCorner = Instance.new("UICorner")
+		barFillCorner.CornerRadius = UDim.new(0, 3)
+		barFillCorner.Parent       = barFill
+
+		local valLabel = Instance.new("TextLabel")
+		valLabel.Size               = UDim2.new(1, 0, 1, 0)
+		valLabel.BackgroundTransparency = 1
+		valLabel.Text               = "100"
+		valLabel.TextColor3         = Color3.fromRGB(230, 230, 230)
+		valLabel.Font               = Enum.Font.GothamBold
+		valLabel.TextSize           = 10
+		valLabel.TextXAlignment     = Enum.TextXAlignment.Center
+		valLabel.ZIndex             = 6
+		valLabel.Parent             = barBg
+	end
+
+	makeBar("MORALE",   Color3.fromRGB(200, 55, 55),   27)   -- red bar at y=27
+	makeBar("STRENGTH", Color3.fromRGB(55, 110, 200),  57)   -- blue bar at y=57
+
+	-- Divider above icons
+	local iconDivider = Instance.new("Frame")
+	iconDivider.Size             = UDim2.new(0.8, 0, 0, 1)
+	iconDivider.Position         = UDim2.new(0.1, 0, 0, 88)
+	iconDivider.BackgroundColor3 = accent
+	iconDivider.BackgroundTransparency = 0.6
+	iconDivider.BorderSizePixel  = 0
+	iconDivider.ZIndex           = 4
+	iconDivider.Parent           = infoPanel
+
+	-- Icon builder helper
+	local ICON_IMG = "http://www.roblox.com/asset/?id=13488010851"
+	local ICON_SIZE = 28
+
+	local function makeIcon(xCenter, tooltipText, storeRef)
+		local iconFrame = Instance.new("Frame")
+		iconFrame.Size             = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE + 12)
+		iconFrame.Position         = UDim2.new(0, xCenter - ICON_SIZE / 2, 0, 93)
+		iconFrame.BackgroundTransparency = 1
+		iconFrame.ZIndex           = 4
+		iconFrame.Parent           = infoPanel
+
+		local img = Instance.new("ImageLabel")
+		img.Size             = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
+		img.BackgroundTransparency = 1
+		img.Image            = ICON_IMG
+		img.ImageColor3      = Color3.fromRGB(255, 255, 255)
+		img.ZIndex           = 5
+		img.Parent           = iconFrame
+
+		local tipLabel = Instance.new("TextLabel")
+		tipLabel.Size               = UDim2.new(1, 0, 0, 10)
+		tipLabel.Position           = UDim2.new(0, 0, 0, ICON_SIZE + 1)
+		tipLabel.BackgroundTransparency = 1
+		tipLabel.Text               = tooltipText
+		tipLabel.TextColor3         = Color3.fromRGB(110, 110, 125)
+		tipLabel.Font               = Enum.Font.Gotham
+		tipLabel.TextSize           = 8
+		tipLabel.TextXAlignment     = Enum.TextXAlignment.Center
+		tipLabel.ZIndex             = 5
+		tipLabel.Parent             = iconFrame
+
+		if storeRef then
+			storeRef(img)
+		end
+
+		return img
+	end
+
+	-- Attack type icon (left, static)
+	makeIcon(44, "TYPE", nil)
+
+	-- Can-attack icon (right, toggled by E key)
+	local canAttackIconRef
+	makeIcon(116, "[E] FIRE", function(img)
+		canAttackIconRef = img
+	end)
+
+	self._canAttackIcons[index] = canAttackIconRef
+	self._infoPanels[index]     = infoPanel
+
+	-- Store infoPanel reference inside cd too (cd is built right after this block)
+
 	local cd = {
 		frame      = card,
 		countLabel = countLabel,
@@ -327,7 +499,10 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 		hovered    = false,
 		raisedPos  = raisedPos,
 		restingPos = restingPos,
+		infoPanel  = infoPanel,  
+	
 	}
+	
 	self._cards[index] = cd
 
 	btn.MouseEnter:Connect(function()
