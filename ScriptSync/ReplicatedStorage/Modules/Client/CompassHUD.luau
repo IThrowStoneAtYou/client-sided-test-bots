@@ -13,8 +13,8 @@ local BG_COLOR    = Color3.fromRGB(14, 14, 22)
 local ACCENT_COLOR = Color3.fromRGB(230, 230, 230)
 local SUB_COLOR   = Color3.fromRGB(145, 145, 160)
 
-local COMPASS_WIDTH = 240
-local COMPASS_HEIGHT = 40
+local COMPASS_WIDTH = 242
+local COMPASS_HEIGHT = 30
 local PIXELS_PER_DEGREE = 2 -- How wide the compass feels
 local SMOOTH_TIME = 0.35    -- Snappier glide for better responsiveness
 

@@ -42,7 +42,7 @@ local BEARER_MODE_RIGHT     = 2   -- k : front-right corner
 local BEARER_MODE_PACING    = 3   -- l : left↔right behind last rank
 
 local BEARER_SIDE_OFFSET_X = 5   -- studs outward beyond the corner soldier
-local BEARER_SIDE_OFFSET_Z = 3   -- studs back so it's beside rank 1, not in front
+local BEARER_SIDE_OFFSET_Z = 0   -- studs back so it's beside rank 1, not in front
 
 local NPC_COLLISION_GROUP = "NpcGroup"
 local CLIENT_NPC_GROUP = "ClientNpcGroup"

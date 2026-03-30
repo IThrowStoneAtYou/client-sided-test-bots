@@ -346,8 +346,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 
 	btn.MouseButton1Click:Connect(function()
 		if not self._companies[index] then return end
-		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-			or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 
 		if shift then
 			-- Add/remove from multi-selection
