@@ -87,9 +87,7 @@ function CompanyHUD:setCanAttack(index: number, enabled: boolean)
 	local icon = self._canAttackIcons[index]
 	if not icon then return end
 	icon.ImageTransparency = enabled and 0 or 0.65
-	icon.ImageColor3       = enabled
-		and Color3.fromRGB(255, 255, 255)
-		or  Color3.fromRGB(120, 120, 120)
+	icon.ImageColor3       = enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(120, 120, 120)
 end
 
 -->>>>>>>>>>>>
@@ -213,9 +211,7 @@ function CompanyHUD:_refreshCard(i: number)
 	cd.countLabel.Text        = tostring(company.count)
 	cd.stroke.Thickness       = isSel and 3   or 1.5
 	cd.stroke.Transparency    = isSel and 0   or 0.6
-	cd.frame.BackgroundColor3 = isSel
-		and Color3.fromRGB(26, 30, 50)
-		or  Color3.fromRGB(14, 14, 22)
+	cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or  Color3.fromRGB(14, 14, 22)
 
 	local target = (isSel or cd.hovered) and cd.raisedPos or cd.restingPos
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()
