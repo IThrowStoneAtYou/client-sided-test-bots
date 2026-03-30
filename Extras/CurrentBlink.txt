@@ -53,7 +53,7 @@ event NpcOrderCommand {
     Data: (vector, vector, u8, u8, u8)
 }
 
--- Replaces NpcRegimentCount: full company list for this player
+-- full company list for this player
 event NpcCompanySync {
     From: Server,
     Type: Reliable,
@@ -69,4 +69,11 @@ event NpcReady {
     From: Client,
     Type: Reliable,
     Call: ManyAsync
+}
+
+event BearerModeCommand {
+    From: Client,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (u8, u8)
 }

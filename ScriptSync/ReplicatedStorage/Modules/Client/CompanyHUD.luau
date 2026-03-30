@@ -212,7 +212,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	card.Position               = restingPos  -- Will be updated by _updateLayout on first sync
 	card.Size                   = UDim2.new(0, CARD_W, 0, CARD_H)
 	card.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
-	card.BackgroundTransparency = 0.1
+	card.BackgroundTransparency = 0.4 -- Increased transparency to match the new compass style
 	card.Visible                = false
 	card.Parent                 = self._gui
 
@@ -346,8 +346,7 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 
 	btn.MouseButton1Click:Connect(function()
 		if not self._companies[index] then return end
-		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-			or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 
 		if shift then
 			-- Add/remove from multi-selection
