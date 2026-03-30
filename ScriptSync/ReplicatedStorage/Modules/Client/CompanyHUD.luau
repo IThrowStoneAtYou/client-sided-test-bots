@@ -24,6 +24,9 @@ local CARD_H      = 122
 local CARD_GAP    = 10
 local PEEK_H      = 30
 local RAISED_OFF  = -18
+local PANEL_W = 160
+local PANEL_H = 124
+
 local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -338,9 +341,6 @@ function CompanyHUD:_createCard(index: number)	-- manual creations to avoid miss
 	btn.ZIndex             = 10
 	btn.Parent             = card
 	btn.Name				= "btn"
-
-	local PANEL_W = 160
-	local PANEL_H = 124
 
 	local infoPanel = Instance.new("Frame")
 	infoPanel.Name                   = "InfoPanel"
