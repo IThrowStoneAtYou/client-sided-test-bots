@@ -35,15 +35,17 @@ end
 -->>>>>>>>>>>>
 -- Constructor. Attaches the musket and starts the combat loop immediately
 -- (canShoot defaults to true).
-function MusketUtils.new(clientModel: Model)
+function MusketUtils.new(clientModel: Model, teamName: string?)
 	local self = setmetatable({}, MusketUtils)
 
 	self._model      = clientModel
 	self._canShoot   = true
 	self._loopThread = nil
 	self._destroyed  = false
+	self._team       = teamName          -- set immediately
+	self._isReloading = false
 
-	-- ── Attach musket model ───────────────────────────────────────────
+	-- Attach musket model
 	local torso = clientModel:FindFirstChild("Torso")
 		or clientModel:FindFirstChild("UpperTorso")
 	if not torso then
@@ -71,7 +73,7 @@ function MusketUtils.new(clientModel: Model)
 	self._musket  = musket
 	self._motor   = motor
 
-	-- ── Load animations ───────────────────────────────────────────────
+	-- Load animations
 	local humanoid = clientModel:FindFirstChildOfClass("Humanoid")
 	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
 	if not animator then
@@ -101,10 +103,9 @@ function MusketUtils.new(clientModel: Model)
 		Reload        = load("Reload"),
 	}
 
-	-- Idle is the resting state — lower priority so walk can show through
 	if self._tracks.Idle then
 		self._tracks.Idle.Priority = Enum.AnimationPriority.Action
-		self._tracks.Idle:Play(0.2)
+		self._tracks.Idle:Play()
 	end
 
 	self:_startLoop()
@@ -114,7 +115,62 @@ end
 -- ── Public API ────────────────────────────────────────────────────────
 
 -->>>>>>>>>>>>
+-- Set the NPC's team (called from server spawn).
+function MusketUtils:SetTeam(team)
+	self._team = team
+end
+
+-->>>>>>>>>>>>
+-- Finds the nearest enemy NPC not on the same team within range.
+function MusketUtils:FindNearestEnemy(range: number): Model?
+	local myPos = self._model:FindFirstChild("HumanoidRootPart")
+	if not myPos then return nil end
+	myPos = myPos.Position
+
+	local nearest = nil
+	local nearestDist = range
+
+	local npcFolder = workspace:FindFirstChild("Npc_Registry")
+	if not npcFolder then return nil end
+
+	for _, npcModel in pairs(npcFolder:GetChildren()) do
+		if npcModel == self._model then continue end
+
+		local theirTeamName = npcModel:GetAttribute("TeamName")
+		-- No nil check – we expect all NPCs to have a team name.
+		-- Skip if same team.
+		if self._team and theirTeamName == self._team then
+			continue
+		end
+
+		local theirRoot = npcModel:FindFirstChild("HumanoidRootPart")
+		if not theirRoot then continue end
+
+		local dist = (theirRoot.Position - myPos).Magnitude
+		if dist < nearestDist then
+			nearestDist = dist
+			nearest = npcModel
+		end
+	end
+
+	return nearest
+end
+
+-->>>>>>>>>>>>
+-- Faces the NPC toward a target position.
+function MusketUtils:FaceTarget(targetPos: Vector3)
+	local root = self._model:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+
+	local myPos = root.Position
+	local direction = (targetPos - myPos).Unit
+	local newCF = CFrame.lookAt(myPos, myPos + direction)
+	root.CFrame = newCF
+end
+
+-->>>>>>>>>>>>
 -- Enables or disables the combat loop.
+-- If disabled mid-reload, the reload will finish before stopping.
 function MusketUtils:SetCanShoot(enabled: boolean)
 	if self._canShoot == enabled then return end
 	self._canShoot = enabled
@@ -122,9 +178,13 @@ function MusketUtils:SetCanShoot(enabled: boolean)
 	if enabled then
 		self:_startLoop()
 	else
-		self:_cancelLoop()
-		if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
-			self._tracks.Idle:Play()
+		-- If not currently reloading, cancel immediately
+		-- If reloading, let the reload finish (caught by loop's check)
+		if not self._isReloading then
+			self:_cancelLoop()
+			if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
+				self._tracks.Idle:Play()
+			end
 		end
 	end
 end
@@ -169,6 +229,16 @@ function MusketUtils:_startLoop()
 
 	self._loopThread = task.spawn(function()
 		while self._canShoot and not self._destroyed do
+			-- Check for enemies before engaging
+			local enemy = self:FindNearestEnemy(100)  -- 100 stud engagement range
+			if not enemy then
+				-- No enemies, just wait and check again
+				if t.Idle and not t.Idle.IsPlaying then
+					t.Idle:Play()
+				end
+				task.wait(0.5)
+				continue
+			end
 
 			if t.Idle and t.Idle.IsPlaying then t.Idle:Stop() end
 
@@ -184,11 +254,13 @@ function MusketUtils:_startLoop()
 			playAndWait(t.ToAim)
 			if not self._canShoot or self._destroyed then break end
 
-			-- 4. AimIdle (hold)
+			-- 4. AimIdle (hold) — face the enemy during aiming
+			self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
 			playForDuration(t.AimIdle, AIM_IDLE_HOLD)
 			if not self._canShoot or self._destroyed then break end
 
-			-- 5. Fire
+			-- 5. Fire — face the enemy and shoot
+			self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
 			playAndWait(t.Fire)
 			if not self._canShoot or self._destroyed then break end
 
@@ -196,14 +268,19 @@ function MusketUtils:_startLoop()
 			playForDuration(t.ReloadIdle, RELOAD_IDLE_HOLD)
 			if not self._canShoot or self._destroyed then break end
 
-			-- 7. Reload
+			-- 7. Reload — mark as reloading so we finish even if canfire turns off
+			self._isReloading = true
 			playAndWait(t.Reload)
+			self._isReloading = false
+			
+			-- If canfire was turned off during reload, exit loop after finishing
 			if not self._canShoot or self._destroyed then break end
 
-			-- Loop back to MakeReady
+			-- Loop back to check for enemies again
 		end
 
 		-- Return to idle on exit
+		self._isReloading = false
 		if not self._destroyed then
 			for name, track in pairs(self._tracks) do
 				if name ~= "Idle" and track and track.IsPlaying then

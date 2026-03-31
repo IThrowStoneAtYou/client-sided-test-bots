@@ -112,10 +112,11 @@ end)
 local compass = CompassHUD.new()
 
 -- ── NPC Registration ──────────────────────────────────────────────────
-local function registerNpc(shortId, pos, yaw)
+local function registerNpc(shortId, pos, yaw, teamName, isBearer)
 	if replicators[shortId] then return end
 	local clientModel   = CLIENT_MODEL:Clone()
 	local initialCF     = buildCFrame(pos, yaw)
+--	print("[DEBUG] Register NPC", shortId, "team=", teamName, "bearer=", isBearer)
 
 	local rep           = NpcReplicator.new(shortId, clientModel)
 	rep.Root.CFrame     = initialCF
@@ -131,7 +132,17 @@ local function registerNpc(shortId, pos, yaw)
 	replicators[shortId] = rep
 	animators[shortId]   = anim
 	
-	musketUtils[shortId] = MusketUtils.new(clientModel)
+	-- DO NOT create musket if this is a flag bearer
+	if teamName then
+		clientModel:SetAttribute("TeamName", teamName)
+	end
+
+	if not isBearer then
+		local mu = MusketUtils.new(clientModel, teamName)   -- pass teamName directly
+		musketUtils[shortId] = mu
+	else
+		bearerIds[shortId] = true
+	end
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
@@ -281,10 +292,10 @@ end
 
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
-		registerNpc(data.id, data.pos, data.yaw)
+		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer)
 	elseif data.Type == "Batch" then
 		for _, entry in ipairs(data.list) do
-			registerNpc(entry.id, entry.pos, entry.yaw)
+			registerNpc(entry.id, entry.pos, entry.yaw, entry.teamName, entry.isBearer)
 		end
 	end
 end)
@@ -336,12 +347,7 @@ Network.NpcCompanySync.On(function(data)
 		local bearerId = entry.slots[1]
 		if bearerId then
 			bearerIds[bearerId] = true
-			-- Remove musket if it was attached before we knew it was a bearer
-			local mu = musketUtils[bearerId]
-			if mu then
-				mu:Destroy()
-				musketUtils[bearerId] = nil
-			end
+			-- Bearers never have muskets (never created in registerNpc)
 		end
 
 		-- Sync canAttack state for all soldiers in this company

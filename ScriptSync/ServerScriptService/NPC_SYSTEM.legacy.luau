@@ -145,7 +145,7 @@ local function getBearerTarget(npc, comp)
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
-local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
+local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?)
 	local shortId   = nextShortId
 	nextShortId     = nextShortId + 1
 
@@ -163,6 +163,20 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 
 	root.CFrame  = cf
 	model.Parent = workspace.Npc_Registry_Server
+	
+	-- Set team name attribute for client-side team logic (store as string, not Instance)
+	local teamName = nil
+	if ownerPlayer then
+		if ownerPlayer.Team then
+			teamName = ownerPlayer.Team.Name
+		else
+			teamName = "Player_" .. ownerPlayer.UserId   -- fallback unique string
+		end
+		model:SetAttribute("TeamName", teamName)
+		if ownerPlayer.Team then
+			model:SetAttribute("TeamColor", ownerPlayer.Team.TeamColor)
+		end
+	end
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
@@ -198,6 +212,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 		PaceDirection  = 1,
 		CompanyOwner   = nil,
 		CompanyIndex   = nil,
+		Team           = ownerPlayer and ownerPlayer.Team or nil,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -255,11 +270,19 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?)
 				id   = shortId,
 				pos  = cf.Position,
 				yaw  = getYaw(cf),
+				teamName = teamName,   -- use the outer variable (already has fallback)
+				isBearer = npc.IsFlagBearer,
 			})
 		end
 	end
 
-	return npc, { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
+	return npc, {
+		id = shortId,
+		pos = cf.Position,
+		yaw = getYaw(cf),
+		teamName = teamName,      -- added
+		isBearer = npc.IsFlagBearer, -- added
+	}
 end
 
 -- ── Company Management ────────────────────────────────────────────────
@@ -359,7 +382,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					targetCF = slots[j - 1]
 				end
 
-				local npc, data = spawnNpc(targetCF + Vector3.new(0, 4, 0), true)
+				local npc, data = spawnNpc(targetCF + Vector3.new(0, 4, 0), true, player)
 				if npc then
 					npc.IsRegiment = true
 					npc.RegimentFacing = flatLook
@@ -372,6 +395,8 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 						npc.PaceDirection = 1
 						npc.BearerMode    = BEARER_MODE_CENTER  -- ADD
 						npc.IsPacing      = false               -- ADD
+						-- Send bearer flag through spawn event
+						data.isBearer = true
 					end
 
 					npc.Pathfinder:Run(targetCF.Position)
