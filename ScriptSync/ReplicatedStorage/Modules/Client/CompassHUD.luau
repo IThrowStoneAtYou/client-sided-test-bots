@@ -1,9 +1,6 @@
 -->>>>>>>>>>>>
 -- COMPASS_HUD
 -- Version 1.0.0
--- Description:
--- A sliding compass GUI styled to match the CompanyHUD.
--- Displays direction letters (N, NE, E...) and degree numbers.
 -->>>>>>>>>>>>
 
 local Players = game:GetService("Players")

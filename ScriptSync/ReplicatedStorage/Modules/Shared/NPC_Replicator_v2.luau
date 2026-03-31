@@ -2,8 +2,6 @@
 -- NPC_REPLICATOR
 -- Written by @Razor5 on discord
 -- Version 2.0.0
--- Description: 
--- This module is a simple and basic npc replicator that replicates the npc's position and rotation to the client
 -->>>>>>>>>>>>
 
 local RunService = game:GetService("RunService")

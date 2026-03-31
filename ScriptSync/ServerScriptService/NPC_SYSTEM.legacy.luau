@@ -1,9 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_SERVER
 -- Version 3.1.0
--- Description: 
--- Coordinates NPC AI states (Wander/Regiment), handles network replication 
--- with distance-based culling, and manages player-owned companies.
 -->>>>>>>>>>>>
 
 local RunService        = game:GetService("RunService")
@@ -30,7 +27,7 @@ local DELTA_ROT     = 0.01
 local MAX_BOTS      = 140        
 local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         
-local COMPANY_GAP   = 10         
+local COMPANY_GAP   = 15         
 local RANK_SPACING  = 4.7 --5       
 local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
