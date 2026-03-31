@@ -66,6 +66,7 @@ local nextShortId  = 1
 local readyPlayers = {}   
 local farLastSent  = {}   
 local companies = {}
+local serverCanAttack = {}   -- [player][companyIndex] = boolean
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -265,14 +266,17 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 
 	if not suppressNotify then
 		for player in pairs(readyPlayers) do
+			local ownerUserId = ownerPlayer and ownerPlayer.UserId or nil
 			Network.NpcSpawn.Fire(player, {
-				Type = "Single",
-				id   = shortId,
-				pos  = cf.Position,
-				yaw  = getYaw(cf),
-				teamName = teamName,   -- use the outer variable (already has fallback)
-				isBearer = npc.IsFlagBearer,
-			})
+    Type = "Single",
+    id   = shortId,
+    pos  = cf.Position,
+    yaw  = getYaw(cf),
+    teamName = teamName,
+    isBearer = npc.IsFlagBearer,
+    companyIndex = npc.CompanyIndex,
+    ownerUserId = ownerUserId,
+})
 		end
 	end
 
@@ -280,8 +284,10 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		id = shortId,
 		pos = cf.Position,
 		yaw = getYaw(cf),
-		teamName = teamName,      -- added
-		isBearer = npc.IsFlagBearer, -- added
+		teamName = teamName,
+		isBearer = npc.IsFlagBearer,
+		companyIndex = npc.CompanyIndex,
+		ownerUserId = ownerPlayer and ownerPlayer.UserId or nil,
 	}
 end
 
@@ -323,6 +329,9 @@ local function despawnCompany(player: Player, companyIndex: number)
 		end
 	end
 	playerCompanies[companyIndex] = nil
+	if serverCanAttack[player] then
+		serverCanAttack[player][companyIndex] = nil
+	end
 end
 
 local function despawnAllCompanies(player: Player)
@@ -330,6 +339,12 @@ local function despawnAllCompanies(player: Player)
 	if not playerCompanies then return end
 	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
 	companies[player] = nil
+end
+
+local function broadcastCanAttackState(player, companyIndex, state)
+	for p in pairs(readyPlayers) do
+		Network.NpcCanAttackSync.Fire(p, companyIndex, state, player.UserId)
+	end
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
@@ -439,6 +454,10 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							ranks    = ranks,
 							files    = files,
 						}
+						
+						serverCanAttack[player] = serverCanAttack[player] or {}
+						serverCanAttack[player][idx] = true
+						broadcastCanAttackState(player, idx, true)   -- <-- add this line
 					end
 
 					syncCompanies(player)
@@ -518,7 +537,39 @@ Network.NpcReady.On(function(player)
 	for shortId, npc in pairs(activeNpcs) do
 		if npc.Model and npc.Model.Parent then
 			local cf = npc.Root.CFrame
-			table.insert(batchList, { id = shortId, pos = cf.Position, yaw = getYaw(cf) })
+			-- Find owner of this NPC by searching through companies
+			local npcOwner = nil
+			for p, comps in pairs(companies) do
+				for idx, company in pairs(comps) do
+					for _, slotId in ipairs(company.slots) do
+						if slotId == shortId then
+							npcOwner = p
+							break
+						end
+					end
+					if npcOwner then break end
+				end
+				if npcOwner then break end
+			end
+			
+			table.insert(batchList, { 
+				id = shortId, 
+				pos = cf.Position, 
+				yaw = getYaw(cf),
+				teamName = npc.TeamName,
+				isBearer = npc.IsFlagBearer,
+				companyIndex = npc.CompanyIndex,
+				ownerUserId = npcOwner and npcOwner.UserId or nil,
+			})
+		end
+	end
+	
+	for p, comps in pairs(companies) do
+		for idx, company in pairs(comps) do
+			local state = serverCanAttack[p] and serverCanAttack[p][idx]
+			if state ~= nil then
+				Network.NpcCanAttackSync.Fire(player, idx, state, p.UserId)
+			end
 		end
 	end
 
@@ -570,6 +621,20 @@ Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 		npc.Pathfinder:Run(npc.RegimentTarget)
 
 		break  -- one bearer per company
+	end
+end)
+
+Network.NpcCanAttackToggle.On(function(player, companyIndex)
+	if not companies[player] or not companies[player][companyIndex] then return end
+
+	-- Toggle the state
+	serverCanAttack[player] = serverCanAttack[player] or {}
+	local newState = not serverCanAttack[player][companyIndex]
+	serverCanAttack[player][companyIndex] = newState
+
+	-- Broadcast to all ready players with owner info
+	for p in pairs(readyPlayers) do
+		Network.NpcCanAttackSync.Fire(p, companyIndex, newState, player.UserId)
 	end
 end)
 

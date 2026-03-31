@@ -35,6 +35,7 @@ local lastFormation = {}   -- [companyIndex] = { ranks, files }
 local musketUtils = {}   -- [shortId] = MusketUtils instance
 local canAttack   = {}   -- [companyIndex] = boolean (true by default)
 local bearerIds   = {}   -- [shortId] = true
+local npcOwners   = {}   -- [shortId] = ownerUserId (tracks which player spawned this NPC)
 
 local BEARER_MODE_CENTER = 0
 local BEARER_MODE_LEFT   = 1
@@ -112,33 +113,42 @@ end)
 local compass = CompassHUD.new()
 
 -- ── NPC Registration ──────────────────────────────────────────────────
-local function registerNpc(shortId, pos, yaw, teamName, isBearer)
+local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId)
 	if replicators[shortId] then return end
-	local clientModel   = CLIENT_MODEL:Clone()
-	local initialCF     = buildCFrame(pos, yaw)
---	print("[DEBUG] Register NPC", shortId, "team=", teamName, "bearer=", isBearer)
+	local clientModel = CLIENT_MODEL:Clone()
+	clientModel.Name = "NPC_" .. shortId
+	local initialCF = buildCFrame(pos, yaw)
 
-	local rep           = NpcReplicator.new(shortId, clientModel)
-	rep.Root.CFrame     = initialCF
+	local rep = NpcReplicator.new(shortId, clientModel)
+	rep.Root.CFrame = initialCF
+	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow())
 
-	-- Initialize with current time to prevent the replicator from thinking it's "behind" immediately
-	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow()) 
-
-	local anim          = NpcAnimator.new(clientModel)
+	local anim = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
---	rep:Start() -- unless, not used, eat shit ton of frames.
-
 	replicators[shortId] = rep
-	animators[shortId]   = anim
-	
-	-- DO NOT create musket if this is a flag bearer
+	animators[shortId] = anim
+
+	-- Store team, company index, and owner on the model
 	if teamName then
 		clientModel:SetAttribute("TeamName", teamName)
 	end
+	if companyIndex then
+		clientModel:SetAttribute("CompanyIndex", companyIndex)
+	end
+	if ownerUserId then
+		clientModel:SetAttribute("OwnerUserId", ownerUserId)
+		npcOwners[shortId] = ownerUserId
+	end
 
 	if not isBearer then
-		local mu = MusketUtils.new(clientModel, teamName)   -- pass teamName directly
+		local mu = MusketUtils.new(clientModel, teamName)
+		-- Initialize canfire state from current synced state (default to true if not yet synced)
+		if companyIndex then
+			mu:SetCanShoot(canAttack[companyIndex] ~= false)
+		else
+			mu:SetCanShoot(true)
+		end
 		musketUtils[shortId] = mu
 	else
 		bearerIds[shortId] = true
@@ -292,10 +302,10 @@ end
 
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
-		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer)
+		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer, data.companyIndex, data.ownerUserId)
 	elseif data.Type == "Batch" then
 		for _, entry in ipairs(data.list) do
-			registerNpc(entry.id, entry.pos, entry.yaw, entry.teamName, entry.isBearer)
+			registerNpc(entry.id, entry.pos, entry.yaw, entry.teamName, entry.isBearer, entry.companyIndex, entry.ownerUserId)
 		end
 	end
 end)
@@ -328,19 +338,20 @@ Network.NpcDespawn.On(function(shortId)
 		animators[shortId] = nil
 	end
 	
-	-- ADD
 	local mu = musketUtils[shortId]
 	if mu then
 		mu:Destroy()
 		musketUtils[shortId] = nil
 	end
 
-	bearerIds[shortId] = nil  -- ADD
+	bearerIds[shortId] = nil
+	npcOwners[shortId] = nil
 end)
 
 Network.NpcCompanySync.On(function(data)
 	companySlots = {}
 	bearerIds    = {}   -- reset on full sync
+	npcOwners    = {}   -- reset owner tracking too
 
 	for _, entry in ipairs(data) do
 		-- slots[1] is always the bearer (server inserts bearer first)
@@ -365,6 +376,8 @@ Network.NpcCompanySync.On(function(data)
 			slotSet[sid] = true
 			local rep = replicators[sid]
 			if rep and rep.Client then
+				-- Set the CompanyIndex attribute on the NPC model so canAttack sync can find it
+				rep.Client:SetAttribute("CompanyIndex", entry.index)
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
@@ -376,6 +389,39 @@ Network.NpcCompanySync.On(function(data)
 
 	hud:syncCompanies(data)
 	applyHighlights(hud:getSelectedList())
+end)
+
+Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
+	local currentPlayerUserId = Players.LocalPlayer.UserId
+	
+	-- IMPORTANT: Only update if this is YOUR company (ownerUserId must match current player)
+	if not ownerUserId or ownerUserId ~= currentPlayerUserId then
+		return  -- Not your company, ignore this update
+	end
+	
+	-- Update local HUD state
+	canAttack[companyIndex] = canAttackState
+	hud:setCanAttack(companyIndex, canAttackState)
+
+	-- Find all NPCs in the world owned by current player with this companyIndex, then update them
+	local npcFolder = workspace:FindFirstChild("Npc_Registry")
+	if not npcFolder then return end
+
+	for _, npcModel in ipairs(npcFolder:GetChildren()) do
+		local idx = npcModel:GetAttribute("CompanyIndex")
+		local modelOwnerUserId = npcModel:GetAttribute("OwnerUserId")
+		
+		-- Only update if THIS player owns the NPC AND companyIndex matches
+		if modelOwnerUserId == currentPlayerUserId and idx == companyIndex then
+			local shortId = tonumber(npcModel.Name:match("NPC_(%d+)"))
+			if shortId then
+				local mu = musketUtils[shortId]
+				if mu then
+					mu:SetCanShoot(canAttackState)
+				end
+			end
+		end
+	end
 end)
 
 -- ── Raycast / Preview Parts ───────────────────────────────────────────
@@ -454,21 +500,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
-
-				local newState    = not (canAttack[compIdx] ~= false)
-				canAttack[compIdx] = newState
-
-				-- Update HUD icon
-				hud:setCanAttack(compIdx, newState)
-
-				-- Push to all musket instances in this company
-				local slots = companySlots[compIdx]
-				for shortId in pairs(slots) do
-					local mu = musketUtils[shortId]
-					if mu then
-						mu:SetCanShoot(newState)
-					end
-				end
+				-- Send the toggle to the server (it will broadcast back)
+				Network.NpcCanAttackToggle.Fire(compIdx)
 			end
 			return
 		end

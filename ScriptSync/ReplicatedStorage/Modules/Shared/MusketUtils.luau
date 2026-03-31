@@ -1,6 +1,6 @@
 -->>>>>>>>>>>>
 -- MUSKET_UTILS
--- Version 1.0.0
+-- Version 1.0.0 (debug + movement fix)
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,25 +16,56 @@ local RELOAD_IDLE_HOLD     = 1.0
 local MusketUtils = {}
 MusketUtils.__index = MusketUtils
 
--- Plays a non-looping track and waits for it to finish naturally.
--- Safe to cancel via task.cancel() on the owning thread.
-local function playAndWait(track)
-	if not track then return end
+-- Movement detection: more sensitive
+function MusketUtils:isMoving()
+	local moveDir = self._humanoid and self._humanoid.MoveDirection
+	return moveDir and moveDir.Magnitude > 0.05   -- lower threshold
+end
+
+-- Plays a non-looping track and waits for it to finish.
+-- Returns true if finished normally, false if aborted.
+local function playAndWait(track, cancelFn)
+	if not track then return true end
 	track:Play()
-	task.wait(math.max(track.Length, 0.05))
+	local start = os.clock()
+	local lastCheck = os.clock()
+	while track.IsPlaying and os.clock() - start < track.Length + 0.5 do
+		-- Check every 0.05 seconds for faster response
+		if os.clock() - lastCheck >= 0.05 then
+			lastCheck = os.clock()
+			if cancelFn and cancelFn() then
+				track:Stop()
+				return false
+			end
+		end
+		task.wait()
+	end
+	return true
 end
 
 -- Plays a track for a fixed duration then fades it out.
-local function playForDuration(track, duration)
-	if not track then return end
+-- Returns true if finished normally, false if aborted.
+local function playForDuration(track, duration, cancelFn)
+	if not track then return true end
 	track:Play()
-	task.wait(duration)
+	local start = os.clock()
+	local lastCheck = os.clock()
+	while os.clock() - start < duration do
+		if os.clock() - lastCheck >= 0.05 then
+			lastCheck = os.clock()
+			if cancelFn and cancelFn() then
+				track:Stop()
+				return false
+			end
+		end
+		task.wait()
+	end
 	track:Stop(0.15)
+	return true
 end
 
 -->>>>>>>>>>>>
 -- Constructor. Attaches the musket and starts the combat loop immediately
--- (canShoot defaults to true).
 function MusketUtils.new(clientModel: Model, teamName: string?)
 	local self = setmetatable({}, MusketUtils)
 
@@ -42,7 +73,7 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 	self._canShoot   = true
 	self._loopThread = nil
 	self._destroyed  = false
-	self._team       = teamName          -- set immediately
+	self._team       = teamName
 	self._isReloading = false
 
 	-- Attach musket model
@@ -108,16 +139,9 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 		self._tracks.Idle:Play()
 	end
 
+	self._humanoid = humanoid
 	self:_startLoop()
 	return self
-end
-
--- ── Public API ────────────────────────────────────────────────────────
-
--->>>>>>>>>>>>
--- Set the NPC's team (called from server spawn).
-function MusketUtils:SetTeam(team)
-	self._team = team
 end
 
 -->>>>>>>>>>>>
@@ -133,24 +157,32 @@ function MusketUtils:FindNearestEnemy(range: number): Model?
 	local npcFolder = workspace:FindFirstChild("Npc_Registry")
 	if not npcFolder then return nil end
 
+	local foundEnemies = 0
 	for _, npcModel in pairs(npcFolder:GetChildren()) do
 		if npcModel == self._model then continue end
 
 		local theirTeamName = npcModel:GetAttribute("TeamName")
-		-- No nil check – we expect all NPCs to have a team name.
-		-- Skip if same team.
-		if self._team and theirTeamName == self._team then
-			continue
-		end
-
 		local theirRoot = npcModel:FindFirstChild("HumanoidRootPart")
 		if not theirRoot then continue end
 
 		local dist = (theirRoot.Position - myPos).Magnitude
 		if dist < nearestDist then
-			nearestDist = dist
-			nearest = npcModel
+			-- Only consider if it's an enemy (different team)
+			if not self._team or theirTeamName ~= self._team then
+				nearestDist = dist
+				nearest = npcModel
+				foundEnemies += 1
+			else
+				print("[Musket]", self._model.Name, "skipping friendly", npcModel.Name, "team=", theirTeamName)
+			end
 		end
+	end
+
+	if foundEnemies > 0 then
+		print("[Musket]", self._model.Name, "found enemy", nearest and nearest.Name or "none", "dist=", nearestDist)
+	else
+		-- Uncomment for debugging:
+		-- print("[Musket]", self._model.Name, "no enemies in range")
 	end
 
 	return nearest
@@ -170,16 +202,14 @@ end
 
 -->>>>>>>>>>>>
 -- Enables or disables the combat loop.
--- If disabled mid-reload, the reload will finish before stopping.
 function MusketUtils:SetCanShoot(enabled: boolean)
+	print("[Musket]", self._model.Name, "SetCanShoot", enabled)
 	if self._canShoot == enabled then return end
 	self._canShoot = enabled
 
 	if enabled then
 		self:_startLoop()
 	else
-		-- If not currently reloading, cancel immediately
-		-- If reloading, let the reload finish (caught by loop's check)
 		if not self._isReloading then
 			self:_cancelLoop()
 			if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
@@ -190,7 +220,7 @@ function MusketUtils:SetCanShoot(enabled: boolean)
 end
 
 -->>>>>>>>>>>>
--- Cleanup — call when the NPC despawns.
+-- Cleanup
 function MusketUtils:Destroy()
 	self._destroyed = true
 	self:_cancelLoop()
@@ -213,7 +243,6 @@ function MusketUtils:_cancelLoop()
 		task.cancel(self._loopThread)
 		self._loopThread = nil
 	end
-	-- Stop all action-priority tracks cleanly
 	for name, track in pairs(self._tracks) do
 		if name ~= "Idle" and track and track.IsPlaying then
 			track:Stop()
@@ -225,61 +254,107 @@ function MusketUtils:_startLoop()
 	if self._loopThread then return end
 	if not self._canShoot or self._destroyed then return end
 
-	local t = self._tracks
-
 	self._loopThread = task.spawn(function()
 		while self._canShoot and not self._destroyed do
-			-- Check for enemies before engaging
-			local enemy = self:FindNearestEnemy(100)  -- 100 stud engagement range
+			-- Check for enemies
+			local enemy = self:FindNearestEnemy(100)
 			if not enemy then
-				-- No enemies, just wait and check again
-				if t.Idle and not t.Idle.IsPlaying then
-					t.Idle:Play()
+				if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
+					self._tracks.Idle:Play()
 				end
 				task.wait(0.5)
 				continue
 			end
 
-			if t.Idle and t.Idle.IsPlaying then t.Idle:Stop() end
+			-- Stop idle if playing
+			if self._tracks.Idle and self._tracks.Idle.IsPlaying then
+				self._tracks.Idle:Stop()
+			end
+
+			-- If moving and not reloading, skip combat this iteration
+			if self:isMoving() and not self._isReloading then
+				print("[Musket]", self._model.Name, "moving, skipping combat (reloading=", self._isReloading, ")")
+				for name, track in pairs(self._tracks) do
+					if name ~= "Idle" and track and track.IsPlaying then
+						track:Stop()
+					end
+				end
+				self._tracks.Idle:Play()
+				task.wait(0.5)
+				continue
+			end
+
+			-- Helper to check if we should abort (canfire disabled, movement and not reloading)
+			local function shouldAbort()
+				-- Abort if canShoot has been disabled
+				if not self._canShoot then
+					print("[Musket]", self._model.Name, "aborting step due to canShoot disabled")
+					return true
+				end
+				
+				local moving = self:isMoving()
+				if moving and not self._isReloading then
+					print("[Musket]", self._model.Name, "aborting step due to movement")
+					return true
+				end
+				return false
+			end
+
+			-- Perform combat sequence, breaking early if aborted
+			local ok = true
 
 			-- 1. MakeReady
-			playAndWait(t.MakeReady)
-			if not self._canShoot or self._destroyed then break end
+			if ok then
+				ok = playAndWait(self._tracks.MakeReady, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
-			-- 2. MakeReadyIdle (hold)
-			playForDuration(t.MakeReadyIdle, MAKE_READY_IDLE_HOLD)
-			if not self._canShoot or self._destroyed then break end
+			-- 2. MakeReadyIdle
+			if ok then
+				ok = playForDuration(self._tracks.MakeReadyIdle, MAKE_READY_IDLE_HOLD, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
 			-- 3. ToAim
-			playAndWait(t.ToAim)
-			if not self._canShoot or self._destroyed then break end
+			if ok then
+				ok = playAndWait(self._tracks.ToAim, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
-			-- 4. AimIdle (hold) — face the enemy during aiming
-			self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
-			playForDuration(t.AimIdle, AIM_IDLE_HOLD)
-			if not self._canShoot or self._destroyed then break end
+			-- 4. AimIdle
+			if ok then
+				self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
+				ok = playForDuration(self._tracks.AimIdle, AIM_IDLE_HOLD, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
-			-- 5. Fire — face the enemy and shoot
-			self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
-			playAndWait(t.Fire)
-			if not self._canShoot or self._destroyed then break end
+			-- 5. Fire
+			if ok then
+				self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
+				ok = playAndWait(self._tracks.Fire, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
-			-- 6. ReloadIdle (hold)
-			playForDuration(t.ReloadIdle, RELOAD_IDLE_HOLD)
-			if not self._canShoot or self._destroyed then break end
+			-- 6. ReloadIdle
+			if ok then
+				ok = playForDuration(self._tracks.ReloadIdle, RELOAD_IDLE_HOLD, shouldAbort)
+				if ok and (not self._canShoot or self._destroyed) then break end
+			end
 
-			-- 7. Reload — mark as reloading so we finish even if canfire turns off
-			self._isReloading = true
-			playAndWait(t.Reload)
-			self._isReloading = false
-			
-			-- If canfire was turned off during reload, exit loop after finishing
-			if not self._canShoot or self._destroyed then break end
+			-- 7. Reload (ignore movement)
+			if ok then
+				self._isReloading = true
+				print("[Musket]", self._model.Name, "reloading (movement will not cancel)")
+				playAndWait(self._tracks.Reload, function() return false end)  -- never cancel
+				self._isReloading = false
+				print("[Musket]", self._model.Name, "reload finished")
+				if not self._canShoot or self._destroyed then break end
+			end
 
-			-- Loop back to check for enemies again
+			-- If any step was aborted (ok == false), the loop restarts from the top
 		end
 
-		-- Return to idle on exit
+		-- Cleanup on exit
 		self._isReloading = false
 		if not self._destroyed then
 			for name, track in pairs(self._tracks) do
@@ -287,8 +362,8 @@ function MusketUtils:_startLoop()
 					track:Stop()
 				end
 			end
-			if t.Idle and not t.Idle.IsPlaying then
-				t.Idle:Play()
+			if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
+				self._tracks.Idle:Play()
 			end
 		end
 

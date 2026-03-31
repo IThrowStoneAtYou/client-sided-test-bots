@@ -12,6 +12,8 @@ enum NpcSpawnData = "Type" {
         yaw: f32,
         teamName: string?,
         isBearer: boolean,
+        companyIndex: u8?,
+        ownerUserId: f64?,
     },
     Batch {
         list: struct {
@@ -20,6 +22,8 @@ enum NpcSpawnData = "Type" {
             yaw: f32,
             teamName: string?,
             isBearer: boolean,
+            companyIndex: u8?,
+            ownerUserId: f64?,
         }[]
     }
 }
@@ -78,4 +82,18 @@ event BearerModeCommand {
     Type: Reliable,
     Call: ManyAsync,
     Data: (u8, u8)
+}
+
+event NpcCanAttackToggle {
+    From: Client,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: u8      -- companyIndex
+}
+
+event NpcCanAttackSync {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (u8, boolean, f64?)   -- companyIndex, canAttack, ownerUserId (optional for backwards compat)
 }
