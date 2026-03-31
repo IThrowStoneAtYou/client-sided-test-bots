@@ -1,6 +1,6 @@
 -->>>>>>>>>>>>
 -- MUSKET_UTILS
--- Version 2.0.0
+-- Version 1.0.0
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,18 +8,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MUSKET_TEMPLATE = ReplicatedStorage.AnimShared.Npc.Item.Musket:WaitForChild("Musket")
 local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musket")
 
-local TeamManager = require(ReplicatedStorage.Modules.Shared:WaitForChild("TeamManager"))
-local BulletManager = require(ReplicatedStorage.Modules.Client:WaitForChild("BulletManager"))
-
 -- How long to linger in each "hold" animation (seconds)
 local MAKE_READY_IDLE_HOLD = 1.0
 local AIM_IDLE_HOLD        = 1.0
 local RELOAD_IDLE_HOLD     = 1.0
-
--- Combat config
-local FIRE_RANGE           = 150       -- studs, max engagement distance
-local TARGET_CHECK_DISTANCE = 200      -- studs, max distance to check for targets
-local FACING_THRESHOLD     = 0.5       -- dot product threshold (0.8 = ~36° cone)
 
 local MusketUtils = {}
 MusketUtils.__index = MusketUtils
@@ -41,79 +33,6 @@ local function playForDuration(track, duration)
 end
 
 -->>>>>>>>>>>>
--- Find all NPCs in the scene
-local function getNpcRegistry()
-	return workspace:FindFirstChild("Npc_Registry") or Instance.new("Folder")
-end
-
--->>>>>>>>>>>>
--- Find a target in range and facing direction
-local function findTarget(npcModel: Model): Model?
-	if not npcModel then return nil end
-
-	local npcTeam = TeamManager.getTeam(npcModel)
-	if npcTeam == TeamManager.TEAMS.NONE then return nil end
-
-	local root = npcModel:FindFirstChild("HumanoidRootPart")
-	if not root then return nil end
-
-	local npcPos = root.Position
-	local npcLook = root.CFrame.LookVector
-
-	local registry = getNpcRegistry()
-	local closest = nil
-	local closestDist = FIRE_RANGE
-
-	for _, potentialTarget in ipairs(registry:GetChildren()) do
-		if potentialTarget == npcModel then continue end
-
-		local targetRoot = potentialTarget:FindFirstChild("HumanoidRootPart")
-		if not targetRoot then continue end
-
-		local targetPos = targetRoot.Position
-		local dist = (targetPos - npcPos).Magnitude
-
-		-- Check distance
-		if dist > closestDist or dist < 1 then continue end
-
-		-- Check team (skip friendlies)
-		if TeamManager.isFriendly(npcModel, potentialTarget) then continue end
-
-		-- Check facing direction
-		local toTarget = (targetPos - npcPos).Unit
-		local dotProduct = npcLook:Dot(toTarget)
-
-		if dotProduct < FACING_THRESHOLD then continue end
-
-		-- Valid target
-		closest = potentialTarget
-		closestDist = dist
-	end
-
-	return closest
-end
-
--->>>>>>>>>>>>
--- Fire a bullet from the musket muzzle
-local function fireBullet(clientModel: Model, musket: Model)
-	if not musket then return end
-
-	local muzzle = musket:FindFirstChild("Muzzle")
-	if not muzzle then 
-		warn("[MusketUtils] Musket missing 'Muzzle' part")
-		return 
-	end
-
-	local root = clientModel:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-
-	-- Fire in the direction the NPC is facing
-	local direction = root.CFrame.LookVector
-
-	BulletManager.fire(clientModel, muzzle.Position, direction)
-end
-
--->>>>>>>>>>>>
 -- Constructor. Attaches the musket and starts the combat loop immediately
 -- (canShoot defaults to true).
 function MusketUtils.new(clientModel: Model)
@@ -121,7 +40,6 @@ function MusketUtils.new(clientModel: Model)
 
 	self._model      = clientModel
 	self._canShoot   = true
-	self._hasBullet  = false    -- starts unloaded
 	self._loopThread = nil
 	self._destroyed  = false
 
@@ -197,7 +115,6 @@ end
 
 -->>>>>>>>>>>>
 -- Enables or disables the combat loop.
--- When disabling: does NOT cancel reload animations, only prevents new cycles.
 function MusketUtils:SetCanShoot(enabled: boolean)
 	if self._canShoot == enabled then return end
 	self._canShoot = enabled
@@ -205,8 +122,7 @@ function MusketUtils:SetCanShoot(enabled: boolean)
 	if enabled then
 		self:_startLoop()
 	else
-		-- Do NOT cancel the loop thread here - let reload finish naturally
-		-- The loop will check self._canShoot at key checkpoints
+		self:_cancelLoop()
 		if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
 			self._tracks.Idle:Play()
 		end
@@ -252,7 +168,7 @@ function MusketUtils:_startLoop()
 	local t = self._tracks
 
 	self._loopThread = task.spawn(function()
-		while not self._destroyed do
+		while self._canShoot and not self._destroyed do
 
 			if t.Idle and t.Idle.IsPlaying then t.Idle:Stop() end
 
@@ -264,50 +180,25 @@ function MusketUtils:_startLoop()
 			playForDuration(t.MakeReadyIdle, MAKE_READY_IDLE_HOLD)
 			if not self._canShoot or self._destroyed then break end
 
-			-- Now we have a bullet
-			self._hasBullet = true
-
 			-- 3. ToAim
 			playAndWait(t.ToAim)
 			if not self._canShoot or self._destroyed then break end
 
-			-- 4. AimIdle (hold) - check for valid target
-			local targetModel = findTarget(self._model)
+			-- 4. AimIdle (hold)
+			playForDuration(t.AimIdle, AIM_IDLE_HOLD)
+			if not self._canShoot or self._destroyed then break end
 
-			if targetModel then
-				-- Play aim idle while scanning
-				playForDuration(t.AimIdle, AIM_IDLE_HOLD)
-				if not self._canShoot or self._destroyed then break end
+			-- 5. Fire
+			playAndWait(t.Fire)
+			if not self._canShoot or self._destroyed then break end
 
-				-- 5. Fire - only if we still have a target and bullet
-				if self._hasBullet and findTarget(self._model) then
-					playAndWait(t.Fire)
-					if self._hasBullet then
-						fireBullet(self._model, self._musket)
-						self._hasBullet = false
-					end
-					if not self._canShoot or self._destroyed then break end
-				end
-			else
-				-- No target - skip to reload
-				-- Can still fire if canShoot is true, but don't force aim
-				playForDuration(t.AimIdle, AIM_IDLE_HOLD * 0.5)
-				if not self._canShoot or self._destroyed then break end
-			end
-
-			-- 6. ReloadIdle (hold) - continues even if canShoot toggled off
+			-- 6. ReloadIdle (hold)
 			playForDuration(t.ReloadIdle, RELOAD_IDLE_HOLD)
-			if self._destroyed then break end
+			if not self._canShoot or self._destroyed then break end
 
-			-- 7. Reload - continues even if canShoot toggled off
+			-- 7. Reload
 			playAndWait(t.Reload)
-			if self._destroyed then break end
-
-			-- After reload, we have a bullet again
-			self._hasBullet = true
-
-			-- Check if we should exit loop after reload completes
-			if not self._canShoot then break end
+			if not self._canShoot or self._destroyed then break end
 
 			-- Loop back to MakeReady
 		end
