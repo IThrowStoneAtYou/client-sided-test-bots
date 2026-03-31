@@ -1,9 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_PREVIEW
 -- Version 1.0.0
--- Description:
--- Manages the visual formation preview logic (dots and arrows) for the client.
--- Handles pooling and cleanup of preview parts.
 -->>>>>>>>>>>>
 
 local TweenService = game:GetService("TweenService")

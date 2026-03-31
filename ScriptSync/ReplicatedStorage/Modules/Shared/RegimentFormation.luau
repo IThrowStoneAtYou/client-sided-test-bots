@@ -1,16 +1,12 @@
 -->>>>>>>>>>>>
 -- REGIMENT_FORMATION
 -- Version 1.1.0
--- Description:
--- Pure math module used to calculate formation layouts. 
--- It has no external dependencies and maintains no state.
 -->>>>>>>>>>>>
 
 local RegimentFormation = {}
 
 local RANK_SPACING = 4.5  -- studs between soldiers side by side
 local RANK_DEPTH   = 5    -- studs between ranks front to back
-local MIN_FILES    = 1
 
 -->>>>>>>>>>>>
 -- Converts a drag magnitude (studs) into ranks + files for a given count.

@@ -1,8 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_ANIMATOR
 -- Version 1.1.0
--- Manages Idle / Walk animation state for a client NPC model.
--- Controlled by external boolean via SetWalking.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

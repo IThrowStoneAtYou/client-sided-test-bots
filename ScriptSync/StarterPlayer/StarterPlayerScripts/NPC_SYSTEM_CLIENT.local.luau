@@ -1,10 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
 -- Version 3.5.0
--- Description:
--- Single company: click = left edge, drag right = expand width.
--- Multi company: left edge of company 1 at click, drag right until right edge of last company.
--- Plain click: troops center on click point, facing derived from camera.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

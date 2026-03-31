@@ -1,11 +1,6 @@
 -->>>>>>>>>>>>
 -- COMPANY_HUD
 -- Version 3.0.0
--- Description:
--- Multi-select support. Regular click = exclusive select/deselect.
--- Shift+click = toggle individual company in/out of selection.
--- Displays a global info panel at bottom left when exactly one company is selected.
--- Fires onSelectionChanged(selectedList: {number}) on every change.
 -->>>>>>>>>>>>
 
 local UserInputService = game:GetService("UserInputService")

@@ -1,9 +1,6 @@
 -->>>>>>>>>>>>
 -- MUSKET_UTILS
 -- Version 1.0.0
--- Description:
--- Attaches a musket model to a client NPC and drives the full
--- firing animation sequence. One instance per non-bearer NPC.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
