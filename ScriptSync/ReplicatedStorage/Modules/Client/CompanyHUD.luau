@@ -247,7 +247,7 @@ function CompanyHUD:_createCard(index: number)
 	local restingPos = UDim2.new(0.5, 0, 1, RESTING_OFF)
 
 	local card = Instance.new("Frame")
-	card.Name                   = "Card"
+	card.Name                   = "Card_" .. index
 	card.AnchorPoint            = Vector2.new(0.5, 1)
 	card.Position               = restingPos
 	card.Size                   = UDim2.new(0, CARD_W, 0, CARD_H)

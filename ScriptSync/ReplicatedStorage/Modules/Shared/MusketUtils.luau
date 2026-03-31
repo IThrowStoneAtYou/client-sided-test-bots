@@ -20,14 +20,14 @@ MusketUtils.__index = MusketUtils
 -- Safe to cancel via task.cancel() on the owning thread.
 local function playAndWait(track)
 	if not track then return end
-	track:Play(0.1)
+	track:Play()
 	task.wait(math.max(track.Length, 0.05))
 end
 
 -- Plays a track for a fixed duration then fades it out.
 local function playForDuration(track, duration)
 	if not track then return end
-	track:Play(0.1)
+	track:Play()
 	task.wait(duration)
 	track:Stop(0.15)
 end
@@ -124,7 +124,7 @@ function MusketUtils:SetCanShoot(enabled: boolean)
 	else
 		self:_cancelLoop()
 		if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
-			self._tracks.Idle:Play(0.2)
+			self._tracks.Idle:Play()
 		end
 	end
 end
@@ -156,7 +156,7 @@ function MusketUtils:_cancelLoop()
 	-- Stop all action-priority tracks cleanly
 	for name, track in pairs(self._tracks) do
 		if name ~= "Idle" and track and track.IsPlaying then
-			track:Stop(0.15)
+			track:Stop()
 		end
 	end
 end
@@ -170,7 +170,7 @@ function MusketUtils:_startLoop()
 	self._loopThread = task.spawn(function()
 		while self._canShoot and not self._destroyed do
 
-			if t.Idle and t.Idle.IsPlaying then t.Idle:Stop(0.1) end
+			if t.Idle and t.Idle.IsPlaying then t.Idle:Stop() end
 
 			-- 1. MakeReady
 			playAndWait(t.MakeReady)
@@ -207,11 +207,11 @@ function MusketUtils:_startLoop()
 		if not self._destroyed then
 			for name, track in pairs(self._tracks) do
 				if name ~= "Idle" and track and track.IsPlaying then
-					track:Stop(0.15)
+					track:Stop()
 				end
 			end
 			if t.Idle and not t.Idle.IsPlaying then
-				t.Idle:Play(0.2)
+				t.Idle:Play()
 			end
 		end
 
