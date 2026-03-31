@@ -1,6 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
--- Version 3.5.0
+-- Version 3.6.0
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,10 +11,12 @@ local RunService 		= game:GetService("RunService")
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local TeamManager       = require(ReplicatedStorage.Modules.Shared:WaitForChild("TeamManager"))
 local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
 local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
 local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompassHUD"))
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
+local BulletManager     = require(ReplicatedStorage.Modules.Client:WaitForChild("BulletManager"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
@@ -28,6 +30,7 @@ local Network = require(game.ReplicatedStorage.Blink.Client)
 -- ── State ─────────────────────────────────────────────────────────────
 local localPlayer   = Players.LocalPlayer
 local camera        = workspace.CurrentCamera
+local playerTeam    = TeamManager.TEAMS.PLAYER  -- Player's team
 local replicators   = {}
 local animators     = {}
 local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
@@ -126,11 +129,14 @@ local function registerNpc(shortId, pos, yaw)
 	local anim          = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
 
---	rep:Start() -- unless, not used, eat shit ton of frames.
+	--	rep:Start() -- unless, not used, eat shit ton of frames.
 
 	replicators[shortId] = rep
 	animators[shortId]   = anim
-	
+
+	-- Assign player team to NPC so they don't teamkill
+	TeamManager.setTeam(clientModel, playerTeam)
+
 	musketUtils[shortId] = MusketUtils.new(clientModel)
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
@@ -148,7 +154,7 @@ local function fireBearerMode(mode: number)
 		if not companySlots[compIdx] then
 			continue 
 		end
-		
+
 		Network.BearerModeCommand.Fire(compIdx, mode)
 		bearerMode[compIdx] = mode
 	end
@@ -316,7 +322,7 @@ Network.NpcDespawn.On(function(shortId)
 		anim:Destroy()
 		animators[shortId] = nil
 	end
-	
+
 	-- ADD
 	local mu = musketUtils[shortId]
 	if mu then
@@ -414,7 +420,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		end
 		return
 	end
-	
+
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		local key = input.KeyCode
 
@@ -435,10 +441,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				if not companySlots[compIdx] then
 					continue 
 				end
-				
+
 				local current = bearerMode[compIdx] or BEARER_MODE_CENTER
 				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or  BEARER_MODE_CENTER
-				
+
 				Network.BearerModeCommand.Fire(compIdx, next)
 				bearerMode[compIdx] = next
 			end
@@ -537,7 +543,7 @@ UserInputService.InputEnded:Connect(function(input)
 		if facingDir.Magnitude < 0.01 then 
 			facingDir = Vector3.new(0, 0, -1)
 		end
-		
+
 		facingDir  = facingDir.Unit
 
 		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
