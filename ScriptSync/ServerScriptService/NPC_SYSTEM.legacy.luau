@@ -17,7 +17,7 @@ local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 -- ── Config ────────────────────────────────────────────────────────────
-local WALK_SPEED    = 14
+local WALK_SPEED    = 15
 local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
@@ -68,6 +68,12 @@ local farLastSent  = {}
 local companies = {}
 local serverCanAttack = {}   -- [player][companyIndex] = boolean
 
+local COMBAT_COOLDOWN = 6.0    -- seconds between shots
+local COMBAT_RANGE    = 100    -- studs
+local COMBAT_INTERVAL = 1   
+
+local npcLastFire = {}   -- [shortId] = last fire time
+
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
@@ -99,7 +105,12 @@ local function getPlayerRootPos(player)
 end
 
 local function makeBatchEntry(shortId, cf)
-	return { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
+	return 
+		{ 
+		id = shortId,
+		pos = cf.Position,
+		yaw = getYaw(cf),
+		}
 end
 
 local function fireChunked(player, timestamp, entries)
@@ -143,6 +154,31 @@ local function getBearerTarget(npc, comp)
 		-- BEARER_MODE_CENTER (j) : static centre behind last rank
 		return anchorCF * CFrame.new(0, 0, dynamicZ)
 	end
+end
+
+local function findNearestEnemy(npc)
+	local myTeam = npc.TeamName
+	if not myTeam then return nil end
+	local myPos = npc.Root.Position
+	local nearestDist = COMBAT_RANGE
+	local nearest = nil
+
+	for _, other in pairs(activeNpcs) do
+		if other ~= npc and not other.IsFlagBearer then
+			local otherTeam = other.TeamName
+			if otherTeam and otherTeam ~= myTeam then
+				local otherPos = other.Root and other.Root.Position
+				if otherPos then
+					local dist = (otherPos - myPos).Magnitude
+					if dist < nearestDist then
+						nearestDist = dist
+						nearest = other
+					end
+				end
+			end
+		end
+	end
+	return nearest
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
@@ -214,6 +250,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		CompanyOwner   = nil,
 		CompanyIndex   = nil,
 		Team           = ownerPlayer and ownerPlayer.Team or nil,
+		TeamName       = teamName,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -326,6 +363,7 @@ local function despawnCompany(player: Player, companyIndex: number)
 			end
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
+			npcLastFire[shortId] = nil
 		end
 	end
 	playerCompanies[companyIndex] = nil
@@ -663,6 +701,41 @@ Players.PlayerAdded:Connect(hookChat)
 for _, p in ipairs(Players:GetPlayers()) do
 	hookChat(p)
 end
+
+-- ── Combat Loop ─────────────────────────────────────────────────────────
+local function processCombat()
+	local now = os.clock()
+	for shortId, npc in pairs(activeNpcs) do
+		if npc.IsFlagBearer then continue end
+		if not npc.TeamName then continue end
+
+		local owner = npc.CompanyOwner
+		local companyIdx = npc.CompanyIndex
+		if not owner or not companyIdx then continue end
+
+		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
+		if not canShoot then continue end
+
+		local lastFire = npcLastFire[shortId] or 0
+		if now - lastFire < COMBAT_COOLDOWN then continue end
+
+		local enemy = findNearestEnemy(npc)
+		if enemy then
+			npcLastFire[shortId] = now
+			local targetPos = enemy.Root.Position
+			for p in pairs(readyPlayers) do
+				Network.NpcFire.Fire(p, shortId, targetPos)
+			end
+		end
+	end
+end
+
+task.spawn(function()
+	while true do
+		task.wait(COMBAT_INTERVAL)
+		processCombat()
+	end
+end)
 
 -- ── Broadcast Loop ────────────────────────────────────────────────────
 local nearAccum = 0

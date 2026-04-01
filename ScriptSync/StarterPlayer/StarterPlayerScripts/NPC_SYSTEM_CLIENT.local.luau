@@ -357,9 +357,17 @@ Network.NpcDespawn.On(function(shortId)
 end)
 
 Network.NpcCompanySync.On(function(data)
+	-- Only clear owner entries for the local player's previous NPCs.
+	-- Wiping the whole table also removes other players' NPC owner mappings,
+	-- which breaks NpcCanAttackSync for those players.
+	for _, slots in pairs(companySlots) do
+		for shortId in pairs(slots) do
+			npcOwners[shortId] = nil
+		end
+	end
+
 	companySlots = {}
 	bearerIds    = {}
-	npcOwners    = {}
 
 	local myUserId = localPlayer.UserId
 	if not canAttack[myUserId] then canAttack[myUserId] = {} end
@@ -413,18 +421,26 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 	end
 
 	for shortId, mu in pairs(musketUtils) do
-		local npcOwner = npcOwners[shortId]
-		if npcOwner == ownerUserId then
-			local rep = replicators[shortId]
-			if rep and rep.Client then
-				local idx = rep.Client:GetAttribute("CompanyIndex")
+		local rep = replicators[shortId]
+		if not (rep and rep.Client) then continue end
 
-				if idx == companyIndex then
-				--	print("[APPLY] NPC", shortId, "->", canAttackState)
-					mu:SetCanShoot(canAttackState)
-				end
+		-- Fall back to the attribute in case npcOwners was cleared by a
+		-- NpcCompanySync that arrived after this NPC was registered.
+		local npcOwner = npcOwners[shortId] or rep.Client:GetAttribute("OwnerUserId")
+		if npcOwner == ownerUserId then
+			local idx = rep.Client:GetAttribute("CompanyIndex")
+			if idx == companyIndex then
+				print("[APPLY] NPC", shortId, "->", canAttackState)
+				mu:SetCanShoot(canAttackState)
 			end
 		end
+	end
+end)
+
+Network.NpcFire.On(function(shortId, targetPos)
+	local mu = musketUtils[shortId]
+	if mu then
+		mu:PlayFire(targetPos)
 	end
 end)
 
