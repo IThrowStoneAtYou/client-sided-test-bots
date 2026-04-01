@@ -81,13 +81,8 @@ end
 -- and the global info panel if that company is currently the only selected one.
 function CompanyHUD:setCanAttack(index: number, enabled: boolean)
 	self._canAttackState[index] = enabled
-	local icon = self._canAttackIcons[index]
-	if icon then
-		icon.ImageTransparency = enabled and 0 or 0.65
-		icon.ImageColor3       = enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(120, 120, 120)
-	end
+	self:_refreshCard(index)
 
-	-- If exactly this company is selected, update the global panel icon too
 	local selected = self:getSelectedList()
 	if #selected == 1 and selected[1] == index then
 		self:_updateGlobalPanel(index)
@@ -227,14 +222,21 @@ function CompanyHUD:_refreshCard(i: number)
 	if not cd then return end
 	local company = self._companies[i]
 	local isSel   = self._selected[i] == true
+	local canFire = self._canAttackState[i] ~= false  -- nil treated as true (default on)
 
 	cd.frame.Visible = company ~= nil
 	if not company then return end
 
 	cd.countLabel.Text        = tostring(company.count)
-	cd.stroke.Thickness       = isSel and 3   or 1.5
-	cd.stroke.Transparency    = isSel and 0   or 0.6
-	cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or  Color3.fromRGB(14, 14, 22)
+	cd.stroke.Thickness       = isSel and 3 or 1.5
+
+	if canFire then
+		cd.stroke.Transparency    = isSel and 0 or 0.6
+		cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or Color3.fromRGB(14, 14, 22)
+	else
+		cd.stroke.Transparency    = 0.85
+		cd.frame.BackgroundColor3 = Color3.fromRGB(30, 14, 14)
+	end
 
 	local target = (isSel or cd.hovered) and cd.raisedPos or cd.restingPos
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()
