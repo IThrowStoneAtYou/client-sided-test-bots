@@ -13,7 +13,7 @@ enum NpcSpawnData = "Type" {
         teamName: string?,
         isBearer: boolean,
         companyIndex: u8?,
-        ownerUserId: f64?,
+		ownerUserId: f64,
     },
     Batch {
         list: struct {
@@ -23,7 +23,7 @@ enum NpcSpawnData = "Type" {
             teamName: string?,
             isBearer: boolean,
             companyIndex: u8?,
-            ownerUserId: f64?,
+			ownerUserId: f64,
         }[]
     }
 }
@@ -95,5 +95,5 @@ event NpcCanAttackSync {
     From: Server,
     Type: Reliable,
     Call: ManyAsync,
-    Data: (u8, boolean, f64?)   -- companyIndex, canAttack, ownerUserId (optional for backwards compat)
+    Data: (u8, boolean, f64)   -- companyIndex, canAttack
 }

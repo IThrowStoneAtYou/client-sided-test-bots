@@ -173,13 +173,13 @@ function MusketUtils:FindNearestEnemy(range: number): Model?
 				nearest = npcModel
 				foundEnemies += 1
 			else
-				print("[Musket]", self._model.Name, "skipping friendly", npcModel.Name, "team=", theirTeamName)
+			--	print("[Musket]", self._model.Name, "skipping friendly", npcModel.Name, "team=", theirTeamName)
 			end
 		end
 	end
 
 	if foundEnemies > 0 then
-		print("[Musket]", self._model.Name, "found enemy", nearest and nearest.Name or "none", "dist=", nearestDist)
+	--	print("[Musket]", self._model.Name, "found enemy", nearest and nearest.Name or "none", "dist=", nearestDist)
 	else
 		-- Uncomment for debugging:
 		-- print("[Musket]", self._model.Name, "no enemies in range")
@@ -203,7 +203,7 @@ end
 -->>>>>>>>>>>>
 -- Enables or disables the combat loop.
 function MusketUtils:SetCanShoot(enabled: boolean)
-	print("[Musket]", self._model.Name, "SetCanShoot", enabled)
+--	print("[Musket]", self._model.Name, "SetCanShoot", enabled)
 	if self._canShoot == enabled then return end
 	self._canShoot = enabled
 
@@ -273,7 +273,7 @@ function MusketUtils:_startLoop()
 
 			-- If moving and not reloading, skip combat this iteration
 			if self:isMoving() and not self._isReloading then
-				print("[Musket]", self._model.Name, "moving, skipping combat (reloading=", self._isReloading, ")")
+			--	print("[Musket]", self._model.Name, "moving, skipping combat (reloading=", self._isReloading, ")")
 				for name, track in pairs(self._tracks) do
 					if name ~= "Idle" and track and track.IsPlaying then
 						track:Stop()
@@ -288,13 +288,13 @@ function MusketUtils:_startLoop()
 			local function shouldAbort()
 				-- Abort if canShoot has been disabled
 				if not self._canShoot then
-					print("[Musket]", self._model.Name, "aborting step due to canShoot disabled")
+				--	print("[Musket]", self._model.Name, "aborting step due to canShoot disabled")
 					return true
 				end
 				
 				local moving = self:isMoving()
 				if moving and not self._isReloading then
-					print("[Musket]", self._model.Name, "aborting step due to movement")
+				--	print("[Musket]", self._model.Name, "aborting step due to movement")
 					return true
 				end
 				return false
@@ -344,10 +344,10 @@ function MusketUtils:_startLoop()
 			-- 7. Reload (ignore movement)
 			if ok then
 				self._isReloading = true
-				print("[Musket]", self._model.Name, "reloading (movement will not cancel)")
+--				print("[Musket]", self._model.Name, "reloading (movement will not cancel)")
 				playAndWait(self._tracks.Reload, function() return false end)  -- never cancel
 				self._isReloading = false
-				print("[Musket]", self._model.Name, "reload finished")
+			--	print("[Musket]", self._model.Name, "reload finished")
 				if not self._canShoot or self._destroyed then break end
 			end
 

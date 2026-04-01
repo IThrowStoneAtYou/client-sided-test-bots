@@ -33,7 +33,7 @@ local animators     = {}
 local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
 local lastFormation = {}   -- [companyIndex] = { ranks, files }
 local musketUtils = {}   -- [shortId] = MusketUtils instance
-local canAttack   = {}   -- [companyIndex] = boolean (true by default)
+local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean
 local bearerIds   = {}   -- [shortId] = true
 local npcOwners   = {}   -- [shortId] = ownerUserId (tracks which player spawned this NPC)
 
@@ -129,29 +129,30 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 	replicators[shortId] = rep
 	animators[shortId] = anim
 
-	-- Store team, company index, and owner on the model
 	if teamName then
 		clientModel:SetAttribute("TeamName", teamName)
 	end
 	if companyIndex then
 		clientModel:SetAttribute("CompanyIndex", companyIndex)
 	end
-	if ownerUserId then
+
+	-- Only store owner if it's a real player (0 = no owner)
+	local hasOwner = ownerUserId and ownerUserId ~= 0
+	if hasOwner then
 		clientModel:SetAttribute("OwnerUserId", ownerUserId)
 		npcOwners[shortId] = ownerUserId
 	end
 
 	if not isBearer then
 		local mu = MusketUtils.new(clientModel, teamName)
-		-- Initialize canfire state from current synced state (default to true if not yet synced)
-		if companyIndex then
-			mu:SetCanShoot(canAttack[companyIndex] ~= false)
+		if companyIndex and hasOwner then
+			local ownerState = canAttack[ownerUserId]
+			local shouldShoot = (ownerState == nil) or (ownerState[companyIndex] ~= false)
+			mu:SetCanShoot(shouldShoot)
 		else
 			mu:SetCanShoot(true)
 		end
 		musketUtils[shortId] = mu
-	else
-		bearerIds[shortId] = true
 	end
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
@@ -350,19 +351,19 @@ end)
 
 Network.NpcCompanySync.On(function(data)
 	companySlots = {}
-	bearerIds    = {}   -- reset on full sync
-	npcOwners    = {}   -- reset owner tracking too
+	bearerIds    = {}
+	npcOwners    = {}
+
+	local myUserId = localPlayer.UserId
+	if not canAttack[myUserId] then canAttack[myUserId] = {} end
 
 	for _, entry in ipairs(data) do
-		-- slots[1] is always the bearer (server inserts bearer first)
 		local bearerId = entry.slots[1]
 		if bearerId then
 			bearerIds[bearerId] = true
-			-- Bearers never have muskets (never created in registerNpc)
 		end
 
-		-- Sync canAttack state for all soldiers in this company
-		local compCanShoot = canAttack[entry.index] ~= false  -- true by default
+		local compCanShoot = canAttack[myUserId][entry.index] ~= false
 		for i = 2, #entry.slots do
 			local sid = entry.slots[i]
 			local mu  = musketUtils[sid]
@@ -376,14 +377,13 @@ Network.NpcCompanySync.On(function(data)
 			slotSet[sid] = true
 			local rep = replicators[sid]
 			if rep and rep.Client then
-				-- Set the CompanyIndex attribute on the NPC model so canAttack sync can find it
 				rep.Client:SetAttribute("CompanyIndex", entry.index)
 				setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
 
-		bearerMode[entry.index]  = BEARER_MODE_CENTER
-		canAttack[entry.index]   = canAttack[entry.index] ~= false  -- preserve existing or default true
+		bearerMode[entry.index]   = BEARER_MODE_CENTER
+		canAttack[myUserId][entry.index] = canAttack[myUserId][entry.index] ~= false
 		companySlots[entry.index] = slotSet
 	end
 
@@ -392,27 +392,21 @@ Network.NpcCompanySync.On(function(data)
 end)
 
 Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
-	local currentPlayerUserId = Players.LocalPlayer.UserId
-	
-	-- IMPORTANT: Only update if this is YOUR company (ownerUserId must match current player)
-	if not ownerUserId or ownerUserId ~= currentPlayerUserId then
-		return  -- Not your company, ignore this update
-	end
-	
-	-- Update local HUD state
-	canAttack[companyIndex] = canAttackState
-	hud:setCanAttack(companyIndex, canAttackState)
+	if not canAttack[ownerUserId] then canAttack[ownerUserId] = {} end
+	canAttack[ownerUserId][companyIndex] = canAttackState
 
-	-- Find all NPCs in the world owned by current player with this companyIndex, then update them
+	if ownerUserId == localPlayer.UserId then
+		hud:setCanAttack(companyIndex, canAttackState)
+	end
+
 	local npcFolder = workspace:FindFirstChild("Npc_Registry")
 	if not npcFolder then return end
 
 	for _, npcModel in ipairs(npcFolder:GetChildren()) do
-		local idx = npcModel:GetAttribute("CompanyIndex")
+		local idx              = npcModel:GetAttribute("CompanyIndex")
 		local modelOwnerUserId = npcModel:GetAttribute("OwnerUserId")
-		
-		-- Only update if THIS player owns the NPC AND companyIndex matches
-		if modelOwnerUserId == currentPlayerUserId and idx == companyIndex then
+
+		if modelOwnerUserId == ownerUserId and idx == companyIndex then
 			local shortId = tonumber(npcModel.Name:match("NPC_(%d+)"))
 			if shortId then
 				local mu = musketUtils[shortId]
@@ -497,11 +491,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		elseif key == Enum.KeyCode.E then
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
+			print("client 1")
 
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
 				-- Send the toggle to the server (it will broadcast back)
 				Network.NpcCanAttackToggle.Fire(compIdx)
+				print("client 2")
 			end
 			return
 		end
