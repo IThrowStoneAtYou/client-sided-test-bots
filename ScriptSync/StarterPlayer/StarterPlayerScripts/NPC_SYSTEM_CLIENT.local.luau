@@ -147,7 +147,14 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 		local mu = MusketUtils.new(clientModel, teamName)
 		if companyIndex and hasOwner then
 			local ownerState = canAttack[ownerUserId]
-			local shouldShoot = (ownerState == nil) or (ownerState[companyIndex] ~= false)
+			local shouldShoot = true
+
+			if ownerState and ownerState[companyIndex] ~= nil then
+				shouldShoot = ownerState[companyIndex]
+			end
+
+			print("[SPAWN APPLY] NPC", shortId, "owner:", ownerUserId, "company:", companyIndex, "->", shouldShoot)
+
 			mu:SetCanShoot(shouldShoot)
 		else
 			mu:SetCanShoot(true)
@@ -391,32 +398,36 @@ Network.NpcCompanySync.On(function(data)
 	applyHighlights(hud:getSelectedList())
 end)
 
+-- applies server canAttack state and enforces it on all matching NPCs
 Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
-	if not canAttack[ownerUserId] then canAttack[ownerUserId] = {} end
+	print("[SYNC] owner:", ownerUserId, "company:", companyIndex, "canAttack:", canAttackState)
+
+	if not canAttack[ownerUserId] then
+		canAttack[ownerUserId] = {}
+	end
+
 	canAttack[ownerUserId][companyIndex] = canAttackState
 
 	if ownerUserId == localPlayer.UserId then
 		hud:setCanAttack(companyIndex, canAttackState)
 	end
 
-	local npcFolder = workspace:FindFirstChild("Npc_Registry")
-	if not npcFolder then return end
+	for shortId, mu in pairs(musketUtils) do
+		local npcOwner = npcOwners[shortId]
+		if npcOwner == ownerUserId then
+			local rep = replicators[shortId]
+			if rep and rep.Client then
+				local idx = rep.Client:GetAttribute("CompanyIndex")
 
-	for _, npcModel in ipairs(npcFolder:GetChildren()) do
-		local idx              = npcModel:GetAttribute("CompanyIndex")
-		local modelOwnerUserId = npcModel:GetAttribute("OwnerUserId")
-
-		if modelOwnerUserId == ownerUserId and idx == companyIndex then
-			local shortId = tonumber(npcModel.Name:match("NPC_(%d+)"))
-			if shortId then
-				local mu = musketUtils[shortId]
-				if mu then
+				if idx == companyIndex then
+					print("[APPLY] NPC", shortId, "->", canAttackState)
 					mu:SetCanShoot(canAttackState)
 				end
 			end
 		end
 	end
 end)
+
 
 -- ── Raycast / Preview Parts ───────────────────────────────────────────
 local rayParams = RaycastParams.new()
