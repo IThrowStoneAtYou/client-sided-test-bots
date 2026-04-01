@@ -202,20 +202,24 @@ end
 
 -->>>>>>>>>>>>
 -- Enables or disables the combat loop.
-function MusketUtils:SetCanShoot(enabled: boolean)
---	print("[Musket]", self._model.Name, "SetCanShoot", enabled)
-	if self._canShoot == enabled then return end
-	self._canShoot = enabled
+function MusketUtils:SetCanShoot(state)
+	-- update the REAL variable used by loop
+	self._canShoot = state
+	self.CanShoot  = state -- optional mirror (for debug/consistency)
 
-	if enabled then
-		self:_startLoop()
-	else
-		if not self._isReloading then
-			self:_cancelLoop()
-			if self._tracks.Idle and not self._tracks.Idle.IsPlaying then
-				self._tracks.Idle:Play()
-			end
+	print("[MU] SetCanShoot:", state, "for", self._model and self._model.Name)
+
+	-- if disabling, immediately stop combat loop
+	if not state then
+		self:_cancelLoop()
+
+		-- fallback to idle
+		if self._tracks and self._tracks.Idle then
+			self._tracks.Idle:Play()
 		end
+	else
+		-- restart loop if re-enabled
+		self:_startLoop()
 	end
 end
 
@@ -286,17 +290,16 @@ function MusketUtils:_startLoop()
 
 			-- Helper to check if we should abort (canfire disabled, movement and not reloading)
 			local function shouldAbort()
-				-- Abort if canShoot has been disabled
 				if not self._canShoot then
-				--	print("[Musket]", self._model.Name, "aborting step due to canShoot disabled")
+					print("[MU ABORT] canShoot disabled:", self._model.Name)
 					return true
 				end
-				
+
 				local moving = self:isMoving()
 				if moving and not self._isReloading then
-				--	print("[Musket]", self._model.Name, "aborting step due to movement")
 					return true
 				end
+
 				return false
 			end
 
@@ -330,8 +333,14 @@ function MusketUtils:_startLoop()
 
 			-- 5. Fire
 			if ok then
+				if not self._canShoot then
+					print("[MU BLOCKED BEFORE FIRE]", self._model.Name)
+					break
+				end
+
 				self:FaceTarget(enemy:FindFirstChild("HumanoidRootPart").Position)
 				ok = playAndWait(self._tracks.Fire, shouldAbort)
+
 				if ok and (not self._canShoot or self._destroyed) then break end
 			end
 
