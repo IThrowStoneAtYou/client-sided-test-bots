@@ -207,7 +207,7 @@ function MusketUtils:SetCanShoot(state)
 	self._canShoot = state
 	self.CanShoot  = state -- optional mirror (for debug/consistency)
 
-	print("[MU] SetCanShoot:", state, "for", self._model and self._model.Name)
+--	print("[MU] SetCanShoot:", state, "for", self._model and self._model.Name)
 
 	-- if disabling, immediately stop combat loop
 	if not state then
@@ -291,7 +291,7 @@ function MusketUtils:_startLoop()
 			-- Helper to check if we should abort (canfire disabled, movement and not reloading)
 			local function shouldAbort()
 				if not self._canShoot then
-					print("[MU ABORT] canShoot disabled:", self._model.Name)
+				--	print("[MU ABORT] canShoot disabled:", self._model.Name)
 					return true
 				end
 
@@ -334,7 +334,7 @@ function MusketUtils:_startLoop()
 			-- 5. Fire
 			if ok then
 				if not self._canShoot then
-					print("[MU BLOCKED BEFORE FIRE]", self._model.Name)
+				--	print("[MU BLOCKED BEFORE FIRE]", self._model.Name)
 					break
 				end
 

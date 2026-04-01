@@ -153,7 +153,7 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 				shouldShoot = ownerState[companyIndex]
 			end
 
-			print("[SPAWN APPLY] NPC", shortId, "owner:", ownerUserId, "company:", companyIndex, "->", shouldShoot)
+		--	print("[SPAWN APPLY] NPC", shortId, "owner:", ownerUserId, "company:", companyIndex, "->", shouldShoot)
 
 			mu:SetCanShoot(shouldShoot)
 		else
@@ -400,7 +400,7 @@ end)
 
 -- applies server canAttack state and enforces it on all matching NPCs
 Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
-	print("[SYNC] owner:", ownerUserId, "company:", companyIndex, "canAttack:", canAttackState)
+--	print("[SYNC] owner:", ownerUserId, "company:", companyIndex, "canAttack:", canAttackState)
 
 	if not canAttack[ownerUserId] then
 		canAttack[ownerUserId] = {}
@@ -420,7 +420,7 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 				local idx = rep.Client:GetAttribute("CompanyIndex")
 
 				if idx == companyIndex then
-					print("[APPLY] NPC", shortId, "->", canAttackState)
+				--	print("[APPLY] NPC", shortId, "->", canAttackState)
 					mu:SetCanShoot(canAttackState)
 				end
 			end
@@ -502,13 +502,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		elseif key == Enum.KeyCode.E then
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
-			print("client 1")
+		--	print("client 1")
 
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
 				-- Send the toggle to the server (it will broadcast back)
 				Network.NpcCanAttackToggle.Fire(compIdx)
-				print("client 2")
+			--	print("client 2")
 			end
 			return
 		end
