@@ -33,6 +33,10 @@ local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
 
+local COMBAT_COOLDOWN = 6.0    -- seconds between shots
+local COMBAT_RANGE    = 750    -- studs
+local COMBAT_INTERVAL = 1   
+
 local WEAPON_IDLE          = 0
 local WEAPON_MAKE_READY    = 1
 local WEAPON_MAKEREADY_IDLE = 2
@@ -87,10 +91,6 @@ local readyPlayers = {}
 local farLastSent  = {}   
 local companies = {}
 local serverCanAttack = {}   -- [player][companyIndex] = boolean
-
-local COMBAT_COOLDOWN = 6.0    -- seconds between shots
-local COMBAT_RANGE    = 100    -- studs
-local COMBAT_INTERVAL = 1   
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -785,8 +785,13 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 		end
 
-		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
-		if #farList  > 0 then fireChunked(player, timestamp, farList) end
+		if #nearList > 0 then 
+			fireChunked(player, timestamp, nearList) 
+		end
+		
+		if #farList  > 0 then 
+			fireChunked(player, timestamp, farList) 
+		end
 	end
 
 	for _, shortId in ipairs(deadIds) do
@@ -909,7 +914,7 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 
 	local current = serverCanAttack[player][companyIndex]
 	if current == nil then 
-		current = true 
+		current = true 	
 	end
 
 	local newState = not current

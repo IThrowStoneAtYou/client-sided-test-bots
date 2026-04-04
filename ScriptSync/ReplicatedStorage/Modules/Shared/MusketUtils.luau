@@ -5,6 +5,7 @@ local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musk
 
 local BULLET_SPEED    = 350  -- studs per second
 local BULLET_DIAMETER = 0.12
+local BULLET_SPREAD   = 3    -- degrees, cone spread angle
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",
@@ -68,8 +69,10 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 			warn("[MusketUtils] Missing anim:", name)
 			return nil
 		end
+		
 		local track = animator:LoadAnimation(anim)
 		track.Priority = Enum.AnimationPriority.Action2
+		
 		return track
 	end
 
@@ -117,12 +120,23 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 		return
 	end
 
-	local origin    = muzzle.WorldPosition
+	local origin    = muzzle.Position
 	local direction = (targetPos - origin)
 	local totalDist = direction.Magnitude
 	if totalDist < 0.01 then return end
 
 	local unitDir = direction.Unit
+	
+	-- Apply bullet spread in a cone
+	if BULLET_SPREAD > 0 then
+		local spreadRad = math.rad(BULLET_SPREAD)
+		local randomYaw = (math.random() - 0.5) * spreadRad
+		local randomPitch = (math.random() - 0.5) * spreadRad
+		local cf = CFrame.lookAt(Vector3.zero, unitDir)
+		cf = cf * CFrame.Angles(randomPitch, randomYaw, 0)
+		unitDir = cf.LookVector
+	end
+	
 	local traveled = 0
 
 	local bullet = Instance.new("Part")
@@ -206,20 +220,20 @@ function MusketUtils:PlayState(state: number)
 
 	for name, track in pairs(self._tracks) do
 		if track and track.IsPlaying and name ~= animName then
-			track:Stop(0.1)
+			track:Stop()
 		end
 	end
 
 	local track = self._tracks[animName]
 	if track and not track.IsPlaying then
-		track:Play(0.1)
+		track:Play()
 	end
 end
 
 function MusketUtils:SetCanShoot(state: boolean)
 	self._canShoot = state
 	if not state then
-		self:PlayState(0)
+		self:PlayState()
 	end
 end
 

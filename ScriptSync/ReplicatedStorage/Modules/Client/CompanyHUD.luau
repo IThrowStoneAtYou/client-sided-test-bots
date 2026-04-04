@@ -640,11 +640,11 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 
 	self._globalTitle.Text = "COMPANY " .. ROMAN[index]
 
-	-- Strength bar: full width, text "100"
+	-- Strength bar
 	self._strengthValue.Text = "100"
 	self._strengthFill.Size = UDim2.new(1, 0, 1, 0)
 
-	-- Morale bar: full width, text "100"
+	-- Morale bar
 	self._moraleValue.Text = "no worky" -- 100
 	self._moraleFill.Size = UDim2.new(1, 0, 1, 0)
 
