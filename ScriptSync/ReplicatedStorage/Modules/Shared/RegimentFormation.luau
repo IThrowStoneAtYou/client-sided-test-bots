@@ -5,7 +5,7 @@
 
 local RegimentFormation = {}
 
-local RANK_SPACING = 4.5  -- studs between soldiers side by side
+local RANK_SPACING = 5  -- studs between soldiers side by side
 local RANK_DEPTH   = 5    -- studs between ranks front to back
 
 -->>>>>>>>>>>>
