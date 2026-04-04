@@ -33,6 +33,26 @@ local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
 
+local WEAPON_IDLE          = 0
+local WEAPON_MAKE_READY    = 1
+local WEAPON_MAKEREADY_IDLE = 2
+local WEAPON_TO_AIM        = 3
+local WEAPON_AIM_IDLE      = 4
+local WEAPON_FIRE          = 5
+local WEAPON_RELOAD_IDLE   = 6
+local WEAPON_RELOAD        = 7
+
+local WEAPON_DURATIONS = {
+	[0] = 0,
+	[1] = 1.8,
+	[2] = 1.0,
+	[3] = 0.7,
+	[4] = 1.0,
+	[5] = 0.75,
+	[6] = 1.0,
+	[7] = 10.33,
+}
+
 local BEARER_MODE_CENTER    = 0   -- j : static, behind centre
 local BEARER_MODE_LEFT      = 1   -- h : front-left corner
 local BEARER_MODE_RIGHT     = 2   -- k : front-right corner
@@ -71,8 +91,6 @@ local serverCanAttack = {}   -- [player][companyIndex] = boolean
 local COMBAT_COOLDOWN = 6.0    -- seconds between shots
 local COMBAT_RANGE    = 100    -- studs
 local COMBAT_INTERVAL = 1   
-
-local npcLastFire = {}   -- [shortId] = last fire time
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -251,6 +269,11 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		CompanyIndex   = nil,
 		Team           = ownerPlayer and ownerPlayer.Team or nil,
 		TeamName       = teamName,
+		
+		-- weapon
+		WeaponState  = WEAPON_IDLE,
+		WeaponTimer  = 0,
+		WeaponTarget = nil,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -365,7 +388,6 @@ local function despawnCompany(player: Player, companyIndex: number)
 
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
-			npcLastFire[shortId] = nil
 		end
 	end
 
@@ -576,6 +598,206 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	company.files    = files
 end
 
+Players.PlayerRemoving:Connect(function(player)
+	despawnAllCompanies(player)
+	readyPlayers[player] = nil
+	farLastSent[player]  = nil
+end)
+
+-- ── Chat: /spawn <nc> <n> ─────────────────────────────────────────────
+local function hookChat(player: Player)
+	player.Chatted:Connect(function(msg: string)
+		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$") 
+		if not (ncStr and nStr) then return end
+
+		local nc = tonumber(ncStr)
+		local n  = tonumber(nStr)
+
+		if nc and n and nc >= 1 and nc <= MAX_COMPANIES and n >= 1 then
+			spawnAllCompanies(player, nc, n)
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(hookChat)
+for _, p in ipairs(Players:GetPlayers()) do
+	hookChat(p)
+end
+
+-- ── Combat Loop ─────────────────────────────────────────────────────────
+
+local function setNpcWeaponState(npc, state, targetPos)
+	npc.WeaponState = state
+	npc.WeaponTimer = WEAPON_DURATIONS[state] or 0
+
+	for p in pairs(readyPlayers) do
+		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
+	end
+
+	if state == WEAPON_FIRE and targetPos then
+		for p in pairs(readyPlayers) do
+			Network.NpcFire.Fire(p, npc.ShortId, targetPos)
+		end
+	end
+end
+
+local function processCombat(dt)
+	for shortId, npc in pairs(activeNpcs) do
+		if npc.IsFlagBearer then continue end
+		if not npc.TeamName then continue end
+
+		local owner      = npc.CompanyOwner
+		local companyIdx = npc.CompanyIndex
+		if not owner or not companyIdx then continue end
+
+		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
+
+		-- hard abort
+		if not canShoot then
+			if npc.WeaponState ~= WEAPON_IDLE then
+				setNpcWeaponState(npc, WEAPON_IDLE, nil)
+				npc.WeaponTarget = nil
+			end
+			continue
+		end
+
+		-- idle: hunt for enemy
+		if npc.WeaponState == WEAPON_IDLE then
+			local enemy = findNearestEnemy(npc)
+			if enemy then
+				npc.WeaponTarget = enemy
+				setNpcWeaponState(npc, WEAPON_MAKE_READY, nil)
+			end
+			continue
+		end
+
+		-- tick
+		npc.WeaponTimer -= dt
+		if npc.WeaponTimer > 0 then continue end
+
+		-- validate target on transitions that need it
+		local target    = npc.WeaponTarget
+		local targetPos = target and target.Root and target.Root.Position
+
+		if npc.WeaponState == WEAPON_MAKE_READY then
+			setNpcWeaponState(npc, WEAPON_MAKEREADY_IDLE, nil)
+
+		elseif npc.WeaponState == WEAPON_MAKEREADY_IDLE then
+			setNpcWeaponState(npc, WEAPON_TO_AIM, nil)
+
+		elseif npc.WeaponState == WEAPON_TO_AIM then
+			setNpcWeaponState(npc, WEAPON_AIM_IDLE, nil)
+
+		elseif npc.WeaponState == WEAPON_AIM_IDLE then
+			if not targetPos then
+				-- target gone, abort
+				npc.WeaponTarget = nil
+				setNpcWeaponState(npc, WEAPON_IDLE, nil)
+			else
+				setNpcWeaponState(npc, WEAPON_FIRE, targetPos)
+			end
+
+		elseif npc.WeaponState == WEAPON_FIRE then
+			setNpcWeaponState(npc, WEAPON_RELOAD_IDLE, nil)
+
+		elseif npc.WeaponState == WEAPON_RELOAD_IDLE then
+			setNpcWeaponState(npc, WEAPON_RELOAD, nil)
+
+		elseif npc.WeaponState == WEAPON_RELOAD then
+			npc.WeaponTarget = nil
+			setNpcWeaponState(npc, WEAPON_IDLE, nil)
+		end
+	end
+end
+
+-- ── Broadcast Loop ────────────────────────────────────────────────────
+local nearAccum = 0
+local farAccum  = 0
+
+RunService.Heartbeat:Connect(function(dt)
+	nearAccum += dt
+	farAccum  += dt
+	
+	processCombat(dt)
+
+	local doNear = nearAccum >= NEAR_RATE
+	local doFar  = farAccum  >= FAR_RATE
+
+	if not doNear and not doFar then return end
+	if doNear then nearAccum -= NEAR_RATE end
+	if doFar  then farAccum  -= FAR_RATE  end
+
+	local timestamp     = workspace:GetServerTimeNow()
+	local deadIds       = {}
+	local dirtyEntries  = {}
+	local allFarEntries = {}
+
+	for shortId, npc in pairs(activeNpcs) do
+		if not (npc.Model and npc.Model.Parent) then
+			deadIds[#deadIds + 1] = shortId
+			continue
+		end
+
+		if not npc.IsRegiment and os.clock() - npc.LastMoveTime > IDLE_TIMEOUT then
+			pickNewTarget(npc)
+		end
+
+		local cf = npc.Root.CFrame
+		if doFar then
+			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
+		end
+
+		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
+			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
+			npc.LastSentCF = cf
+		end
+	end
+
+	for player in pairs(readyPlayers) do
+		local playerPos = getPlayerRootPos(player)
+		if not farLastSent[player] then farLastSent[player] = {} end
+
+		local playerFarSent = farLastSent[player]
+		local nearList = {}
+		local farList  = {}
+		local now      = os.clock()
+
+		if doNear then
+			for _, entry in ipairs(dirtyEntries) do
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
+				if dist <= CULL_RADIUS then
+					nearList[#nearList + 1] = entry
+				end
+			end
+		end
+
+		if doFar then
+			for _, entry in ipairs(allFarEntries) do
+				local sid  = entry.id
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
+				if dist > CULL_RADIUS then
+					local last = playerFarSent[sid] or 0
+					if now - last >= FAR_RATE * 0.9 then
+						farList[#farList + 1] = entry
+						playerFarSent[sid] = now
+					end
+				end
+			end
+		end
+
+		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
+		if #farList  > 0 then fireChunked(player, timestamp, farList) end
+	end
+
+	for _, shortId in ipairs(deadIds) do
+		for player in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(player, shortId)
+			if farLastSent[player] then farLastSent[player][shortId] = nil end
+		end
+		activeNpcs[shortId] = nil
+	end
+end)
+
 -- ── Remote Handlers ───────────────────────────────────────────────────
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
@@ -684,7 +906,7 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
 
 	serverCanAttack[player] = serverCanAttack[player] or {}
-	
+
 	local current = serverCanAttack[player][companyIndex]
 	if current == nil then 
 		current = true 
@@ -693,154 +915,22 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	local newState = not current
 	serverCanAttack[player][companyIndex] = newState
 
+	-- Broadcast the new state to all ready players
 	for p in pairs(readyPlayers) do
 		Network.NpcCanAttackSync.Fire(p, companyIndex, newState, player.UserId)
 	end
-end)
 
-Players.PlayerRemoving:Connect(function(player)
-	despawnAllCompanies(player)
-	readyPlayers[player] = nil
-	farLastSent[player]  = nil
-end)
-
--- ── Chat: /spawn <nc> <n> ─────────────────────────────────────────────
-local function hookChat(player: Player)
-	player.Chatted:Connect(function(msg: string)
-		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$") 
-		if not (ncStr and nStr) then return end
-
-		local nc = tonumber(ncStr)
-		local n  = tonumber(nStr)
-
-		if nc and n and nc >= 1 and nc <= MAX_COMPANIES and n >= 1 then
-			spawnAllCompanies(player, nc, n)
-		end
-	end)
-end
-
-Players.PlayerAdded:Connect(hookChat)
-for _, p in ipairs(Players:GetPlayers()) do
-	hookChat(p)
-end
-
--- ── Combat Loop ─────────────────────────────────────────────────────────
-local function processCombat()
-	local now = os.clock()
-	for shortId, npc in pairs(activeNpcs) do
-		if npc.IsFlagBearer then continue end
-		if not npc.TeamName then continue end
-
-		local owner = npc.CompanyOwner
-		local companyIdx = npc.CompanyIndex
-		if not owner or not companyIdx then continue end
-
-		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
-		if not canShoot then continue end
-
-		local lastFire = npcLastFire[shortId] or 0
-		if now - lastFire < COMBAT_COOLDOWN then continue end
-
-		local enemy = findNearestEnemy(npc)
-		if enemy then
-			npcLastFire[shortId] = now
-			local targetPos = enemy.Root.Position
-			for p in pairs(readyPlayers) do
-				Network.NpcFire.Fire(p, shortId, targetPos)
-			end
-		end
-	end
-end
-
-task.spawn(function()
-	while true do
-		task.wait(COMBAT_INTERVAL)
-		processCombat()
-	end
-end)
-
--- ── Broadcast Loop ────────────────────────────────────────────────────
-local nearAccum = 0
-local farAccum  = 0
-
-RunService.Heartbeat:Connect(function(dt)
-	nearAccum += dt
-	farAccum  += dt
-
-	local doNear = nearAccum >= NEAR_RATE
-	local doFar  = farAccum  >= FAR_RATE
-
-	if not doNear and not doFar then return end
-	if doNear then nearAccum -= NEAR_RATE end
-	if doFar  then farAccum  -= FAR_RATE  end
-
-	local timestamp     = workspace:GetServerTimeNow()
-	local deadIds       = {}
-	local dirtyEntries  = {}
-	local allFarEntries = {}
-
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			deadIds[#deadIds + 1] = shortId
-			continue
-		end
-
-		if not npc.IsRegiment and os.clock() - npc.LastMoveTime > IDLE_TIMEOUT then
-			pickNewTarget(npc)
-		end
-
-		local cf = npc.Root.CFrame
-		if doFar then
-			allFarEntries[#allFarEntries + 1] = makeBatchEntry(shortId, cf)
-		end
-
-		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
-			dirtyEntries[#dirtyEntries + 1] = makeBatchEntry(shortId, cf)
-			npc.LastSentCF = cf
-		end
-	end
-
-	for player in pairs(readyPlayers) do
-		local playerPos = getPlayerRootPos(player)
-		if not farLastSent[player] then farLastSent[player] = {} end
-
-		local playerFarSent = farLastSent[player]
-		local nearList = {}
-		local farList  = {}
-		local now      = os.clock()
-
-		if doNear then
-			for _, entry in ipairs(dirtyEntries) do
-				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then
-					nearList[#nearList + 1] = entry
+	-- If attack permission was turned OFF, force all NPCs in this company to stop attacking immediately
+	if not newState then
+		local comp = companies[player] and companies[player][companyIndex]
+		if comp then
+			for _, shortId in ipairs(comp.slots) do
+				local npc = activeNpcs[shortId]
+				if npc and npc.WeaponState ~= WEAPON_IDLE then
+					setNpcWeaponState(npc, WEAPON_IDLE, nil)
+					npc.WeaponTarget = nil
 				end
 			end
 		end
-
-		if doFar then
-			for _, entry in ipairs(allFarEntries) do
-				local sid  = entry.id
-				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist > CULL_RADIUS then
-					local last = playerFarSent[sid] or 0
-					if now - last >= FAR_RATE * 0.9 then
-						farList[#farList + 1] = entry
-						playerFarSent[sid] = now
-					end
-				end
-			end
-		end
-
-		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
-		if #farList  > 0 then fireChunked(player, timestamp, farList) end
-	end
-
-	for _, shortId in ipairs(deadIds) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
-		activeNpcs[shortId] = nil
 	end
 end)

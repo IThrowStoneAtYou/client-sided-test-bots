@@ -437,13 +437,19 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 	end
 end)
 
+Network.NpcWeaponState.On(function(shortId, state)
+	local mu = musketUtils[shortId]
+	if mu then
+		mu:PlayState(state)
+	end
+end)
+
 Network.NpcFire.On(function(shortId, targetPos)
 	local mu = musketUtils[shortId]
 	if mu then
 		mu:PlayFire(targetPos)
 	end
 end)
-
 
 -- ── Raycast / Preview Parts ───────────────────────────────────────────
 local rayParams = RaycastParams.new()
