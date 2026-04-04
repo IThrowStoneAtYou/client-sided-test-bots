@@ -24,24 +24,41 @@ function module:Create(Object: Instance, TweenInfo: TweenInfo, Properties: {[str
 	self.Time = TweenInfo.Time
 	self.Finalized = false
 	self.Completed = Completed.Event
+
 	remoteE:FireAllClients(Object,{TweenInfo.Time,(TweenInfo.EasingStyle or Enum.EasingStyle.Linear).Name,(TweenInfo.EasingDirection or Enum.EasingDirection.In).Name,TweenInfo.RepeatCount or '0',if not TweenInfo.Reverses then 'false' else 'true'},Properties,self.CapturedTime,'make',Listener)
 	Listener.OnServerEvent:Connect(function(player, object, prop)
-		if not IsReplicated then return end
-		if Finalized then return end
+		if not IsReplicated then 
+			return 
+		end
+		
+		if Finalized then 
+			return 
+		end
+
 		self.Finalized = true
+
 		finalize(object, prop)
+
 		Completed:Fire()
 		Listener:Destroy()
 		Completed:Destroy()
 		
 		self = nil
 	end)
+
 	pauselistener.OnServerEvent:Connect(function(player, clientProp)
-		if not IsReplicated then return end
-		if Finalized then return end
+		if not IsReplicated then 
+			return 
+		end
+
+		if Finalized then 
+			return 
+		end
+
 		self.Finalized = true
 		finalize(self.Object, clientProp)
 	end)
+
 	return self
 end
 
