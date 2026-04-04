@@ -56,4 +56,7 @@ function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: numb
 	return slots
 end
 
+RegimentFormation.RANK_SPACING = RANK_SPACING
+RegimentFormation.RANK_DEPTH   = RANK_DEPTH
+
 return RegimentFormation

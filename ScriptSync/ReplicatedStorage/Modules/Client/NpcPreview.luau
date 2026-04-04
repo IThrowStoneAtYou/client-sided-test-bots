@@ -7,12 +7,15 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local CompanyHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
 
 -- ── Constants ─────────────────────────────────────────────────────────
 local DOT_SIZE = Vector3.new(1.2, 0.3, 1.2)
 local FADE_INFO = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 local NpcPreview = {}
+
+local HIGHLIGHT_TAG = "CompanyHighlight"
 
 -- ── State ─────────────────────────────────────────────────────────────
 local previewFolder = workspace:FindFirstChild("Client_Preview_Dots") or (function()
@@ -49,6 +52,45 @@ local function ensurePool(needed: number)
 end
 
 -- ── Public API ────────────────────────────────────────────────────────
+
+function NpcPreview.clearHighlights(replicators)
+	for _, rep in pairs(replicators) do
+		if rep.Client then
+			local h = rep.Client:FindFirstChild(HIGHLIGHT_TAG)
+			if h then h.Enabled = false end
+		end
+	end
+end
+
+function NpcPreview.setHighlightVisible(clientModel, companyIndex, visible)
+	if not clientModel then return end
+	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
+	if not h then
+		h = Instance.new("Highlight")
+		h.Name                = HIGHLIGHT_TAG
+		h.FillColor           = CompanyHUD.getColor(companyIndex)
+		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
+		h.FillTransparency    = 0.62
+		h.OutlineTransparency = 0.1
+		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+		h.Parent              = clientModel
+	end
+	h.Enabled = visible
+end
+
+function NpcPreview.applyHighlights(replicators, companySlots, selectedList)
+	NpcPreview.clearHighlights(replicators)
+	for _, compIdx in ipairs(selectedList) do
+		local slots = companySlots[compIdx]
+		if not slots then continue end
+		for shortId in pairs(slots) do
+			local rep = replicators[shortId]
+			if rep and rep.Client then
+				NpcPreview.setHighlightVisible(rep.Client, compIdx, true)
+			end
+		end
+	end
+end
 
 -->>>>>>>>>>>>
 -- Updates the active preview dots and arrow based on the calculated layouts.

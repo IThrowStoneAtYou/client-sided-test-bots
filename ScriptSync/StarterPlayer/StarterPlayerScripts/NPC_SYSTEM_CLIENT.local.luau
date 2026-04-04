@@ -18,9 +18,8 @@ local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("Mus
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
-local HIGHLIGHT_TAG  = "CompanyHighlight"
 
-local RANK_SPACING = 4.5   -- must mirror RegimentFormation
+--local RANK_SPACING = 4.5   -- must mirror RegimentFormation
 local COMPANY_GAP  = 8
 
 local Network = require(game.ReplicatedStorage.Blink.Client)
@@ -58,56 +57,9 @@ local function buildCFrame(pos, yaw)
 	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 end
 
--- ── Highlights ────────────────────────────────────────────────────────
-
-local function clearHighlights()
-	for _, rep in pairs(replicators) do
-		if rep.Client then
-			local h = rep.Client:FindFirstChild(HIGHLIGHT_TAG)
-			if h then 
-				h.Enabled = false
-			end
-		end
-	end
-end
-
-local function setHighlightVisible(clientModel, companyIndex, visible)
-	if not clientModel then return end
-	local h = clientModel:FindFirstChild(HIGHLIGHT_TAG)
-
-	if not h then
-		h = Instance.new("Highlight")
-		h.Name                = HIGHLIGHT_TAG
-		h.FillColor           = CompanyHUD.getColor(companyIndex)
-		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
-		h.FillTransparency    = 0.62
-		h.OutlineTransparency = 0.1
-		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-		h.Parent              = clientModel
-	end
-
-	h.Enabled = visible
-end
-
-local function applyHighlights(selectedList)
-	clearHighlights()
-
-	for _, compIdx in ipairs(selectedList) do
-		local slots = companySlots[compIdx]
-		if not slots then continue end
-
-		for shortId in pairs(slots) do
-			local rep = replicators[shortId]
-			if rep and rep.Client then 
-				setHighlightVisible(rep.Client, compIdx, true)
-			end
-		end
-	end
-end
-
 -- ── HUD ───────────────────────────────────────────────────────────────
 local hud = CompanyHUD.new(function(selectedList)
-	applyHighlights(selectedList)
+	NpcPreview.applyHighlights(replicators, companySlots, selectedList)
 end)
 
 local compass = CompassHUD.new()
@@ -132,6 +84,7 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 	if teamName then
 		clientModel:SetAttribute("TeamName", teamName)
 	end
+	
 	if companyIndex then
 		clientModel:SetAttribute("CompanyIndex", companyIndex)
 	end
@@ -164,7 +117,7 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 
 	for _, compIdx in ipairs(hud:getSelectedList()) do
 		if companySlots[compIdx] and companySlots[compIdx][shortId] then
-			setHighlightVisible(clientModel, compIdx, true)
+			NpcPreview.setHighlightVisible(clientModel, compIdx, true)
 			break
 		end
 	end
@@ -211,7 +164,7 @@ local function getTotalWidthFromLastFormation(selectedList): number
 
 		local f     = lastFormation[compIdx]
 		local files = f and f.files or math.min(soldierCount, 10)
-		total += (files - 1) * RANK_SPACING
+		total += (files - 1) * RegimentFormation.RANK_SPACING
 		nc    += 1
 	end
 
@@ -284,7 +237,7 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 			ranks, files = 1, 1
 		end
 
-		local compWidth  = (soldierCount > 0) and (files - 1) * RANK_SPACING or 0
+		local compWidth = (soldierCount > 0) and (files - 1) * RegimentFormation.RANK_SPACING or 0
 
 		-- Company anchor = center of this company's front rank
 		local compCenter = leftEdge + rightDir * (cursor + compWidth / 2)
@@ -393,7 +346,7 @@ Network.NpcCompanySync.On(function(data)
 			local rep = replicators[sid]
 			if rep and rep.Client then
 				rep.Client:SetAttribute("CompanyIndex", entry.index)
-				setHighlightVisible(rep.Client, entry.index, false)
+				NpcPreview.setHighlightVisible(rep.Client, entry.index, false)
 			end
 		end
 
@@ -403,7 +356,7 @@ Network.NpcCompanySync.On(function(data)
 	end
 
 	hud:syncCompanies(data)
-	applyHighlights(hud:getSelectedList())
+	NpcPreview.applyHighlights(replicators, companySlots, hud:getSelectedList())
 end)
 
 -- applies server canAttack state and enforces it on all matching NPCs
