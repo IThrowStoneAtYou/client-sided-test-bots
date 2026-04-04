@@ -17,14 +17,14 @@ local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 -- ── Config ────────────────────────────────────────────────────────────
-local WALK_SPEED    = 14
+local WALK_SPEED    = 15
 local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 500       
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local MAX_BOTS      = 140        
+local MAX_BOTS      = 51        
 local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16         
 local COMPANY_GAP   = 15         
@@ -68,6 +68,12 @@ local farLastSent  = {}
 local companies = {}
 local serverCanAttack = {}   -- [player][companyIndex] = boolean
 
+local COMBAT_COOLDOWN = 6.0    -- seconds between shots
+local COMBAT_RANGE    = 100    -- studs
+local COMBAT_INTERVAL = 1   
+
+local npcLastFire = {}   -- [shortId] = last fire time
+
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
@@ -99,7 +105,12 @@ local function getPlayerRootPos(player)
 end
 
 local function makeBatchEntry(shortId, cf)
-	return { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
+	return 
+		{ 
+		id = shortId,
+		pos = cf.Position,
+		yaw = getYaw(cf),
+		}
 end
 
 local function fireChunked(player, timestamp, entries)
@@ -143,6 +154,31 @@ local function getBearerTarget(npc, comp)
 		-- BEARER_MODE_CENTER (j) : static centre behind last rank
 		return anchorCF * CFrame.new(0, 0, dynamicZ)
 	end
+end
+
+local function findNearestEnemy(npc)
+	local myTeam = npc.TeamName
+	if not myTeam then return nil end
+	local myPos = npc.Root.Position
+	local nearestDist = COMBAT_RANGE
+	local nearest = nil
+
+	for _, other in pairs(activeNpcs) do
+		if other ~= npc and not other.IsFlagBearer then
+			local otherTeam = other.TeamName
+			if otherTeam and otherTeam ~= myTeam then
+				local otherPos = other.Root and other.Root.Position
+				if otherPos then
+					local dist = (otherPos - myPos).Magnitude
+					if dist < nearestDist then
+						nearestDist = dist
+						nearest = other
+					end
+				end
+			end
+		end
+	end
+	return nearest
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
@@ -214,6 +250,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		CompanyOwner   = nil,
 		CompanyIndex   = nil,
 		Team           = ownerPlayer and ownerPlayer.Team or nil,
+		TeamName       = teamName,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -321,14 +358,19 @@ local function despawnCompany(player: Player, companyIndex: number)
 				Network.NpcDespawn.Fire(p, shortId)
 				if farLastSent[p] then farLastSent[p][shortId] = nil end
 			end
+
 			if activeNpcs[shortId].Pathfinder then
 				activeNpcs[shortId].Pathfinder:Destroy()
 			end
+
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
+			npcLastFire[shortId] = nil
 		end
 	end
+
 	playerCompanies[companyIndex] = nil
+
 	if serverCanAttack[player] then
 		serverCanAttack[player][companyIndex] = nil
 	end
@@ -337,7 +379,10 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
+	for idx in pairs(playerCompanies) do
+		 despawnCompany(player, idx)
+	end
+	
 	companies[player] = nil
 end
 
@@ -448,6 +493,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 								if cSlots[sIdx] then table.insert(slotList, cSlots[sIdx]) end
 							end
 						end
+
 						companies[player][idx] = {
 							anchorCF = companyAnchors[idx],
 							slots    = slotList,
@@ -470,6 +516,7 @@ end
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
+
 	local company = playerCompanies[companyIndex]
 	if not company then return end
 
@@ -517,6 +564,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 				npc.ActiveTween:Cancel()
 				npc.ActiveTween = nil
 			end
+
 			npc.Pathfinder:Stop()
 			npc.Pathfinder:Run(targetCF.Position)
 			npc.LastMoveTime = os.clock()
@@ -538,6 +586,7 @@ Network.NpcReady.On(function(player)
 		if npc.Model and npc.Model.Parent then
 			local cf = npc.Root.CFrame
 			local npcOwner = nil
+
 			for p, comps in pairs(companies) do
 				for idx, company in pairs(comps) do
 					for _, slotId in ipairs(company.slots) do
@@ -546,9 +595,15 @@ Network.NpcReady.On(function(player)
 							break
 						end
 					end
-					if npcOwner then break end
+
+					if npcOwner then 
+						break 
+					end
 				end
-				if npcOwner then break end
+
+				if npcOwner then
+					break
+				end
 			end
 
 			table.insert(batchList, {
@@ -615,6 +670,7 @@ Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 		npc.PaceDirection = 1  -- reset pace side on any mode change
 
 		npc.Pathfinder:Stop()
+
 		local targetCF = getBearerTarget(npc, comp)
 		npc.RegimentTarget = targetCF.Position
 		npc.MoveRetries    = 0
@@ -628,8 +684,12 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
 
 	serverCanAttack[player] = serverCanAttack[player] or {}
+	
 	local current = serverCanAttack[player][companyIndex]
-	if current == nil then current = true end
+	if current == nil then 
+		current = true 
+	end
+
 	local newState = not current
 	serverCanAttack[player][companyIndex] = newState
 
@@ -663,6 +723,41 @@ Players.PlayerAdded:Connect(hookChat)
 for _, p in ipairs(Players:GetPlayers()) do
 	hookChat(p)
 end
+
+-- ── Combat Loop ─────────────────────────────────────────────────────────
+local function processCombat()
+	local now = os.clock()
+	for shortId, npc in pairs(activeNpcs) do
+		if npc.IsFlagBearer then continue end
+		if not npc.TeamName then continue end
+
+		local owner = npc.CompanyOwner
+		local companyIdx = npc.CompanyIndex
+		if not owner or not companyIdx then continue end
+
+		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
+		if not canShoot then continue end
+
+		local lastFire = npcLastFire[shortId] or 0
+		if now - lastFire < COMBAT_COOLDOWN then continue end
+
+		local enemy = findNearestEnemy(npc)
+		if enemy then
+			npcLastFire[shortId] = now
+			local targetPos = enemy.Root.Position
+			for p in pairs(readyPlayers) do
+				Network.NpcFire.Fire(p, shortId, targetPos)
+			end
+		end
+	end
+end
+
+task.spawn(function()
+	while true do
+		task.wait(COMBAT_INTERVAL)
+		processCombat()
+	end
+end)
 
 -- ── Broadcast Loop ────────────────────────────────────────────────────
 local nearAccum = 0
