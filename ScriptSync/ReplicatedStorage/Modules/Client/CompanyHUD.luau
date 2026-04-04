@@ -633,19 +633,19 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 		self._globalPanel.Visible = false
 		return
 	end
-	
+
 	local companyColor = COMPANY_COLORS[index]   -- <-- get the color
 	self._globalTitle.TextColor3 = companyColor
 	self._globalStroke.Color = companyColor      -- <-- apply to stroke
 
 	self._globalTitle.Text = "COMPANY " .. ROMAN[index]
 
-	-- Strength bar: full width, text "100"
+	-- Strength bar
 	self._strengthValue.Text = "100"
 	self._strengthFill.Size = UDim2.new(1, 0, 1, 0)
 
-	-- Morale bar: full width, text "100"
-	self._moraleValue.Text = "100"
+	-- Morale bar
+	self._moraleValue.Text = "no worky" -- 100
 	self._moraleFill.Size = UDim2.new(1, 0, 1, 0)
 
 	-- Update fire icon state

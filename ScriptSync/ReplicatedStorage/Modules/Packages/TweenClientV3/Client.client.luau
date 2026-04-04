@@ -9,6 +9,7 @@ Remote.OnClientEvent:Connect(function(Object,Tweeninfo,Property,CapturedTime,Met
 		Cache[CapturedTime]:Play()
 		return
 	end
+
 	if Methods == 'pause' then
 		local clientprop = {}
 		
@@ -18,16 +19,19 @@ Remote.OnClientEvent:Connect(function(Object,Tweeninfo,Property,CapturedTime,Met
 		end
 		PauseListener:FireServer(clientprop)
 	end
+
 	if Methods == 'cancel' then
 		Cache[CapturedTime]:Cancel()
 		Cache[CapturedTime] = nil
 		Listener:FireServer()
 	end
+
 	if Methods == 'make' then
 		Cache[CapturedTime] = TweenService:Create(Object,TweenInfo.new(Tweeninfo[1],Enum.EasingStyle[Tweeninfo[2]],Enum.EasingDirection[Tweeninfo[3]],Tweeninfo[4],if TweenInfo[5] == 'false' then true else false),Property)
 		Cache[CapturedTime].Completed:Once(function()
 			Listener:FireServer(Object,Property)
 		end)
+		
 		return
 	end
 end)

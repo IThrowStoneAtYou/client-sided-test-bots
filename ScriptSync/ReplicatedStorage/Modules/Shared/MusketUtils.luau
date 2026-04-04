@@ -3,54 +3,23 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MUSKET_TEMPLATE = ReplicatedStorage.AnimShared.Npc.Item.Musket:WaitForChild("Musket")
 local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musket")
 
-local MAKE_READY_IDLE_HOLD = 1.0
-local AIM_IDLE_HOLD        = 1.0
-local RELOAD_IDLE_HOLD     = 1.0
+local BULLET_SPEED    = 350  -- studs per second
+local BULLET_DIAMETER = 0.12
+local BULLET_SPREAD   = 3    -- degrees, cone spread angle
+
+local STATE_TO_ANIM = {
+	[0] = "Idle",
+	[1] = "MakeReady",
+	[2] = "MakeReadyIdle",
+	[3] = "ToAim",
+	[4] = "AimIdle",
+	[5] = "Fire",
+	[6] = "ReloadIdle",
+	[7] = "Reload",
+}
 
 local MusketUtils = {}
 MusketUtils.__index = MusketUtils
-
-function MusketUtils:isMoving()
-	local moveDir = self._humanoid and self._humanoid.MoveDirection
-	return moveDir and moveDir.Magnitude > 0.05
-end
-
-local function playAndWait(track, cancelFn)
-	if not track then return true end
-	track:Play()
-	local start = os.clock()
-	local lastCheck = os.clock()
-	while track.IsPlaying and os.clock() - start < track.Length + 0.5 do
-		if os.clock() - lastCheck >= 0.05 then
-			lastCheck = os.clock()
-			if cancelFn and cancelFn() then
-				track:Stop()
-				return false
-			end
-		end
-		task.wait()
-	end
-	return true
-end
-
-local function playForDuration(track, duration, cancelFn)
-	if not track then return true end
-	track:Play()
-	local start = os.clock()
-	local lastCheck = os.clock()
-	while os.clock() - start < duration do
-		if os.clock() - lastCheck >= 0.05 then
-			lastCheck = os.clock()
-			if cancelFn and cancelFn() then
-				track:Stop()
-				return false
-			end
-		end
-		task.wait()
-	end
-	track:Stop(0.15)
-	return true
-end
 
 function MusketUtils.new(clientModel: Model, teamName: string?)
 	local self = setmetatable({}, MusketUtils)
@@ -59,8 +28,6 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 	self._canShoot   = true
 	self._destroyed  = false
 	self._team       = teamName
-	self._isReloading = false
-	self._busy       = false
 
 	local torso = clientModel:FindFirstChild("Torso")
 		or clientModel:FindFirstChild("UpperTorso")
@@ -102,8 +69,10 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 			warn("[MusketUtils] Missing anim:", name)
 			return nil
 		end
+		
 		local track = animator:LoadAnimation(anim)
 		track.Priority = Enum.AnimationPriority.Action2
+		
 		return track
 	end
 
@@ -118,76 +87,8 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 		Reload        = load("Reload"),
 	}
 
-	if self._tracks.Idle then
-		self._tracks.Idle.Priority = Enum.AnimationPriority.Action
-		self._tracks.Idle:Play()
-	end
-
 	self._humanoid = humanoid
 	return self
-end
-
-function MusketUtils:FaceTarget(targetPos: Vector3)
-	local root = self._model:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-
-	local myPos = root.Position
-	local direction = (targetPos - myPos).Unit
-	local newCF = CFrame.lookAt(myPos, myPos + direction)
-	root.CFrame = newCF
-end
-
-function MusketUtils:SetCanShoot(state)
-	self._canShoot = state
-end
-
-function MusketUtils:PlayFire(targetPos: Vector3)
-	if not self._canShoot or self._destroyed or self._busy then return end
-	self._busy = true
-
-	self:FaceTarget(targetPos)
-
-	local function shouldAbort()
-		if not self._canShoot then return true end
-		local moving = self:isMoving()
-		if moving and not self._isReloading then return true end
-		return false
-	end
-
-	local ok = true
-
-	-- We'll use a simple sequential check; if any step fails, we break out.
-	if ok then
-		ok = playAndWait(self._tracks.MakeReady, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		ok = playForDuration(self._tracks.MakeReadyIdle, MAKE_READY_IDLE_HOLD, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		ok = playAndWait(self._tracks.ToAim, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		ok = playForDuration(self._tracks.AimIdle, AIM_IDLE_HOLD, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		ok = playAndWait(self._tracks.Fire, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		ok = playForDuration(self._tracks.ReloadIdle, RELOAD_IDLE_HOLD, shouldAbort)
-		if not ok then ok = false end
-	end
-	if ok then
-		self._isReloading = true
-		playAndWait(self._tracks.Reload, function() return false end) -- never cancel reload
-		self._isReloading = false
-	end
-
-	self._busy = false
 end
 
 function MusketUtils:Destroy()
@@ -200,6 +101,146 @@ function MusketUtils:Destroy()
 		self._musket:Destroy()
 		self._musket = nil
 	end
+end
+
+function MusketUtils:FaceTarget(targetPos: Vector3)
+	local root = self._model:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+
+	local myPos = root.Position
+	local direction = (targetPos - myPos).Unit
+	local newCF = CFrame.lookAt(myPos, myPos + direction)
+	root.CFrame = newCF
+end
+
+function MusketUtils:_fireBullet(targetPos: Vector3)
+	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)
+	if not muzzle then
+		warn("[MusketUtils] No Muzzle found on musket")
+		return
+	end
+
+	local origin    = muzzle.Position
+	local direction = (targetPos - origin)
+	local totalDist = direction.Magnitude
+	if totalDist < 0.01 then return end
+
+	local unitDir = direction.Unit
+	
+	-- Apply bullet spread in a cone
+	if BULLET_SPREAD > 0 then
+		local spreadRad = math.rad(BULLET_SPREAD)
+		local randomYaw = (math.random() - 0.5) * spreadRad
+		local randomPitch = (math.random() - 0.5) * spreadRad
+		local cf = CFrame.lookAt(Vector3.zero, unitDir)
+		cf = cf * CFrame.Angles(randomPitch, randomYaw, 0)
+		unitDir = cf.LookVector
+	end
+	
+	local traveled = 0
+
+	local bullet = Instance.new("Part")
+	bullet.Name       = "Bullet"
+	bullet.Anchored   = true
+	bullet.CanCollide = false
+	bullet.CanQuery   = false
+	bullet.CastShadow = false
+	bullet.Material   = Enum.Material.Neon
+	bullet.Color      = Color3.fromRGB(255, 220, 100)
+	bullet.Size = Vector3.new(0.05, 0.05, 0.05)
+	bullet.Transparency = 1
+	bullet.CFrame     = CFrame.lookAt(origin, origin + unitDir)
+
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(0, 0, -0.6)
+	a0.Parent   = bullet
+
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, 0, 0.6)
+	a1.Parent   = bullet
+
+	local trail = Instance.new("Trail")
+	trail.Attachment0   = a0
+	trail.Attachment1   = a1
+	trail.Lifetime      = 0.06
+	trail.MinLength     = 0
+	trail.FaceCamera    = true
+	trail.Color         = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 240, 180)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 140, 60)),
+	})
+	trail.Transparency  = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	trail.WidthScale    = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	trail.Parent        = bullet
+
+	bullet.Parent = workspace
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { self._model, workspace:FindFirstChild("Npc_Registry") }
+
+	task.spawn(function()
+		while traveled < totalDist do
+			local dt    = task.wait()
+			local step  = BULLET_SPEED * dt
+
+			local result = workspace:Raycast(
+				origin + unitDir * traveled,
+				unitDir * step,
+				rayParams
+			)
+
+			traveled += step
+
+			if result then
+				bullet.CFrame = CFrame.lookAt(result.Position, result.Position + unitDir)
+				print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
+				bullet:Destroy()
+				return
+			end
+
+			local newPos = origin + unitDir * traveled
+			bullet.CFrame = CFrame.lookAt(newPos, newPos + unitDir)
+		end
+
+		bullet:Destroy()
+	end)
+end
+
+function MusketUtils:PlayState(state: number)
+	if self._destroyed then return end
+	local animName = STATE_TO_ANIM[state]
+	if not animName then return end
+
+	for name, track in pairs(self._tracks) do
+		if track and track.IsPlaying and name ~= animName then
+			track:Stop()
+		end
+	end
+
+	local track = self._tracks[animName]
+	if track and not track.IsPlaying then
+		track:Play()
+	end
+end
+
+function MusketUtils:SetCanShoot(state: boolean)
+	self._canShoot = state
+	if not state then
+		self:PlayState()
+	end
+end
+
+function MusketUtils:PlayFire(targetPos: Vector3)
+	if not self._canShoot or self._destroyed then return end
+	self:FaceTarget(targetPos)
+	self:_fireBullet(targetPos)
 end
 
 return MusketUtils
