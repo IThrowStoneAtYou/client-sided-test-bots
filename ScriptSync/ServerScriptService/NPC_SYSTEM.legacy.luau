@@ -358,15 +358,19 @@ local function despawnCompany(player: Player, companyIndex: number)
 				Network.NpcDespawn.Fire(p, shortId)
 				if farLastSent[p] then farLastSent[p][shortId] = nil end
 			end
+
 			if activeNpcs[shortId].Pathfinder then
 				activeNpcs[shortId].Pathfinder:Destroy()
 			end
+
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
 			npcLastFire[shortId] = nil
 		end
 	end
+
 	playerCompanies[companyIndex] = nil
+
 	if serverCanAttack[player] then
 		serverCanAttack[player][companyIndex] = nil
 	end
@@ -375,7 +379,10 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
+	for idx in pairs(playerCompanies) do
+		 despawnCompany(player, idx)
+	end
+	
 	companies[player] = nil
 end
 
@@ -486,6 +493,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 								if cSlots[sIdx] then table.insert(slotList, cSlots[sIdx]) end
 							end
 						end
+
 						companies[player][idx] = {
 							anchorCF = companyAnchors[idx],
 							slots    = slotList,
@@ -508,6 +516,7 @@ end
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
+
 	local company = playerCompanies[companyIndex]
 	if not company then return end
 
@@ -555,6 +564,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 				npc.ActiveTween:Cancel()
 				npc.ActiveTween = nil
 			end
+
 			npc.Pathfinder:Stop()
 			npc.Pathfinder:Run(targetCF.Position)
 			npc.LastMoveTime = os.clock()
@@ -576,6 +586,7 @@ Network.NpcReady.On(function(player)
 		if npc.Model and npc.Model.Parent then
 			local cf = npc.Root.CFrame
 			local npcOwner = nil
+
 			for p, comps in pairs(companies) do
 				for idx, company in pairs(comps) do
 					for _, slotId in ipairs(company.slots) do
@@ -584,9 +595,15 @@ Network.NpcReady.On(function(player)
 							break
 						end
 					end
-					if npcOwner then break end
+
+					if npcOwner then 
+						break 
+					end
 				end
-				if npcOwner then break end
+
+				if npcOwner then
+					break
+				end
 			end
 
 			table.insert(batchList, {
@@ -653,6 +670,7 @@ Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 		npc.PaceDirection = 1  -- reset pace side on any mode change
 
 		npc.Pathfinder:Stop()
+
 		local targetCF = getBearerTarget(npc, comp)
 		npc.RegimentTarget = targetCF.Position
 		npc.MoveRetries    = 0
@@ -666,8 +684,12 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
 
 	serverCanAttack[player] = serverCanAttack[player] or {}
+	
 	local current = serverCanAttack[player][companyIndex]
-	if current == nil then current = true end
+	if current == nil then 
+		current = true 
+	end
+
 	local newState = not current
 	serverCanAttack[player][companyIndex] = newState
 
