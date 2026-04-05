@@ -1,6 +1,19 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_SERVER
 -- Version 3.1.0
+--
+-- Configuration:
+--   - MAX_BOTS: 31 NPCs per game
+--   - MAX_COMPANIES: 2 (can be 4, currently limited to 2)
+--   - RANK_SPACING: 4.7 studs (side-to-side)
+--   - RANK_DEPTH: 5 studs (front-to-back)
+--   - COMBAT_RANGE: 750 studs (musket attack range)
+--   - COMBAT_COOLDOWN: 6.0 seconds between shots
+--
+-- Update Rates:
+--   - Near Rate (NEAR_RATE = 1/20): High frequency snapshots for players < 500 studs
+--   - Far Rate (FAR_RATE = 1/4): Low frequency updates for distant players
+--   - Chunking: Large batches split into 35-unit chunks to avoid network floods
 -->>>>>>>>>>>>
 
 local RunService        = game:GetService("RunService")
@@ -87,12 +100,14 @@ local WANDER_MIN    = 8
 local IDLE_TIMEOUT  = 3
 
 -- ── State ─────────────────────────────────────────────────────────────
-local activeNpcs   = {}   
-local nextShortId  = 1
-local readyPlayers = {}   
-local farLastSent  = {}   
-local companies = {}
-local serverCanAttack = {}   -- [player][companyIndex] = boolean
+-- Central runtime state for NPC system
+
+local activeNpcs   = {}   -- [shortId] = npc object {Model, Humanoid, Root, etc.}
+local nextShortId  = 1    -- Counter for unique NPC IDs
+local readyPlayers = {}   -- [player] = true (clients that are loaded and ready)
+local farLastSent  = {}   -- [player][shortId] = last CFrame sent at far rate
+local companies = {}      -- [player][companyIndex] = company object (ranks, files, slots, bearers)
+local serverCanAttack = {}   -- [player][companyIndex] = boolean (server-tracked combat state)
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -827,6 +842,18 @@ local function processCombat(dt)
 end
 
 -- ── Broadcast Loop ────────────────────────────────────────────────────
+-- Server heartbeat that handles two main systems:
+--  1. COMBAT: Processes NPC-to-NPC targeting and shooting
+--  2. NETWORK BROADCAST: Sends position updates at dual rates
+--
+-- Update Rates:
+--   - Near Rate (1/20 = 50ms): Detailed snapshots to players < 500 studs away
+--   - Far Rate (1/4 = 250ms): Sparse updates to distant players
+--
+-- Optimization:
+--   Uses accumulated deltas (nearAccum, farAccum) to skip checks between ticks
+--   Large NPC batches are chunked (35 units per chunk) to avoid network limits
+--
 local nearAccum = 0
 local farAccum  = 0
 

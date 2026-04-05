@@ -1,6 +1,10 @@
 -->>>>>>>>>>>>
 -- NPC_ANIMATOR
 -- Version 1.1.0
+--
+-- Note: Animation objects are loaded ONCE per NpcAnimator instance,
+-- not globally shared, so each NPC has its own animation tracks.
+--
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,6 +22,12 @@ NpcAnimator.__index = NpcAnimator
 
 -->>>>>>>>>>>>
 -- Constructor for the animator. Starts in Idle state.
+--
+-- Creates a new animator instance and loads both animation tracks.
+-- Called once per NPC during registerNpc() on the client.
+--
+-- Initial State: Idle animation is immediately played.
+--
 function NpcAnimator.new(model: Model)
 	local self = setmetatable({}, NpcAnimator)
 

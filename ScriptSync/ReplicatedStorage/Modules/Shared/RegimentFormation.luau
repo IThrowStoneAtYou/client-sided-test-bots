@@ -1,6 +1,11 @@
 -->>>>>>>>>>>>
 -- REGIMENT_FORMATION
 -- Version 1.1.0
+--
+-- Spacing Constants:
+--   - RANK_SPACING = 5 studs (left-right between soldiers)
+--   - RANK_DEPTH = 5 studs (front-back between rows)
+--
 -->>>>>>>>>>>>
 
 local RegimentFormation = {}
@@ -11,6 +16,16 @@ local RANK_DEPTH   = 5    -- studs between ranks front to back
 -->>>>>>>>>>>>
 -- Converts a drag magnitude (studs) into ranks + files for a given count.
 -- Called by both the client (preview) and server (slot generation).
+--
+-- Algorithm:
+--   files = floor(dragMagnitude / RANK_SPACING) + 1, clamped to [1, count]
+--   ranks = ceil(count / files)
+--
+-- Example: count=10, drag=20 studs
+--   files = floor(20 / 5) + 1 = 5
+--   ranks = ceil(10 / 5) = 2
+--   Result: 2 ranks × 5 files = 10 soldiers in an elongated line
+--
 function RegimentFormation.dragToLayout(count: number, dragMagnitude: number): (number, number)
 	-- files derived from width dragged, clamped between 1 and count
 	local files = math.floor(dragMagnitude / RANK_SPACING) + 1
@@ -29,8 +44,24 @@ function RegimentFormation.getPreviewSize(ranks: number, files: number): (number
 end
 
 -->>>>>>>>>>>>
--- Returns { CFrame, ... } for each slot.
--- anchorCF: centre of the FRONT rank, LookVector = facing direction.
+-- Returns { CFrame, ... } for each slot in the formation.
+--
+-- Parameters:
+--   anchorCF: CFrame at the centre of the FRONT rank, LookVector = facing direction
+--   count: Total number of soldiers
+--   ranks: Number of rows (front to back)
+--   files: Number of columns (left to right)
+--
+-- Slot Algorithm:
+--   Iterates i=1 to count, calculates rank and file for each soldier.
+--   Positions are calculated relative to anchor:
+--   - Files offset horizontally (centered, left to right)
+--   - Ranks offset backward (front to back)
+--
+-- Example: 2 ranks × 3 files (count=6)
+--   Front rank (rank 0):  3 soldiers side-by-side
+--   Back rank (rank 1):   3 soldiers behind front row
+--
 function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: number, files: number): {CFrame}
 	-- Logic: Iterates through NPC count and calculates relative offsets for each rank and file.
 	local slots  = {}

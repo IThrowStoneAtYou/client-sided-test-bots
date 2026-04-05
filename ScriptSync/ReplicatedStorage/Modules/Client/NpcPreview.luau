@@ -1,6 +1,18 @@
 -->>>>>>>>>>>>
 -- NPC_PREVIEW
 -- Version 1.0.0
+--
+-- Purpose: Renders visual feedback for formation placement before confirming.
+--
+-- Features:
+--   - Yellow dots at each NPC slot position (shows where soldiers will stand)
+--   - White arrow showing formation's facing direction
+--   - Highlights selected companies by applying Highlight instances
+--   - Spawns fade-out particle dots when formation is placed (visual feedback)
+--   - Pooled dot system for efficient rendering of many slots
+--
+-- Used by: NPC_SYSTEM_CLIENT during drag operations and company selection
+--
 -->>>>>>>>>>>>
 
 local TweenService = game:GetService("TweenService")

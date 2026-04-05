@@ -21,10 +21,13 @@ function NpcReplicator.new(id: string, clientModel: Model)
 	self.Client = clientModel
 	self.Root = clientModel.HumanoidRootPart
 
-	self.Snapshots = {}
+	-- ── Snapshot System ───────────────────────────────────
+	-- Server sends position snapshots at 20/sec (near) or 4/sec (far)
+	-- Client interpolates between snapshots for smooth movement
+	self.Snapshots = {}   -- [{t=timestamp, cf=CFrame, v=velocity}, ...]
 	self.BufferTime = 0.1  -- was 0.3, too much latency buffer
-	self.MaxBuffer = 20    -- revert back to 20
-	self.MaxExtrapolation = 0.2  -- was 0.4
+	self.MaxBuffer = 20    -- revert back to 20 (max snapshots to keep)
+	self.MaxExtrapolation = 0.2  -- was 0.4 (max time to extrapolate if no new data)
 
 	self.LastPos = self.Root.Position
 	self.Animator = nil

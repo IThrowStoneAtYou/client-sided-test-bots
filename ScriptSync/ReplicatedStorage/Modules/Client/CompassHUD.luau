@@ -1,6 +1,28 @@
 -->>>>>>>>>>>>
 -- COMPASS_HUD
 -- Version 1.0.0
+--
+-- Purpose: Renders an interactive compass UI showing cardinal directions (N, E, S, W).
+--
+-- Features:
+--   - Displays compass at top center of screen
+--   - Shows cardinal (N/E/S/W) and intercardinal (NE/SE/SW/NW) directions
+--   - Smooth sliding animation as camera rotates
+--   - Dynamic degree labels and tick marks
+--   - Auto-updates based on camera CFrame every frame
+--
+-- Visual Design:
+--   - Dark background (low transparency) with white stroke outline
+--   - Cardinal directions in gold accent color
+--   - Active gold notch indicator at center top
+--   - Tick marks (short for degrees, tall for cardinals)
+--
+-- Usage:
+--   local compass = CompassHUD.new()
+--   RunService.RenderStepped:Connect(function()
+--     compass:Update(workspace.CurrentCamera.CFrame)
+--   end)
+--
 -->>>>>>>>>>>>
 
 local Players = game:GetService("Players")

@@ -1,6 +1,18 @@
 -->>>>>>>>>>>>
 -- COMPANY_HUD
 -- Version 3.0.0
+--
+-- Company Colors:
+--   I (Blue):   RGB(65, 105, 210)
+--   II (Red):   RGB(200, 55, 55)
+--   III (Green): RGB(55, 170, 90)
+--   IV (Gold):  RGB(210, 160, 35)
+--
+-- Selection Modes:
+--   - Click: Exclusive select (deselects all others)
+--   - Shift+Click: Toggle inclusion
+--   - Right+Click: Deselect all
+--
 -->>>>>>>>>>>>
 
 local UserInputService = game:GetService("UserInputService")
@@ -61,6 +73,14 @@ end
 
 -->>>>>>>>>>>>
 -- Returns the accent Color3 for a given company index.
+-- Used to tint UI elements and Highlight instances to company colors.
+--
+-- Color Mapping:
+--   1 → Blue (65, 105, 210)
+--   2 → Red (200, 55, 55)
+--   3 → Green (55, 170, 90)
+--   4 → Gold (210, 160, 35)
+--
 function CompanyHUD.getColor(index: number): Color3
 	return COMPANY_COLORS[index]
 end
