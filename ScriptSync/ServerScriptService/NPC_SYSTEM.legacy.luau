@@ -749,7 +749,8 @@ local function processCombat(dt)
 
 		-- hard abort
 		if not canShoot then
-			if npc.WeaponState ~= WEAPON_IDLE then
+			local reloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+			if npc.WeaponState ~= WEAPON_IDLE and not reloading then
 				setNpcWeaponState(npc, WEAPON_IDLE, nil)
 				npc.WeaponTarget = nil
 			end
@@ -1027,8 +1028,11 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 			for _, shortId in ipairs(comp.slots) do
 				local npc = activeNpcs[shortId]
 				if npc and npc.WeaponState ~= WEAPON_IDLE then
-					setNpcWeaponState(npc, WEAPON_IDLE, nil)
-					npc.WeaponTarget = nil
+					local reloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+					if not reloading then
+						setNpcWeaponState(npc, WEAPON_IDLE, nil)
+						npc.WeaponTarget = nil
+					end
 				end
 			end
 		end
