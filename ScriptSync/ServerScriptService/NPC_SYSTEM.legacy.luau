@@ -265,6 +265,9 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		ActiveTween    = nil,
 		
 		Health       = 100,
+		
+		AimAttachment = root:WaitForChild("RootAttachment"),
+		AimAlign      = root:WaitForChild("AlignOrientation"),
 
 		-- [FLAG BEARER LOGIC] Track bearer properties
 		IsFlagBearer   = false,
@@ -715,10 +718,16 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 
 -- ── Combat Loop ─────────────────────────────────────────────────────────
-
 local function setNpcWeaponState(npc, state, targetPos)
 	npc.WeaponState = state
 	npc.WeaponTimer = WEAPON_DURATIONS[state] or 0
+
+	-- AlignOrientation gating
+	if state == WEAPON_TO_AIM then
+		npc.AimAlign.Enabled = true
+	elseif state == WEAPON_FIRE or state == WEAPON_IDLE then
+		npc.AimAlign.Enabled = false
+	end
 
 	for p in pairs(readyPlayers) do
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
@@ -749,7 +758,8 @@ local function processCombat(dt)
 
 		-- hard abort
 		if not canShoot then
-			if npc.WeaponState ~= WEAPON_IDLE then
+			local reloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+			if npc.WeaponState ~= WEAPON_IDLE and not reloading then
 				setNpcWeaponState(npc, WEAPON_IDLE, nil)
 				npc.WeaponTarget = nil
 			end
@@ -773,6 +783,15 @@ local function processCombat(dt)
 		-- validate target on transitions that need it
 		local target    = npc.WeaponTarget
 		local targetPos = target and target.Root and target.Root.Position
+
+		if npc.AimAlign.Enabled and npc.WeaponTarget then
+			local targetPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
+			if targetPos then
+				local dir    = (targetPos - npc.Root.Position)
+				dir          = Vector3.new(dir.X, 0, dir.Z).Unit  -- flat, no vertical tilt
+				npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
+			end
+		end
 
 		if npc.WeaponState == WEAPON_MAKE_READY then
 			setNpcWeaponState(npc, WEAPON_MAKEREADY_IDLE, nil)
@@ -1027,8 +1046,11 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 			for _, shortId in ipairs(comp.slots) do
 				local npc = activeNpcs[shortId]
 				if npc and npc.WeaponState ~= WEAPON_IDLE then
-					setNpcWeaponState(npc, WEAPON_IDLE, nil)
-					npc.WeaponTarget = nil
+					local reloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+					if not reloading then
+						setNpcWeaponState(npc, WEAPON_IDLE, nil)
+						npc.WeaponTarget = nil
+					end
 				end
 			end
 		end
