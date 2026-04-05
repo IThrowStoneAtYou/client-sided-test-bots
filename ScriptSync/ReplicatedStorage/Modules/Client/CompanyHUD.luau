@@ -36,6 +36,8 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
+local MAX_TICKETS = 150   -- maximum strength tickets
+
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD
 
@@ -47,6 +49,7 @@ function CompanyHUD.new(onSelectionChanged)
 	self._companies   = {}   -- { [index] = { count } }
 	self._cards       = {}
 	self._canAttackState = {}   -- [index] = boolean (true by default)
+	self._strengthData = {}     -- [index] = { tickets, isBroken, brokenTimer, enemyNearby }
 	self._onChanged   = onSelectionChanged or function() end
 
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -65,6 +68,9 @@ function CompanyHUD.new(onSelectionChanged)
 
 	-- Create the global info panel
 	self:_createGlobalInfoPanel()
+
+	-- Create the broken company prompt
+	self:_createBrokenPrompt()
 
 	return self
 end
@@ -148,6 +154,9 @@ function CompanyHUD:setSelected(index: number?)
 	else
 		self._globalPanel.Visible = false
 	end
+
+	-- Update broken prompt
+	self:_updateBrokenPrompt()
 end
 
 -->>>>>>>>>>>>
@@ -171,6 +180,9 @@ function CompanyHUD:toggleSelected(index: number)
 	else
 		self._globalPanel.Visible = false
 	end
+
+	-- Update broken prompt
+	self:_updateBrokenPrompt()
 end
 
 -->>>>>>>>>>>>
@@ -207,6 +219,9 @@ function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
 	else
 		self._globalPanel.Visible = false
 	end
+
+	-- Refresh broken prompt
+	self:_updateBrokenPrompt()
 end
 
 -->>>>>>>>>>>>
@@ -233,6 +248,25 @@ function CompanyHUD:_updateLayout()
 			cd.restingPos = UDim2.new(0.5, xOff, 1, RESTING_OFF)
 		end
 	end
+end
+
+function CompanyHUD:setStrength(index: number, tickets: number, isBroken: boolean, brokenTimer: number, enemyNearby: boolean)
+	if not self._strengthData then self._strengthData = {} end
+	self._strengthData[index] = {
+		tickets     = tickets,
+		isBroken    = isBroken,
+		brokenTimer = brokenTimer,
+		enemyNearby = enemyNearby,
+	}
+
+	self:_refreshCard(index)
+
+	local selected = self:getSelectedList()
+	if #selected == 1 and selected[1] == index then
+		self:_updateGlobalPanel(index)
+	end
+
+	self:_updateBrokenPrompt()
 end
 
 -- ── Internal ──────────────────────────────────────────────────────────
@@ -660,12 +694,19 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 
 	self._globalTitle.Text = "COMPANY " .. ROMAN[index]
 
-	-- Strength bar
-	self._strengthValue.Text = "100"
-	self._strengthFill.Size = UDim2.new(1, 0, 1, 0)
+	-- Strength bar (updated as requested)
+	local sd = self._strengthData and self._strengthData[index]
+	local tickets = sd and sd.tickets or MAX_TICKETS
+	local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
+	self._strengthValue.Text = tostring(tickets)
+	self._strengthFill.Size  = UDim2.new(ratio, 0, 1, 0)
+	-- Color: green when healthy, red when low
+	local r = math.clamp(1 - ratio, 0, 1)
+	local g = math.clamp(ratio, 0, 1)
+	self._strengthFill.BackgroundColor3 = Color3.new(r * 0.8 + 0.2, g * 0.6, 0.1)
 
-	-- Morale bar
-	self._moraleValue.Text = "no worky" -- 100
+	-- Morale bar (placeholder)
+	self._moraleValue.Text = "no worky"
 	self._moraleFill.Size = UDim2.new(1, 0, 1, 0)
 
 	-- Update fire icon state
@@ -674,6 +715,137 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 	self._globalFireIcon.ImageColor3 = canAttack and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(120, 120, 120)
 
 	self._globalPanel.Visible = true
+end
+
+-- Creates the broken company prompt at top center
+function CompanyHUD:_createBrokenPrompt()
+	local panel = Instance.new("Frame")
+	panel.Name              = "BrokenPrompt"
+	panel.Size              = UDim2.new(0, 320, 0, 90)
+	panel.Position          = UDim2.new(0.5, 0, 0, 10)
+	panel.AnchorPoint       = Vector2.new(0.5, 0)
+	panel.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
+	panel.BackgroundTransparency = 0.15
+	panel.Visible           = false
+	panel.ZIndex            = 20
+	panel.Parent            = self._gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 9)
+	corner.Parent = panel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color       = Color3.fromRGB(200, 55, 55)
+	stroke.Thickness   = 2.5
+	stroke.Transparency = 0
+	stroke.Parent = panel
+	self._brokenStroke = stroke
+
+	local title = Instance.new("TextLabel")
+	title.Name               = "Title"
+	title.Size               = UDim2.new(1, 0, 0, 24)
+	title.Position           = UDim2.new(0, 0, 0, 8)
+	title.BackgroundTransparency = 1
+	title.Text               = "COMPANY I — BROKEN"
+	title.TextColor3         = Color3.fromRGB(200, 55, 55)
+	title.Font               = Enum.Font.GothamBold
+	title.TextSize           = 14
+	title.TextXAlignment     = Enum.TextXAlignment.Center
+	title.ZIndex             = 21
+	title.Parent             = panel
+	self._brokenTitle = title
+
+	-- Timer row
+	local timerLabel = Instance.new("TextLabel")
+	timerLabel.Name              = "TimerLabel"
+	timerLabel.Size              = UDim2.new(0.5, -10, 0, 14)
+	timerLabel.Position          = UDim2.new(0, 10, 0, 38)
+	timerLabel.BackgroundTransparency = 1
+	timerLabel.Text              = "SURVIVE"
+	timerLabel.TextColor3        = Color3.fromRGB(130, 130, 145)
+	timerLabel.Font              = Enum.Font.GothamBold
+	timerLabel.TextSize          = 9
+	timerLabel.TextXAlignment    = Enum.TextXAlignment.Left
+	timerLabel.ZIndex            = 21
+	timerLabel.Parent            = panel
+
+	local timerVal = Instance.new("TextLabel")
+	timerVal.Name              = "TimerValue"
+	timerVal.Size              = UDim2.new(0.5, -10, 0, 14)
+	timerVal.Position          = UDim2.new(0.5, 0, 0, 38)
+	timerVal.BackgroundTransparency = 1
+	timerVal.Text              = "20s"
+	timerVal.TextColor3        = Color3.fromRGB(230, 230, 230)
+	timerVal.Font              = Enum.Font.GothamBold
+	timerVal.TextSize          = 9
+	timerVal.TextXAlignment    = Enum.TextXAlignment.Right
+	timerVal.ZIndex            = 21
+	timerVal.Parent            = panel
+	self._brokenTimerVal = timerVal
+
+	-- Enemy nearby row
+	local enemyLabel = Instance.new("TextLabel")
+	enemyLabel.Name              = "EnemyLabel"
+	enemyLabel.Size              = UDim2.new(0.5, -10, 0, 14)
+	enemyLabel.Position          = UDim2.new(0, 10, 0, 58)
+	enemyLabel.BackgroundTransparency = 1
+	enemyLabel.Text              = "FAR FROM ENEMY COMPANY"
+	enemyLabel.TextColor3        = Color3.fromRGB(130, 130, 145)
+	enemyLabel.Font              = Enum.Font.GothamBold
+	enemyLabel.TextSize          = 9
+	enemyLabel.TextXAlignment    = Enum.TextXAlignment.Left
+	enemyLabel.ZIndex            = 21
+	enemyLabel.Parent            = panel
+
+	local enemyVal = Instance.new("TextLabel")
+	enemyVal.Name              = "EnemyValue"
+	enemyVal.Size              = UDim2.new(0.5, -10, 0, 14)
+	enemyVal.Position          = UDim2.new(0.5, 0, 0, 58)
+	enemyVal.BackgroundTransparency = 1
+	enemyVal.Text              = "NO"
+	enemyVal.TextColor3        = Color3.fromRGB(200, 55, 55)
+	enemyVal.Font              = Enum.Font.GothamBold
+	enemyVal.TextSize          = 9
+	enemyVal.TextXAlignment    = Enum.TextXAlignment.Right
+	enemyVal.ZIndex            = 21
+	enemyVal.Parent            = panel
+	self._brokenEnemyVal = enemyVal
+
+	self._brokenPrompt = panel
+end
+
+-- Updates the broken prompt visibility and content based on selected company
+function CompanyHUD:_updateBrokenPrompt()
+	if not self._brokenPrompt then return end
+
+	local selected = self:getSelectedList()
+	if #selected ~= 1 then
+		self._brokenPrompt.Visible = false
+		return
+	end
+
+	local idx = selected[1]
+	local sd  = self._strengthData and self._strengthData[idx]
+	if not sd or not sd.isBroken then
+		self._brokenPrompt.Visible = false
+		return
+	end
+
+	self._brokenPrompt.Visible   = true
+	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " — BROKEN"
+	self._brokenStroke.Color     = COMPANY_COLORS[idx]
+	self._brokenTimerVal.Text    = math.ceil(sd.brokenTimer) .. "s"
+
+	local timerDone = sd.brokenTimer <= 0
+	self._brokenTimerVal.TextColor3 = timerDone
+		and Color3.fromRGB(55, 200, 90)
+		or  Color3.fromRGB(230, 230, 230)
+
+	local clear = not sd.enemyNearby
+	self._brokenEnemyVal.Text       = clear and "YES" or "NO"
+	self._brokenEnemyVal.TextColor3 = clear
+		and Color3.fromRGB(55, 200, 90)
+		or  Color3.fromRGB(200, 55, 55)
 end
 
 return CompanyHUD
