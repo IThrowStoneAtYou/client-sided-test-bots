@@ -8,7 +8,6 @@
 --   - RANK_SPACING: 4.7 studs (side-to-side)
 --   - RANK_DEPTH: 5 studs (front-to-back)
 --   - COMBAT_RANGE: 750 studs (musket attack range)
---   - COMBAT_COOLDOWN: 6.0 seconds between shots
 --
 -- Update Rates:
 --   - Near Rate (NEAR_RATE = 1/20): High frequency snapshots for players < 500 studs
@@ -37,8 +36,8 @@ local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 500       
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local MAX_BOTS      = 31        
-local MAX_COMPANIES = 2 --4
+local MAX_BOTS      = 101        
+local MAX_COMPANIES = 1 --4
 local SPAWN_OFFSET  = 16         
 local COMPANY_GAP   = 15         
 local RANK_SPACING  = 4.7 --5       
@@ -46,9 +45,7 @@ local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
 
-local COMBAT_COOLDOWN = 6.0    -- seconds between shots
 local COMBAT_RANGE    = 750    -- studs
-local COMBAT_INTERVAL = 1   
 
 local WEAPON_IDLE          = 0
 local WEAPON_MAKE_READY    = 1

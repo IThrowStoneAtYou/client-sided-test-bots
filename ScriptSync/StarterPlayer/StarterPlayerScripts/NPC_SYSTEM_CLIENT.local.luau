@@ -284,10 +284,26 @@ end
 -- Single NPC spawn event (sent when an individual NPC is created)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
-		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer, data.companyIndex, data.ownerUserId)
+		registerNpc(
+			data.id, 
+			data.pos,
+			data.yaw,
+			data.teamName,
+			data.isBearer,
+			data.companyIndex,
+			data.ownerUserId
+		)
 	elseif data.Type == "Batch" then
 		for _, entry in ipairs(data.list) do
-			registerNpc(entry.id, entry.pos, entry.yaw, entry.teamName, entry.isBearer, entry.companyIndex, entry.ownerUserId)
+			registerNpc(
+				entry.id,
+				entry.pos,
+				entry.yaw,
+				entry.teamName,
+				entry.isBearer,
+				entry.companyIndex,
+				entry.ownerUserId
+			)
 		end
 	end
 end)
