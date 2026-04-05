@@ -76,7 +76,7 @@ local hud = CompanyHUD.new(function(selectedList)
 	NpcPreview.applyHighlights(replicators, companySlots, selectedList)
 end)
 
-local compass = CompassHUD.new()
+--local compass = CompassHUD.new()
 
 -- ── NPC Registration ──────────────────────────────────────────────────
 -- Creates client-side NPC instances when server announces new NPC
@@ -284,10 +284,26 @@ end
 -- Single NPC spawn event (sent when an individual NPC is created)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
-		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer, data.companyIndex, data.ownerUserId)
+		registerNpc(
+			data.id, 
+			data.pos,
+			data.yaw,
+			data.teamName,
+			data.isBearer,
+			data.companyIndex,
+			data.ownerUserId
+		)
 	elseif data.Type == "Batch" then
 		for _, entry in ipairs(data.list) do
-			registerNpc(entry.id, entry.pos, entry.yaw, entry.teamName, entry.isBearer, entry.companyIndex, entry.ownerUserId)
+			registerNpc(
+				entry.id,
+				entry.pos,
+				entry.yaw,
+				entry.teamName,
+				entry.isBearer,
+				entry.companyIndex,
+				entry.ownerUserId
+			)
 		end
 	end
 end)
@@ -474,6 +490,46 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		return
 	end
 	
+	-- Keyboard shortcuts: 1-4 to select company cards
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		local key = input.KeyCode
+		
+		-- Helper function for number key selection
+		local function handleCompanyKeySelect(companyIndex)
+			-- Don't select if company doesn't exist
+			if not hud._companies or not hud._companies[companyIndex] then return end
+			
+			local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+			if shift then
+				-- Shift+number: toggle
+				hud:toggleSelected(companyIndex)
+			else
+				-- Number: exclusive select, or deselect if already selected
+				local list = hud:getSelectedList()
+				if #list == 1 and list[1] == companyIndex then
+					hud:setSelected(nil)  -- Deselect if clicking same company
+				else
+					hud:setSelected(companyIndex)
+				end
+			end
+		end
+		
+		-- Number keys 1-4 for company selection
+		if key == Enum.KeyCode.One then
+			handleCompanyKeySelect(1)
+			return
+		elseif key == Enum.KeyCode.Two then
+			handleCompanyKeySelect(2)
+			return
+		elseif key == Enum.KeyCode.Three then
+			handleCompanyKeySelect(3)
+			return
+		elseif key == Enum.KeyCode.Four then
+			handleCompanyKeySelect(4)
+			return
+		end
+	end
+	
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		local key = input.KeyCode
 
@@ -497,7 +553,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				
 				local current = bearerMode[compIdx] or BEARER_MODE_CENTER
 				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or  BEARER_MODE_CENTER
-				
 				Network.BearerModeCommand.Fire(compIdx, next)
 				bearerMode[compIdx] = next
 			end
@@ -615,6 +670,20 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
+Network.NpcCompanyStrength.On(function(companyIndex, tickets, isBroken, ownerUserId, brokenTimer, enemyNearby)
+	if ownerUserId ~= localPlayer.UserId then return end
+	hud:setStrength(companyIndex, tickets, isBroken, brokenTimer, enemyNearby)
+end)
+
+Network.NpcBecomeBearer.On(function(shortId)
+	local mu = musketUtils[shortId]
+	if mu then
+		mu:Destroy()
+		musketUtils[shortId] = nil
+	end
+	bearerIds[shortId] = true
+end)
+
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────
 -- This is the heart of the client-side rendering system.
 -- Every frame, it:
@@ -630,7 +699,7 @@ RunService.RenderStepped:Connect(function(dt)
 	local cframes = {}
 
 	-- Update Compass
-	compass:Update(camera.CFrame)
+--compass:Update(camera.CFrame)
 
 	for _, rep in pairs(replicators) do
 		local cf = rep:ComputeCFrame(dt, serverTime)
