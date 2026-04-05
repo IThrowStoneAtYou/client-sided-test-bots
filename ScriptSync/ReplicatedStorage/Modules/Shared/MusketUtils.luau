@@ -30,7 +30,6 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 	self._team       = teamName
 
 	local torso = clientModel:FindFirstChild("Torso")
-		or clientModel:FindFirstChild("UpperTorso")
 	if not torso then
 		warn("[MusketUtils] No torso on:", clientModel.Name)
 		return self
@@ -96,7 +95,9 @@ function MusketUtils:Destroy()
 	for _, track in pairs(self._tracks) do
 		if track then track:Stop() end
 	end
+	
 	self._tracks = {}
+	
 	if self._musket then
 		self._musket:Destroy()
 		self._musket = nil
@@ -200,7 +201,7 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 
 			if result then
 				bullet.CFrame = CFrame.lookAt(result.Position, result.Position + unitDir)
-				print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
+			--	print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
 				bullet:Destroy()
 				return
 			end

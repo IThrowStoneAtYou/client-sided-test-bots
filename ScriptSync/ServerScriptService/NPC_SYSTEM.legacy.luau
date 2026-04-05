@@ -46,6 +46,8 @@ local WEAPON_FIRE          = 5
 local WEAPON_RELOAD_IDLE   = 6
 local WEAPON_RELOAD        = 7
 
+local MUSKET_DAMAGE = 100
+
 local WEAPON_DURATIONS = {
 	[0] = 0,
 	[1] = 1.8,
@@ -182,7 +184,7 @@ local function findNearestEnemy(npc)
 	local nearest = nil
 
 	for _, other in pairs(activeNpcs) do
-		if other ~= npc and not other.IsFlagBearer then
+		if other ~= npc then
 			local otherTeam = other.TeamName
 			if otherTeam and otherTeam ~= myTeam then
 				local otherPos = other.Root and other.Root.Position
@@ -261,6 +263,8 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		RegimentTarget = nil,
 		MoveRetries    = 0,
 		ActiveTween    = nil,
+		
+		Health       = 100,
 
 		-- [FLAG BEARER LOGIC] Track bearer properties
 		IsFlagBearer   = false,
@@ -337,6 +341,8 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 				companyIndex = npc.CompanyIndex,
 				ownerUserId = ownerPlayer and ownerPlayer.UserId or 0,  -- 0 not nil
 			})
+			
+			Network.NpcWeaponState.Fire(player, shortId, WEAPON_IDLE)
 		end
 	end
 
@@ -367,6 +373,84 @@ local function syncCompanies(player: Player)
 		table.sort(data, function(a, b) return a.index < b.index end)
 	end
 	Network.NpcCompanySync.Fire(player, data)
+end
+
+local function killNpc(shortId)
+	local npc = activeNpcs[shortId]
+	if not npc then return end
+
+	for p in pairs(readyPlayers) do
+		Network.NpcDespawn.Fire(p, shortId)
+		if farLastSent[p] then farLastSent[p][shortId] = nil end
+	end
+
+	if npc.Pathfinder then npc.Pathfinder:Destroy() end
+	if npc.Model then npc.Model:Destroy() end
+	activeNpcs[shortId] = nil
+
+	local owner   = npc.CompanyOwner
+	local compIdx = npc.CompanyIndex
+	if not owner or not compIdx then return end
+
+	local comp = companies[owner] and companies[owner][compIdx]
+	if not comp then return end
+
+	-- Remove from slot list
+	for i = #comp.slots, 1, -1 do
+		if comp.slots[i] == shortId then
+			table.remove(comp.slots, i)
+			break
+		end
+	end
+
+	if #comp.slots == 0 then
+		companies[owner][compIdx] = nil
+		syncCompanies(owner)
+		return
+	end
+
+	syncCompanies(owner)
+
+	-- Refill gaps: reassign surviving soldiers to new slot positions
+	local soldierIds = {}
+	for _, sid in ipairs(comp.slots) do
+		local s = activeNpcs[sid]
+		if s and not s.IsFlagBearer then
+			soldierIds[#soldierIds + 1] = sid
+		end
+	end
+
+	local soldierCount = #soldierIds
+	if soldierCount == 0 then return end
+
+	-- Clamp files down if soldiers now fewer than formation width
+	local files = math.min(soldierCount, comp.files)
+	local ranks = math.ceil(soldierCount / files)
+	comp.ranks  = ranks
+	comp.files  = files
+
+	local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, ranks, files)
+
+	for i, sid in ipairs(soldierIds) do
+		local s = activeNpcs[sid]
+		if not s then continue end
+		local targetCF = slots[i]
+		s.RegimentTarget = targetCF.Position
+		s.MoveRetries    = 0
+		task.spawn(function()
+			if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+			s.Pathfinder:Stop()
+			s.Pathfinder:Run(targetCF.Position)
+		end)
+	end
+end
+
+local function applyDamage(targetNpc, damage)
+	if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
+	targetNpc.Health -= damage
+	if targetNpc.Health <= 0 then
+		killNpc(targetNpc.ShortId)
+	end
 end
 
 local function despawnCompany(player: Player, companyIndex: number)
@@ -505,6 +589,12 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 
 					for p in pairs(readyPlayers) do
 						Network.NpcSpawn.Fire(p, { Type = "Batch", list = allSpawnData })
+						
+						for _, spawnData in ipairs(allSpawnData) do
+							if not spawnData.isBearer then
+								Network.NpcWeaponState.Fire(p, spawnData.id, WEAPON_IDLE)
+							end
+						end
 					end
 
 					for idx = 1, companyCount do
@@ -634,9 +724,14 @@ local function setNpcWeaponState(npc, state, targetPos)
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
 	end
 
-	if state == WEAPON_FIRE and targetPos then
-		for p in pairs(readyPlayers) do
-			Network.NpcFire.Fire(p, npc.ShortId, targetPos)
+	if state == WEAPON_FIRE then
+		if targetPos then
+			for p in pairs(readyPlayers) do
+				Network.NpcFire.Fire(p, npc.ShortId, targetPos)
+			end
+		end
+		if npc.WeaponTarget then
+			applyDamage(npc.WeaponTarget, MUSKET_DAMAGE)
 		end
 	end
 end
