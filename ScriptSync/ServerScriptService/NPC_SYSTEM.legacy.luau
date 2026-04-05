@@ -46,7 +46,7 @@ local WEAPON_FIRE          = 5
 local WEAPON_RELOAD_IDLE   = 6
 local WEAPON_RELOAD        = 7
 
-local MUSKET_DAMAGE = 85
+local MUSKET_DAMAGE = 100
 
 local WEAPON_DURATIONS = {
 	[0] = 0,

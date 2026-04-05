@@ -201,7 +201,7 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 
 			if result then
 				bullet.CFrame = CFrame.lookAt(result.Position, result.Position + unitDir)
-				print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
+			--	print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
 				bullet:Destroy()
 				return
 			end
