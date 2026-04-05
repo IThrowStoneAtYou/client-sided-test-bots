@@ -25,7 +25,7 @@ local CULL_RADIUS   = 500
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
 local MAX_BOTS      = 51        
-local MAX_COMPANIES = 4
+local MAX_COMPANIES = 2 --4
 local SPAWN_OFFSET  = 16         
 local COMPANY_GAP   = 15         
 local RANK_SPACING  = 4.7 --5       
@@ -778,20 +778,22 @@ local function processCombat(dt)
 
 		-- tick
 		npc.WeaponTimer -= dt
-		if npc.WeaponTimer > 0 then continue end
 
-		-- validate target on transitions that need it
-		local target    = npc.WeaponTarget
-		local targetPos = target and target.Root and target.Root.Position
-
+		-- update aim every frame regardless of timer
 		if npc.AimAlign.Enabled and npc.WeaponTarget then
-			local targetPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
-			if targetPos then
-				local dir    = (targetPos - npc.Root.Position)
-				dir          = Vector3.new(dir.X, 0, dir.Z).Unit  -- flat, no vertical tilt
+			local aimPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
+			if aimPos then
+				local dir = (aimPos - npc.Root.Position)
+				dir = Vector3.new(dir.X, 0, dir.Z).Unit
 				npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
 			end
 		end
+		
+		if npc.WeaponTimer > 0 then continue end
+		
+		-- validate target on transitions that need it
+		local target    = npc.WeaponTarget
+		local targetPos = target and target.Root and target.Root.Position
 
 		if npc.WeaponState == WEAPON_MAKE_READY then
 			setNpcWeaponState(npc, WEAPON_MAKEREADY_IDLE, nil)
