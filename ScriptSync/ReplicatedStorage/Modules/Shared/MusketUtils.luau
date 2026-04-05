@@ -234,7 +234,7 @@ end
 function MusketUtils:SetCanShoot(state: boolean)
 	self._canShoot = state
 	if not state then
-		self:PlayState()
+		self:PlayState(0)  -- 0 = Idle
 	end
 end
 

@@ -1,6 +1,18 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
 -- Version 3.5.0
+-- Input Handling:
+--   - Click: Places formation at mouse position
+--   - Drag: Creates formation preview, updates as you drag (distance = width)
+--   - Shift+Click: Multi-select companies
+--   - Right-Click: Deselect all
+--
+-- State Management:
+--   - replicators: {shortId → NpcReplicator} for each NPC
+--   - companySlots: {companyIndex → {shortId → true}} membership tracking
+--   - bearerIds: {shortId → true} tracks which NPCs are flag-bearers
+--   - musketUtils: {shortId → MusketUtils} combat/firing system
+--   - npcOwners: {shortId → ownerUserId} tracks who spawned each NPC
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -25,16 +37,18 @@ local COMPANY_GAP  = 8
 local Network = require(game.ReplicatedStorage.Blink.Client)
 
 -- ── State ─────────────────────────────────────────────────────────────
+-- Central state tracking for all NPCs and user interactions
+
 local localPlayer   = Players.LocalPlayer
 local camera        = workspace.CurrentCamera
-local replicators   = {}
-local animators     = {}
-local companySlots  = {}   -- [companyIndex] = { [shortId] = true }
-local lastFormation = {}   -- [companyIndex] = { ranks, files }
-local musketUtils = {}   -- [shortId] = MusketUtils instance
-local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean
-local bearerIds   = {}   -- [shortId] = true
-local npcOwners   = {}   -- [shortId] = ownerUserId (tracks which player spawned this NPC)
+local replicators   = {}   -- [shortId] = NpcReplicator (smooth movement interpolation)
+local animators     = {}   -- [shortId] = NpcAnimator (walk/idle state)
+local companySlots  = {}   -- [companyIndex] = { [shortId] = true } (NPC membership)
+local lastFormation = {}   -- [companyIndex] = { ranks, files } (cached for drag operations)
+local musketUtils = {}   -- [shortId] = MusketUtils instance (combat/weapon)
+local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
+local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
+local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
 
 local BEARER_MODE_CENTER = 0
 local BEARER_MODE_LEFT   = 1
@@ -65,8 +79,13 @@ end)
 local compass = CompassHUD.new()
 
 -- ── NPC Registration ──────────────────────────────────────────────────
+-- Creates client-side NPC instances when server announces new NPC
+
 local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId)
+	-- Abort if already registered
 	if replicators[shortId] then return end
+	
+	-- Clone model template and create replicator for smooth interpolation
 	local clientModel = CLIENT_MODEL:Clone()
 	clientModel.Name = "NPC_" .. shortId
 	local initialCF = buildCFrame(pos, yaw)
@@ -260,7 +279,9 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 end
 
 -- ── Event Handlers ────────────────────────────────────────────────────
+-- Network events from server via Blink
 
+-- Single NPC spawn event (sent when an individual NPC is created)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
 		registerNpc(data.id, data.pos, data.yaw, data.teamName, data.isBearer, data.companyIndex, data.ownerUserId)
@@ -271,6 +292,9 @@ Network.NpcSpawn.On(function(data)
 	end
 end)
 
+-- Batch position update event (unreliable, high frequency: 20/sec near, 4/sec far)
+-- chunk = array of {id, pos, yaw} for multiple NPCs
+-- Used for smooth movement via snapshot interpolation
 Network.NpcBatch.On(function(timestamp, chunk)
 	for _, entry in ipairs(chunk) do
 		local rep = replicators[entry.id]
@@ -309,6 +333,9 @@ Network.NpcDespawn.On(function(shortId)
 	npcOwners[shortId] = nil
 end)
 
+-- Company sync event (reliable: sent when companies change or player joins)
+-- data = array of {index, count, slots{...}, bearers[...]} for each company
+-- Updates HUD counts and resets company membership tracking
 Network.NpcCompanySync.On(function(data)
 	-- Only clear owner entries for the local player's previous NPCs.
 	-- Wiping the whole table also removes other players' NPC owner mappings,
@@ -588,7 +615,15 @@ UserInputService.InputEnded:Connect(function(input)
 	dragDir   = nil
 end)
 
--- ── Central render loop (runs once, drives all replicators) ───────────
+-- ── Central render loop (runs once per frame, drives all replicators) ───────────
+-- This is the heart of the client-side rendering system.
+-- Every frame, it:
+--   1. Computes new CFrame for each NPC via interpolation
+--   2. Updates animator state (walk vs idle) based on velocity
+--   3. Batches all CFrame updates into a single physics call
+-- By collecting all updates first then applying them in a batch,
+-- we minimize physics engine overhead and ensure smooth synchronized rendering.
+--
 RunService.RenderStepped:Connect(function(dt)
 	local serverTime = workspace:GetServerTimeNow()
 	local parts   = {}

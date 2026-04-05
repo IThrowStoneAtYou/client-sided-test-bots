@@ -1,6 +1,19 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_SERVER
 -- Version 3.1.0
+--
+-- Configuration:
+--   - MAX_BOTS: 31 NPCs per game
+--   - MAX_COMPANIES: 2 (can be 4, currently limited to 2)
+--   - RANK_SPACING: 4.7 studs (side-to-side)
+--   - RANK_DEPTH: 5 studs (front-to-back)
+--   - COMBAT_RANGE: 750 studs (musket attack range)
+--   - COMBAT_COOLDOWN: 6.0 seconds between shots
+--
+-- Update Rates:
+--   - Near Rate (NEAR_RATE = 1/20): High frequency snapshots for players < 500 studs
+--   - Far Rate (FAR_RATE = 1/4): Low frequency updates for distant players
+--   - Chunking: Large batches split into 35-unit chunks to avoid network floods
 -->>>>>>>>>>>>
 
 local RunService        = game:GetService("RunService")
@@ -24,8 +37,8 @@ local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 500       
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local MAX_BOTS      = 51        
-local MAX_COMPANIES = 4
+local MAX_BOTS      = 31        
+local MAX_COMPANIES = 2 --4
 local SPAWN_OFFSET  = 16         
 local COMPANY_GAP   = 15         
 local RANK_SPACING  = 4.7 --5       
@@ -87,12 +100,14 @@ local WANDER_MIN    = 8
 local IDLE_TIMEOUT  = 3
 
 -- ── State ─────────────────────────────────────────────────────────────
-local activeNpcs   = {}   
-local nextShortId  = 1
-local readyPlayers = {}   
-local farLastSent  = {}   
-local companies = {}
-local serverCanAttack = {}   -- [player][companyIndex] = boolean
+-- Central runtime state for NPC system
+
+local activeNpcs   = {}   -- [shortId] = npc object {Model, Humanoid, Root, etc.}
+local nextShortId  = 1    -- Counter for unique NPC IDs
+local readyPlayers = {}   -- [player] = true (clients that are loaded and ready)
+local farLastSent  = {}   -- [player][shortId] = last CFrame sent at far rate
+local companies = {}      -- [player][companyIndex] = company object (ranks, files, slots, bearers)
+local serverCanAttack = {}   -- [player][companyIndex] = boolean (server-tracked combat state)
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -778,20 +793,22 @@ local function processCombat(dt)
 
 		-- tick
 		npc.WeaponTimer -= dt
-		if npc.WeaponTimer > 0 then continue end
 
-		-- validate target on transitions that need it
-		local target    = npc.WeaponTarget
-		local targetPos = target and target.Root and target.Root.Position
-
+		-- update aim every frame regardless of timer
 		if npc.AimAlign.Enabled and npc.WeaponTarget then
-			local targetPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
-			if targetPos then
-				local dir    = (targetPos - npc.Root.Position)
-				dir          = Vector3.new(dir.X, 0, dir.Z).Unit  -- flat, no vertical tilt
+			local aimPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
+			if aimPos then
+				local dir = (aimPos - npc.Root.Position)
+				dir = Vector3.new(dir.X, 0, dir.Z).Unit
 				npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
 			end
 		end
+		
+		if npc.WeaponTimer > 0 then continue end
+		
+		-- validate target on transitions that need it
+		local target    = npc.WeaponTarget
+		local targetPos = target and target.Root and target.Root.Position
 
 		if npc.WeaponState == WEAPON_MAKE_READY then
 			setNpcWeaponState(npc, WEAPON_MAKEREADY_IDLE, nil)
@@ -825,6 +842,18 @@ local function processCombat(dt)
 end
 
 -- ── Broadcast Loop ────────────────────────────────────────────────────
+-- Server heartbeat that handles two main systems:
+--  1. COMBAT: Processes NPC-to-NPC targeting and shooting
+--  2. NETWORK BROADCAST: Sends position updates at dual rates
+--
+-- Update Rates:
+--   - Near Rate (1/20 = 50ms): Detailed snapshots to players < 500 studs away
+--   - Far Rate (1/4 = 250ms): Sparse updates to distant players
+--
+-- Optimization:
+--   Uses accumulated deltas (nearAccum, farAccum) to skip checks between ticks
+--   Large NPC batches are chunked (35 units per chunk) to avoid network limits
+--
 local nearAccum = 0
 local farAccum  = 0
 
