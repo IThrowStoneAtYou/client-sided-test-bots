@@ -265,6 +265,9 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		ActiveTween    = nil,
 		
 		Health       = 100,
+		
+		AimAttachment = root:WaitForChild("RootAttachment"),
+		AimAlign      = root:WaitForChild("AlignOrientation"),
 
 		-- [FLAG BEARER LOGIC] Track bearer properties
 		IsFlagBearer   = false,
@@ -715,10 +718,16 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 
 -- ── Combat Loop ─────────────────────────────────────────────────────────
-
 local function setNpcWeaponState(npc, state, targetPos)
 	npc.WeaponState = state
 	npc.WeaponTimer = WEAPON_DURATIONS[state] or 0
+
+	-- AlignOrientation gating
+	if state == WEAPON_TO_AIM then
+		npc.AimAlign.Enabled = true
+	elseif state == WEAPON_FIRE or state == WEAPON_IDLE then
+		npc.AimAlign.Enabled = false
+	end
 
 	for p in pairs(readyPlayers) do
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
@@ -774,6 +783,15 @@ local function processCombat(dt)
 		-- validate target on transitions that need it
 		local target    = npc.WeaponTarget
 		local targetPos = target and target.Root and target.Root.Position
+
+		if npc.AimAlign.Enabled and npc.WeaponTarget then
+			local targetPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
+			if targetPos then
+				local dir    = (targetPos - npc.Root.Position)
+				dir          = Vector3.new(dir.X, 0, dir.Z).Unit  -- flat, no vertical tilt
+				npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
+			end
+		end
 
 		if npc.WeaponState == WEAPON_MAKE_READY then
 			setNpcWeaponState(npc, WEAPON_MAKEREADY_IDLE, nil)
