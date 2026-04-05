@@ -1,11 +1,15 @@
+-->>>>>>>>>>>>
+-- MUSKET_UTILS
+-- Version 1.0.0
+-->>>>>>>>>>>>
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MUSKET_TEMPLATE = ReplicatedStorage.AnimShared.Npc.Item.Musket:WaitForChild("Musket")
 local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musket")
 
 local BULLET_SPEED    = 350  -- studs per second
-local BULLET_DIAMETER = 0.12
-local BULLET_SPREAD   = 3    -- degrees, cone spread angle
+local BULLET_SPREAD   = 2.5    -- degrees, cone spread angle
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",
@@ -30,6 +34,7 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 	self._team       = teamName
 
 	local torso = clientModel:FindFirstChild("Torso")
+		or clientModel:FindFirstChild("UpperTorso")
 	if not torso then
 		warn("[MusketUtils] No torso on:", clientModel.Name)
 		return self
@@ -68,10 +73,8 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 			warn("[MusketUtils] Missing anim:", name)
 			return nil
 		end
-		
 		local track = animator:LoadAnimation(anim)
 		track.Priority = Enum.AnimationPriority.Action2
-		
 		return track
 	end
 
@@ -95,9 +98,7 @@ function MusketUtils:Destroy()
 	for _, track in pairs(self._tracks) do
 		if track then track:Stop() end
 	end
-	
 	self._tracks = {}
-	
 	if self._musket then
 		self._musket:Destroy()
 		self._musket = nil
@@ -137,7 +138,6 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 		cf = cf * CFrame.Angles(randomPitch, randomYaw, 0)
 		unitDir = cf.LookVector
 	end
-	
 	local traveled = 0
 
 	local bullet = Instance.new("Part")
@@ -234,7 +234,7 @@ end
 function MusketUtils:SetCanShoot(state: boolean)
 	self._canShoot = state
 	if not state then
-		self:PlayState(0)  -- 0 = Idle
+		self:PlayState()
 	end
 end
 
