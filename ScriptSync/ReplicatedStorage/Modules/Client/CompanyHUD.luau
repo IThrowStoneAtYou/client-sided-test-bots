@@ -484,15 +484,10 @@ function CompanyHUD:_createGlobalInfoPanel()
 	panel.ZIndex = 10
 	panel.Parent = self._gui
 
-	local corner = Instance.new("UICorner")
-	corner.Name         = "Corner"
-	corner.CornerRadius = UDim.new(0, 9)
-	corner.Parent = panel
-
 	local stroke = Instance.new("UIStroke")
 	stroke.Name         = "Stroke"
 	stroke.Color = Color3.fromRGB(255, 255, 255)
-	stroke.Thickness = 3.5
+	stroke.Thickness = 2.2
 	stroke.Transparency = 0
 	stroke.Parent = panel
 	self._globalStroke = stroke
