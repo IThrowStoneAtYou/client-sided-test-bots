@@ -457,6 +457,8 @@ end
 local function replaceBearer(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
+	-- Skip if company is completely empty or only has bearer
+	if not comp.slots or #comp.slots < 2 then return end
 
 	comp.bearerRespawnGate = true
 
@@ -514,6 +516,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	end)
 
 	-- Remaining soldiers fill formation gap
+	-- Only process if there are soldiers left
 	local soldierIds = {}
 	for _, sid in ipairs(comp.slots) do
 		local s = activeNpcs[sid]
@@ -524,12 +527,10 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 
 	local soldierCount = #soldierIds
 	if soldierCount > 0 and comp.anchorCF then
-		-- Use original formation dimensions, never shrink them
+		-- Use original formation dimensions - DO NOT recalculate ranks
+		-- Preserve the exact formation shape from when orderCompany was called
 		local files = comp.originalFiles or comp.files
 		local ranks = comp.originalRanks or comp.ranks
-		-- Clamp only if soldiers fewer than files (can't have empty columns)
-		files = math.min(soldierCount, files)
-		ranks = math.ceil(soldierCount / files)
 		local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, ranks, files)
 		for i, sid in ipairs(soldierIds) do
 			local s = activeNpcs[sid]
@@ -589,8 +590,7 @@ local function killNpc(shortId)
 		comp.savedBearerPacing = npc.IsPacing   or false
 		
 		replaceBearer(owner, compIdx, deadPos)
-		syncCompanies(owner)
-		return
+		-- Fall through to queue respawn - bearers must also be respawned!
 	end
 
 	-- Ticket deduction
@@ -623,6 +623,7 @@ local function killNpc(shortId)
 	end
 
 	local soldierCount = #soldierIds
+	-- Only fill gaps if soldiers exist
 	if soldierCount > 0 and comp.anchorCF then
 		-- Keep original formation layout - don't recalculate ranks/files
 		-- Just fill slots with remaining soldiers using existing formation dimensions
@@ -697,6 +698,8 @@ end
 local function flushRespawnQueue(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
+	-- Skip if company is completely empty
+	if not comp.slots or #comp.slots == 0 then return end
 	if comp.isBroken then return end
 	if comp.bearerRespawnGate then return end
 	if comp.isRespawning then return end  -- serialization lock
@@ -744,7 +747,7 @@ local function flushRespawnQueue(player, companyIndex)
 
 			table.insert(c.slots, npc.ShortId)
 
-			-- Reassign formation using original dimensions
+			-- Reassign formation using original dimensions (preserved from spawn)
 			local soldierIds = {}
 			for _, sid in ipairs(c.slots) do
 				local s = activeNpcs[sid]
@@ -755,8 +758,9 @@ local function flushRespawnQueue(player, companyIndex)
 
 			local soldierCount = #soldierIds
 			if soldierCount > 0 and c.anchorCF then
-				local files = math.min(soldierCount, c.originalFiles or c.files)
-				local ranks = math.ceil(soldierCount / files)
+				-- Use ORIGINAL ranks/files, not recalculated
+				local ranks = c.originalRanks or c.ranks
+				local files = c.originalFiles or c.files
 				local slots = RegimentFormation.getSlots(c.anchorCF, soldierCount, ranks, files)
 				for j, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
@@ -939,6 +943,8 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	local playerCompanies = companies[player]
 	local company = playerCompanies[companyIndex]
 	if not company then return end
+	-- Skip if company is completely empty
+	if not company.slots or #company.slots == 0 then return end
 
 	local flat = Vector3.new(facingDir.X, 0, facingDir.Z)
 	if flat.Magnitude < 0.01 then return end
@@ -991,9 +997,12 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		end)
 	end
 
-	company.anchorCF = anchorCF
-	company.ranks    = ranks
-	company.files    = files
+	company.anchorCF     = anchorCF
+	company.ranks        = ranks
+	company.files        = files
+	-- Store original dimensions so respawns/deaths preserve formation shape
+	company.originalRanks = ranks
+	company.originalFiles = files
 end
 
 Players.PlayerRemoving:Connect(function(player)
@@ -1053,6 +1062,9 @@ end
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
 		for compIdx, comp in pairs(playerCompanies) do
+			-- Disable all processing if company is completely wiped out
+			if not comp.slots or #comp.slots == 0 then continue end
+			
 			if comp.isBroken then
 				if comp.brokenTimer > 0 then
 					comp.brokenTimer = math.max(0, comp.brokenTimer - dt)

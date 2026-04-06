@@ -7,9 +7,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MUSKET_TEMPLATE = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Musket")
 local ANIM_FOLDER     = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Musket")
+local SOUND_PATH      = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Sounds"):WaitForChild("Fire")
 
 local BULLET_SPEED    = 350  -- studs per second
-local BULLET_SPREAD   = 2.5    -- degrees, cone spread angle
+local BULLET_SPREAD   = 4.3    -- degrees, cone spread angle
+local SOUND_DISTANCE_THRESHOLD = 150  -- studs (from camera)
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",
@@ -88,6 +90,28 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 		ReloadIdle    = load("ReloadIdle"),
 		Reload        = load("Reload"),
 	}
+
+	-- Load fire sounds from Close and Far folders
+	local closeSounds = {}
+	local farSounds = {}
+	
+	if SOUND_PATH:FindFirstChild("Close") then
+		for _, sound in pairs(SOUND_PATH.Close:GetChildren()) do
+			if sound:IsA("Sound") then
+				table.insert(closeSounds, sound)
+			end
+		end
+		self._closeSounds = closeSounds
+	end
+	
+	if SOUND_PATH:FindFirstChild("Far") then
+		for _, sound in pairs(SOUND_PATH.Far:GetChildren()) do
+			if sound:IsA("Sound") then
+				table.insert(farSounds, sound)
+			end
+		end
+		self._farSounds = farSounds
+	end
 
 	self._humanoid = humanoid
 	return self
@@ -238,9 +262,41 @@ function MusketUtils:SetCanShoot(state: boolean)
 	end
 end
 
+function MusketUtils:_playFireSound()
+	-- Determine which sound set to use based on camera distance
+	local camera = workspace.CurrentCamera
+	local npcPos = self._model:FindFirstChild("HumanoidRootPart")
+	if not camera or not npcPos then return end
+	
+	local cameraPos = camera.CFrame.Position
+	local distToCamera = (npcPos.Position - cameraPos).Magnitude
+	
+	-- Choose sound set based on distance threshold
+	local soundSet = (distToCamera < SOUND_DISTANCE_THRESHOLD) and self._closeSounds or self._farSounds
+	
+	if not soundSet or #soundSet == 0 then return end
+	
+	-- Pick a random sound from the appropriate set
+	local soundTemplate = soundSet[math.random(1, #soundSet)]
+	if not soundTemplate then return end
+	
+	-- Clone and play the sound
+	local sound = soundTemplate:Clone()
+	sound.Parent = npcPos
+	sound:Play()
+	
+	-- Clean up the sound after it finishes
+	local connection
+	connection = sound.Ended:Connect(function()
+		sound:Destroy()
+		connection:Disconnect()
+	end)
+end
+
 function MusketUtils:PlayFire(targetPos: Vector3)
 	if not self._canShoot or self._destroyed then return end
 	self:FaceTarget(targetPos)
+	self:_playFireSound()
 	self:_fireBullet(targetPos)
 end
 
