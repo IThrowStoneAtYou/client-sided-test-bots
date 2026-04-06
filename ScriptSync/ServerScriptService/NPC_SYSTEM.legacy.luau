@@ -420,6 +420,7 @@ local function isEnemyBearerNearby(player, companyIndex)
 			break
 		end
 	end
+
 	if not ourBearerPos then return false end
 
 	for otherPlayer, otherComps in pairs(companies) do
@@ -442,6 +443,7 @@ end
 local function broadcastStrength(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
+
 	local enemyNear = isEnemyBearerNearby(player, companyIndex)
 	for p in pairs(readyPlayers) do
 		Network.NpcCompanyStrength.Fire(
@@ -460,6 +462,7 @@ end
 local function replaceBearer(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
+
 	-- Skip if company is completely empty or only has bearer
 	if not comp.slots or #comp.slots < 2 then return end
 
@@ -495,6 +498,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 
 	-- Promote to bearer
 	chosenNpc.IsFlagBearer   = true
+
 	-- Use saved bearer mode from dead bearer (or default to CENTER)
 	chosenNpc.BearerMode     = comp.savedBearerMode or BEARER_MODE_CENTER
 	chosenNpc.IsPacing       = comp.savedBearerPacing or false
@@ -512,8 +516,13 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	-- Path to old bearer position immediately
 	chosenNpc.RegimentTarget = deadBearerPos
 	chosenNpc.MoveRetries    = 0
+
 	task.spawn(function()
-		if chosenNpc.ActiveTween then chosenNpc.ActiveTween:Cancel() chosenNpc.ActiveTween = nil end
+		if chosenNpc.ActiveTween then 
+			chosenNpc.ActiveTween:Cancel()
+			chosenNpc.ActiveTween = nil
+		end
+
 		chosenNpc.Pathfinder:Stop()
 		chosenNpc.Pathfinder:Run(deadBearerPos)
 	end)
@@ -540,6 +549,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 			if not s then continue end
 			s.RegimentTarget = slots[i].Position
 			s.MoveRetries    = 0
+
 			task.spawn(function()
 				if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
 				s.Pathfinder:Stop()
@@ -554,7 +564,6 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 		end
 	end)
 end
-
 
 local function killNpc(shortId)
 	local npc = activeNpcs[shortId]
