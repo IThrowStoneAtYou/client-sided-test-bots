@@ -5,8 +5,8 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local MUSKET_TEMPLATE = ReplicatedStorage.AnimShared.Npc.Item.Musket:WaitForChild("Musket")
-local ANIM_FOLDER     = ReplicatedStorage.AnimShared.Npc.Item:WaitForChild("Musket")
+local MUSKET_TEMPLATE = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Musket")
+local ANIM_FOLDER     = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Musket")
 
 local BULLET_SPEED    = 350  -- studs per second
 local BULLET_SPREAD   = 2.5    -- degrees, cone spread angle
@@ -175,7 +175,7 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 		NumberSequenceKeypoint.new(1, 1),
 	})
 	trail.WidthScale    = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0, 0.15),
 		NumberSequenceKeypoint.new(1, 0),
 	})
 	trail.Parent        = bullet

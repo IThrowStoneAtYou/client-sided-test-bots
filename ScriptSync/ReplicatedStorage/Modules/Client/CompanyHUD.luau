@@ -260,6 +260,7 @@ function CompanyHUD:setStrength(index: number, tickets: number, isBroken: boolea
 	}
 
 	self:_refreshCard(index)
+	self:_updateCardFlashing(index, isBroken)
 
 	local selected = self:getSelectedList()
 	if #selected == 1 and selected[1] == index then
@@ -296,6 +297,44 @@ function CompanyHUD:_refreshCard(i: number)
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()
 end
 
+-- Updates card flashing when company becomes broken
+function CompanyHUD:_updateCardFlashing(index: number, isBroken: boolean)
+	local cd = self._cards[index]
+	if not cd then return end
+	
+	-- Cancel any existing flash tween
+	if cd.flashTween then
+		cd.flashTween:Cancel()
+		cd.flashTween = nil
+	end
+	
+	if isBroken then
+		-- Start flashing animation: alternate between normal and darker red
+		local function startFlash()
+			local flashTween = TweenService:Create(
+				cd.stroke,
+				TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+				{ Transparency = 0.3 }
+			)
+			flashTween:Play()
+			flashTween.Completed:Connect(function()
+				if cd.flashTween then  -- Still flashing
+					local flashTween2 = TweenService:Create(
+						cd.stroke,
+						TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+						{ Transparency = 0 }
+					)
+					flashTween2:Play()
+					flashTween2.Completed:Connect(startFlash)
+					cd.flashTween = flashTween2
+				end
+			end)
+			cd.flashTween = flashTween
+		end
+		startFlash()
+	end
+end
+
 -- Creates a single company card (no info panel inside)
 function CompanyHUD:_createCard(index: number)
 	local accent     = COMPANY_COLORS[index]
@@ -312,11 +351,6 @@ function CompanyHUD:_createCard(index: number)
 	card.Visible                = false
 	card.Parent                 = self._gui
 
-	local corner = Instance.new("UICorner")
-	corner.Name         = "Corner"
-	corner.CornerRadius = UDim.new(0, 9)
-	corner.Parent = card
-
 	local stroke = Instance.new("UIStroke")
 	stroke.Name         = "Stroke"
 	stroke.Color        = accent
@@ -324,27 +358,6 @@ function CompanyHUD:_createCard(index: number)
 	stroke.Transparency = 0.6
 	stroke.Parent       = card
 
-	local bar = Instance.new("Frame")
-	bar.Name             = "AccentBar"
-	bar.Size             = UDim2.new(1, 0, 0, 7)
-	bar.BackgroundColor3 = accent
-	bar.BorderSizePixel  = 0
-	bar.ZIndex           = 2
-	bar.Parent           = card
-
-	local barCorner = Instance.new("UICorner")
-	barCorner.Name         = "BarCorner"
-	barCorner.CornerRadius = UDim.new(0, 9)
-	barCorner.Parent = bar
-
-	local barFill = Instance.new("Frame")
-	barFill.Name             = "BarFill"
-	barFill.Size             = UDim2.new(1, 0, 0, 5)
-	barFill.Position         = UDim2.new(0, 0, 1, -5)
-	barFill.BackgroundColor3 = accent
-	barFill.BorderSizePixel  = 0
-	barFill.ZIndex           = 2
-	barFill.Parent           = bar
 
 	local compTitle = Instance.new("TextLabel")
 	compTitle.Name               = "Title"
@@ -423,6 +436,7 @@ function CompanyHUD:_createCard(index: number)
 		hovered    = false,
 		raisedPos  = raisedPos,
 		restingPos = restingPos,
+		flashTween = nil,
 	}
 	self._cards[index] = cd
 
@@ -700,10 +714,23 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 	local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
 	self._strengthValue.Text = tostring(tickets)
 	self._strengthFill.Size  = UDim2.new(ratio, 0, 1, 0)
-	-- Color: green when healthy, red when low
-	local r = math.clamp(1 - ratio, 0, 1)
-	local g = math.clamp(ratio, 0, 1)
-	self._strengthFill.BackgroundColor3 = Color3.new(r * 0.8 + 0.2, g * 0.6, 0.1)
+	
+	-- Color gradient: Blue (full) → Orange (medium) → Red (low)
+	local color
+	if ratio >= 0.5 then
+		-- Interpolate from Orange to Blue
+		local t = (ratio - 0.5) * 2  -- normalize 0.5-1.0 to 0-1
+		local orange = Color3.fromRGB(255, 140, 0)
+		local blue = Color3.fromRGB(0, 120, 220)
+		color = orange:Lerp(blue, t)
+	else
+		-- Interpolate from Red to Orange
+		local t = ratio * 2  -- normalize 0-0.5 to 0-1
+		local red = Color3.fromRGB(200, 50, 50)
+		local orange = Color3.fromRGB(255, 140, 0)
+		color = red:Lerp(orange, t)
+	end
+	self._strengthFill.BackgroundColor3 = color
 
 	-- Morale bar (placeholder)
 	self._moraleValue.Text = "no worky"

@@ -611,7 +611,8 @@ local function killNpc(shortId)
 	end
 
 	-- Always queue respawn, whether company is broken or not
-	comp.respawnQueue += 1
+	if not comp.respawnQueue then comp.respawnQueue = {} end
+	table.insert(comp.respawnQueue, os.clock())
 
 	syncCompanies(owner)
 
@@ -702,7 +703,7 @@ local function flushRespawnQueue(player, companyIndex)
 	if not comp then print("[RESPAWN] No company found") return end
 	if comp.isBroken then print("[RESPAWN] Company broken") return end
 	if comp.bearerRespawnGate then print("[RESPAWN] Gate locked") return end
-	if comp.respawnQueue <= 0 then print("[RESPAWN] Queue empty:", comp.respawnQueue) return end
+	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
 	if isEnemyBearerNearby(player, companyIndex) then print("[RESPAWN] Enemies nearby") return end
 
 	local bearerPos = nil
@@ -715,12 +716,26 @@ local function flushRespawnQueue(player, companyIndex)
 	end
 	if not bearerPos then print("[RESPAWN] No bearer found") return end
 
-	print("[RESPAWN] Flushing queue, count:", comp.respawnQueue)
+	-- Process respawns that are ready (3 second delay after death)
+	local currentTime = os.clock()
+	local RESPAWN_DELAY = 3
+	local toSpawn = {}
+	local stillWaiting = {}
 
-	local count = comp.respawnQueue
-	comp.respawnQueue = 0
+	for _, deathTime in ipairs(comp.respawnQueue) do
+		if currentTime - deathTime >= RESPAWN_DELAY then
+			table.insert(toSpawn, deathTime)
+		else
+			table.insert(stillWaiting, deathTime)
+		end
+	end
 
-	for _ = 1, count do
+	comp.respawnQueue = stillWaiting
+
+	if #toSpawn == 0 then return end
+	print("[RESPAWN] Flushing queue, count:", #toSpawn)
+
+	for _ = 1, #toSpawn do
 		task.spawn(function()
 			local offset = Vector3.new(math.random(-3, 3), 4, math.random(-3, 3))
 			local spawnCF = CFrame.new(bearerPos + offset)
@@ -895,20 +910,20 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							tickets              = MAX_TICKETS,
 							isBroken             = false,
 							brokenTimer          = 0,
-							respawnQueue         = 0,
-							regenAccum           = 0,
-							decayAccum           = 0,
-							brokenBroadcastAccum = 0,
-							bearerRespawnGate    = false,
-						}
-						
-						serverCanAttack[player] = serverCanAttack[player] or {}
-						serverCanAttack[player][idx] = true
-						broadcastCanAttackState(player, idx, true)   -- <-- add this line
-					end
-
-					syncCompanies(player)
+						respawnQueue         = {},
+						regenAccum           = 0,
+						decayAccum           = 0,
+						brokenBroadcastAccum = 0,
+						bearerRespawnGate    = false,
+					}
+					
+					serverCanAttack[player] = serverCanAttack[player] or {}
+					serverCanAttack[player][idx] = true
+					broadcastCanAttackState(player, idx, true)
 				end
+
+				syncCompanies(player)
+			end
 			end)
 		end
 	end
@@ -916,8 +931,6 @@ end
 
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
-	if not playerCompanies then return end
-
 	local company = playerCompanies[companyIndex]
 	if not company then return end
 
@@ -1085,7 +1098,7 @@ local function processTickets(dt)
 				end
 
 				-- Flush respawn queue
-				if comp.respawnQueue > 0 then
+				if comp.respawnQueue and #comp.respawnQueue > 0 then
 					flushRespawnQueue(player, compIdx)
 				end
 			end
