@@ -524,10 +524,12 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 
 	local soldierCount = #soldierIds
 	if soldierCount > 0 and comp.anchorCF then
-		local files = math.min(soldierCount, comp.files)
-		local ranks = math.ceil(soldierCount / files)
-		comp.ranks = ranks
-		comp.files = files
+		-- Use original formation dimensions, never shrink them
+		local files = comp.originalFiles or comp.files
+		local ranks = comp.originalRanks or comp.ranks
+		-- Clamp only if soldiers fewer than files (can't have empty columns)
+		files = math.min(soldierCount, files)
+		ranks = math.ceil(soldierCount / files)
 		local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, ranks, files)
 		for i, sid in ipairs(soldierIds) do
 			local s = activeNpcs[sid]
@@ -581,15 +583,10 @@ local function killNpc(shortId)
 	end
 
 	if wasBearer then
-		-- Save dead bearer's mode so new bearer continues in same mode
-		local deadNpc = activeNpcs[shortId]
-		if deadNpc then
-			comp.savedBearerMode = deadNpc.BearerMode or BEARER_MODE_CENTER
-			comp.savedBearerPacing = deadNpc.IsPacing or false
-		else
-			comp.savedBearerMode = BEARER_MODE_CENTER
-			comp.savedBearerPacing = false
-		end
+		-- npc is still valid here, activeNpcs[shortId] was already cleared above
+		-- so read directly from the local npc reference captured at top of killNpc
+		comp.savedBearerMode   = npc.BearerMode or BEARER_MODE_CENTER
+		comp.savedBearerPacing = npc.IsPacing   or false
 		
 		replaceBearer(owner, compIdx, deadPos)
 		syncCompanies(owner)
@@ -699,12 +696,12 @@ end
 
 local function flushRespawnQueue(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
-
-	if not comp then print("[RESPAWN] No company found") return end
-	if comp.isBroken then print("[RESPAWN] Company broken") return end
-	if comp.bearerRespawnGate then print("[RESPAWN] Gate locked") return end
+	if not comp then return end
+	if comp.isBroken then return end
+	if comp.bearerRespawnGate then return end
+	if comp.isRespawning then return end  -- serialization lock
 	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
-	if isEnemyBearerNearby(player, companyIndex) then print("[RESPAWN] Enemies nearby") return end
+	if isEnemyBearerNearby(player, companyIndex) then return end
 
 	local bearerPos = nil
 	for _, sid in ipairs(comp.slots) do
@@ -714,44 +711,42 @@ local function flushRespawnQueue(player, companyIndex)
 			break
 		end
 	end
-	if not bearerPos then print("[RESPAWN] No bearer found") return end
+	if not bearerPos then return end
 
-	-- Process respawns that are ready (3 second delay after death)
 	local currentTime = os.clock()
 	local RESPAWN_DELAY = 3
-	local toSpawn = {}
-	local stillWaiting = {}
 
-	for _, deathTime in ipairs(comp.respawnQueue) do
+	-- Find oldest entry that is ready
+	local readyIndex = nil
+	for i, deathTime in ipairs(comp.respawnQueue) do
 		if currentTime - deathTime >= RESPAWN_DELAY then
-			table.insert(toSpawn, deathTime)
-		else
-			table.insert(stillWaiting, deathTime)
+			readyIndex = i
+			break
 		end
 	end
+	if not readyIndex then return end
 
-	comp.respawnQueue = stillWaiting
+	-- Remove this entry and lock
+	table.remove(comp.respawnQueue, readyIndex)
+	comp.isRespawning = true
 
-	if #toSpawn == 0 then return end
-	print("[RESPAWN] Flushing queue, count:", #toSpawn)
+	task.spawn(function()
+		local offset  = Vector3.new(math.random(-3, 3), 4, math.random(-3, 3))
+		local spawnCF = CFrame.new(bearerPos + offset)
+		local npc, data = spawnNpc(spawnCF, true, player)
 
-	for _ = 1, #toSpawn do
-		task.spawn(function()
-			local offset = Vector3.new(math.random(-3, 3), 4, math.random(-3, 3))
-			local spawnCF = CFrame.new(bearerPos + offset)
-			local npc, data = spawnNpc(spawnCF, true, player)
-			if not npc then return end
-
+		if npc and companies[player] and companies[player][companyIndex] then
+			local c = companies[player][companyIndex]
 			npc.IsRegiment   = true
 			npc.CompanyOwner = player
 			npc.CompanyIndex = companyIndex
-			npc.RegimentFacing = comp.anchorCF and comp.anchorCF.LookVector or Vector3.new(0, 0, -1)
+			npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0, 0, -1)
 
-			table.insert(comp.slots, npc.ShortId)
+			table.insert(c.slots, npc.ShortId)
 
-			-- Reassign formation slots
+			-- Reassign formation using original dimensions
 			local soldierIds = {}
-			for _, sid in ipairs(comp.slots) do
+			for _, sid in ipairs(c.slots) do
 				local s = activeNpcs[sid]
 				if s and not s.IsFlagBearer then
 					soldierIds[#soldierIds + 1] = sid
@@ -759,14 +754,15 @@ local function flushRespawnQueue(player, companyIndex)
 			end
 
 			local soldierCount = #soldierIds
-			if soldierCount > 0 and comp.anchorCF then
-				-- Keep original formation layout - don't recalculate ranks/files
-				local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, comp.ranks, comp.files)
+			if soldierCount > 0 and c.anchorCF then
+				local files = math.min(soldierCount, c.originalFiles or c.files)
+				local ranks = math.ceil(soldierCount / files)
+				local slots = RegimentFormation.getSlots(c.anchorCF, soldierCount, ranks, files)
 				for j, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
 					s.RegimentTarget = slots[j].Position
-					s.MoveRetries = 0
+					s.MoveRetries    = 0
 					task.spawn(function()
 						if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
 						s.Pathfinder:Stop()
@@ -790,8 +786,13 @@ local function flushRespawnQueue(player, companyIndex)
 			end
 
 			syncCompanies(player)
-		end)
-	end
+		end
+
+		-- Unlock — next heartbeat will process the next queued death
+		if companies[player] and companies[player][companyIndex] then
+			companies[player][companyIndex].isRespawning = false
+		end
+	end)
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
@@ -910,11 +911,16 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							tickets              = MAX_TICKETS,
 							isBroken             = false,
 							brokenTimer          = 0,
-						respawnQueue         = {},
-						regenAccum           = 0,
-						decayAccum           = 0,
-						brokenBroadcastAccum = 0,
-						bearerRespawnGate    = false,
+							respawnQueue         = {},
+							regenAccum           = 0,
+							decayAccum           = 0,
+							brokenBroadcastAccum = 0,
+							bearerRespawnGate    = false,
+							
+							isRespawning         = false,
+							
+							originalRanks        = ranks,
+							originalFiles        = files,
 					}
 					
 					serverCanAttack[player] = serverCanAttack[player] or {}
