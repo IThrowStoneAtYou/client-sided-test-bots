@@ -553,6 +553,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				
 				local current = bearerMode[compIdx] or BEARER_MODE_CENTER
 				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or  BEARER_MODE_CENTER
+				
 				Network.BearerModeCommand.Fire(compIdx, next)
 				bearerMode[compIdx] = next
 			end

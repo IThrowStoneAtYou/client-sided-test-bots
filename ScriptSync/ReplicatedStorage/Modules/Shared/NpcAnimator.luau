@@ -10,7 +10,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- ── Shared Animation objects (loaded once, reused across all instances) ──
-local Animations = ReplicatedStorage.AnimShared.Npc:WaitForChild("Movement")
+local Animations = ReplicatedStorage.Shared.Npc:WaitForChild("Movement")
 local ANIM_IDLE  = Animations:WaitForChild("idle")
 local ANIM_WALK  = Animations:WaitForChild("walk")
 
