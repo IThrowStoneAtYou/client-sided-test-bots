@@ -46,17 +46,20 @@ local FLAG_OFFSET_Z = 8
 local MOVE_RETRIES  = 2 
 
 local MAX_TICKETS            = 150
-local TICKET_REGEN_RATE      = 4
-local TICKET_REGEN_INTERVAL  = 4.5
+local TICKET_REGEN_RATE      = 8
+local TICKET_REGEN_INTERVAL  = 5
+
 local TICKET_DECAY_RATE      = 6
 local TICKET_DECAY_INTERVAL  = 5
+
 local TICKET_COST_STATIONARY = 2
 local TICKET_COST_MOVING     = 4
+
 local BROKEN_RECOVERY_TIME   = 20
-local BEARER_NEARBY_RADIUS   = 65
+local BEARER_NEARBY_RADIUS   = 120
 local BEARER_REPLACE_DELAY   = 3
 
-local COMBAT_RANGE    = 500    -- studs
+local COMBAT_RANGE    = 450    -- studs
 
 local WEAPON_IDLE          = 0
 local WEAPON_MAKE_READY    = 1

@@ -736,6 +736,7 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 		-- Red (low strength)
 		color = Color3.fromRGB(200, 50, 50)
 	end
+	
 	self._strengthFill.BackgroundColor3 = color
 
 	-- Morale bar (placeholder)
