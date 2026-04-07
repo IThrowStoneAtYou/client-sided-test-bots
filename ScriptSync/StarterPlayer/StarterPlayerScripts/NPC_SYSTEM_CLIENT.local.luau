@@ -50,6 +50,19 @@ local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
 local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
 local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
 
+local meleeMode = {}  -- [companyIndex] = boolean
+
+local meleeRayParams = RaycastParams.new()
+meleeRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function updateMeleeRayFilter()
+	local list = {}
+	if localPlayer.Character then table.insert(list, localPlayer.Character) end
+	meleeRayParams.FilterDescendantsInstances = list
+end
+updateMeleeRayFilter()
+localPlayer.CharacterAdded:Connect(updateMeleeRayFilter)
+
 local BEARER_MODE_CENTER = 0
 local BEARER_MODE_LEFT   = 1
 local BEARER_MODE_RIGHT  = 2
@@ -398,6 +411,13 @@ Network.NpcCompanySync.On(function(data)
 		companySlots[entry.index] = slotSet
 	end
 
+	-- Clear stale meleeMode entries for companies that no longer exist
+	for compIdx in pairs(meleeMode) do
+		if not companySlots[compIdx] then
+			meleeMode[compIdx] = nil
+		end
+	end
+
 	hud:syncCompanies(data)
 	NpcPreview.applyHighlights(replicators, companySlots, hud:getSelectedList())
 end)
@@ -568,6 +588,27 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				Network.NpcCanAttackToggle.Fire(compIdx)
 			--	print("client 2")
 			end
+			
+		elseif key == Enum.KeyCode.T then
+			print("t yes")
+			local selectedList = hud:getSelectedList()
+			if #selectedList == 0 then return end
+			print(selectedList)
+			for _, compIdx in ipairs(selectedList) do
+				if not companySlots[compIdx] then continue end
+				local newMelee = not meleeMode[compIdx]
+				meleeMode[compIdx] = newMelee
+				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
+				
+				if not newMelee then
+					for shortId in pairs(companySlots[compIdx]) do
+						local mu = musketUtils[shortId]
+						if mu then 
+							mu:ExitMelee()
+						end
+					end
+				end
+			end
 			return
 		end
 	end
@@ -575,9 +616,41 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 	if not hud:hasSelection() then return end
 
+	local selectedList = hud:getSelectedList()
+
+	-- Check if any selected company is in melee mode
+	local anyMelee = false
+	for _, compIdx in ipairs(selectedList) do
+		if meleeMode[compIdx] then anyMelee = true break end
+	end
+
+	if anyMelee then
+		local pos    = UserInputService:GetMouseLocation()
+		local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
+		local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, meleeRayParams)
+		if result then
+			-- Walk up hierarchy to find NPC model in Npc_Registry
+			local model = result.Instance
+			while model and model.Parent ~= workspace:FindFirstChild("Npc_Registry") do
+				model = model.Parent
+			end
+			if model then
+				local targetOwner   = model:GetAttribute("OwnerUserId")
+				local targetCompIdx = model:GetAttribute("CompanyIndex")
+				if targetOwner and targetOwner ~= localPlayer.UserId and targetCompIdx then
+					for _, compIdx in ipairs(selectedList) do
+						if meleeMode[compIdx] and companySlots[compIdx] then
+							Network.NpcMeleeTarget.Fire(compIdx, targetOwner, targetCompIdx)
+						end
+					end
+				end
+			end
+		end
+		return  -- Never start formation drag in melee mode
+	end
+
 	local hit = raycastMouse()
 	if not hit then return end
-
 	dragActive = true
 	anchorPos  = hit
 	dragDir    = nil
@@ -683,6 +756,17 @@ Network.NpcBecomeBearer.On(function(shortId)
 		musketUtils[shortId] = nil
 	end
 	bearerIds[shortId] = true
+end)
+
+Network.NpcMeleeState.On(function(shortId, state)
+	local mu = musketUtils[shortId]
+	if mu then
+		if state == 0 then
+			mu:ExitMelee()
+		else
+			mu:PlayMeleeState(state)
+		end
+	end
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────
