@@ -32,7 +32,7 @@ local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
 
 --local RANK_SPACING = 4.5   -- must mirror RegimentFormation
-local COMPANY_GAP  = 8
+local COMPANY_GAP  = 10
 
 local Network = require(game.ReplicatedStorage.Blink.Client)
 

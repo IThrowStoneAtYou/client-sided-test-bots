@@ -2,7 +2,7 @@
 -- MUSKET_UTILS
 -- Version 1.0.0
 -->>>>>>>>>>>>
-
+ 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MUSKET_TEMPLATE = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Musket")
@@ -10,8 +10,8 @@ local ANIM_FOLDER     = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Musket")
 local SOUND_PATH      = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Sounds"):WaitForChild("Fire")
 
 local BULLET_SPEED    = 350  -- studs per second
-local BULLET_SPREAD   = 4.3    -- degrees, cone spread angle
-local SOUND_DISTANCE_THRESHOLD = 150  -- studs (from camera)
+local BULLET_SPREAD   = 6    -- degrees, cone spread angle
+local SOUND_DISTANCE_THRESHOLD = 85  -- studs (from camera)
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",

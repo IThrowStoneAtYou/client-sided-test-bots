@@ -36,7 +36,7 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-local MAX_TICKETS = 150   -- maximum strength tickets
+local MAX_TICKETS = 120   -- maximum strength tickets
 
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD
@@ -371,7 +371,6 @@ function CompanyHUD:_createCard(index: number)
 	stroke.Thickness    = 1.5
 	stroke.Transparency = 0.6
 	stroke.Parent       = card
-
 
 	local compTitle = Instance.new("TextLabel")
 	compTitle.Name               = "Title"
