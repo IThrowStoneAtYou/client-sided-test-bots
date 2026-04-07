@@ -635,8 +635,13 @@ local function killNpc(shortId)
 			if not s then continue end
 			s.RegimentTarget = slots[i].Position
 			s.MoveRetries    = 0
+
 			task.spawn(function()
-				if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+				if s.ActiveTween then
+					s.ActiveTween:Cancel() 
+					s.ActiveTween = nil
+				end
+
 				s.Pathfinder:Stop()
 				s.Pathfinder:Run(slots[i].Position)
 			end)
@@ -655,6 +660,7 @@ end
 local function despawnCompany(player: Player, companyIndex: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
+
 	local company = playerCompanies[companyIndex]
 	if not company then return end
 
@@ -707,6 +713,7 @@ local function flushRespawnQueue(player, companyIndex)
 	if comp.isRespawning then return end  -- serialization lock
 	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
 	if isEnemyBearerNearby(player, companyIndex) then return end
+	-- pain
 
 	local bearerPos = nil
 	for _, sid in ipairs(comp.slots) do
@@ -764,13 +771,20 @@ local function flushRespawnQueue(player, companyIndex)
 				local ranks = c.originalRanks or c.ranks
 				local files = c.originalFiles or c.files
 				local slots = RegimentFormation.getSlots(c.anchorCF, soldierCount, ranks, files)
+
 				for j, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
+
 					s.RegimentTarget = slots[j].Position
 					s.MoveRetries    = 0
+
 					task.spawn(function()
-						if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+						if s.ActiveTween then 
+							s.ActiveTween:Cancel() 
+							s.ActiveTween = nil 
+						end
+						
 						s.Pathfinder:Stop()
 						s.Pathfinder:Run(slots[j].Position)
 					end)
