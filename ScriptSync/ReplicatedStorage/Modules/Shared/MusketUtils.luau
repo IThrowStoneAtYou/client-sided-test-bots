@@ -36,7 +36,6 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 	self._team       = teamName
 
 	local torso = clientModel:FindFirstChild("Torso")
-		or clientModel:FindFirstChild("UpperTorso")
 	if not torso then
 		warn("[MusketUtils] No torso on:", clientModel.Name)
 		return self
@@ -215,11 +214,7 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 			local dt    = task.wait()
 			local step  = BULLET_SPEED * dt
 
-			local result = workspace:Raycast(
-				origin + unitDir * traveled,
-				unitDir * step,
-				rayParams
-			)
+			local result = workspace:Raycast(origin + unitDir * traveled, unitDir * step, rayParams)
 
 			traveled += step
 
