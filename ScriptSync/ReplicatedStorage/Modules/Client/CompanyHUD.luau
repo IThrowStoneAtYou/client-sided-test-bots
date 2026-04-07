@@ -36,7 +36,7 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-local MAX_TICKETS = 150   -- maximum strength tickets
+local MAX_TICKETS = 120   -- maximum strength tickets
 
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD
@@ -98,7 +98,9 @@ function CompanyHUD:getSelectedList(): {number}
 	for idx in pairs(self._selected) do
 		list[#list + 1] = idx
 	end
+
 	table.sort(list)
+
 	return list
 end
 
@@ -139,9 +141,11 @@ function CompanyHUD:setSelected(index: number?)
 	for idx in pairs(prev) do
 		dirty[idx] = true
 	end
+
 	if index then
 		dirty[index] = true
 	end
+
 	for idx in pairs(dirty) do
 		self:_refreshCard(idx)
 	end
@@ -275,6 +279,7 @@ end
 function CompanyHUD:_refreshCard(i: number)
 	local cd      = self._cards[i]
 	if not cd then return end
+
 	local company = self._companies[i]
 	local isSel   = self._selected[i] == true
 	local canFire = self._canAttackState[i] ~= false  -- nil treated as true (default on)
@@ -301,37 +306,46 @@ end
 function CompanyHUD:_updateCardFlashing(index: number, isBroken: boolean)
 	local cd = self._cards[index]
 	if not cd then return end
-	
+
 	-- Cancel any existing flash tween
 	if cd.flashTween then
 		cd.flashTween:Cancel()
 		cd.flashTween = nil
 	end
-	
+
 	if isBroken then
 		-- Start flashing animation: alternate between normal and darker red
 		local function startFlash()
-			local flashTween = TweenService:Create(
-				cd.stroke,
-				TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-				{ Transparency = 0.3 }
-			)
-			flashTween:Play()
-			flashTween.Completed:Connect(function()
-				if cd.flashTween then  -- Still flashing
-					local flashTween2 = TweenService:Create(
-						cd.stroke,
-						TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-						{ Transparency = 0 }
-					)
-					flashTween2:Play()
-					flashTween2.Completed:Connect(startFlash)
-					cd.flashTween = flashTween2
-				end
-			end)
-			cd.flashTween = flashTween
+			if not cd.flashTween then  -- Check if still supposed to be flashing
+				local flashTween = TweenService:Create(
+					cd.stroke,
+					TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+					{ Transparency = 0.2 }
+				)
+				flashTween:Play()
+				flashTween.Completed:Connect(function()
+					if cd.flashTween then  -- Still flashing
+						local flashTween2 = TweenService:Create(
+							cd.stroke,
+							TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+							{ Transparency = 0.6 }
+						)
+						flashTween2:Play()
+						flashTween2.Completed:Connect(startFlash)
+						cd.flashTween = flashTween2
+					end
+				end)
+
+				cd.flashTween = flashTween
+			end
 		end
+
 		startFlash()
+	else
+		-- Company recovered - reset stroke to normal
+		if cd.stroke then
+			cd.stroke.Transparency = 0.6
+		end
 	end
 end
 
@@ -357,7 +371,6 @@ function CompanyHUD:_createCard(index: number)
 	stroke.Thickness    = 1.5
 	stroke.Transparency = 0.6
 	stroke.Parent       = card
-
 
 	local compTitle = Instance.new("TextLabel")
 	compTitle.Name               = "Title"
@@ -710,21 +723,19 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 	self._strengthValue.Text = tostring(tickets)
 	self._strengthFill.Size  = UDim2.new(ratio, 0, 1, 0)
 	
-	-- Color gradient: Blue (full) → Orange (medium) → Red (low)
+	-- Simple solid color: Blue (full) → Orange (half) → Red (low)
 	local color
-	if ratio >= 0.5 then
-		-- Interpolate from Orange to Blue
-		local t = (ratio - 0.5) * 2  -- normalize 0.5-1.0 to 0-1
-		local orange = Color3.fromRGB(255, 140, 0)
-		local blue = Color3.fromRGB(0, 120, 220)
-		color = orange:Lerp(blue, t)
+	if ratio > 0.66 then
+		-- Blue (full strength)
+		color = Color3.fromRGB(0, 120, 220)
+	elseif ratio > 0.33 then
+		-- Orange (medium strength)
+		color = Color3.fromRGB(255, 140, 0)
 	else
-		-- Interpolate from Red to Orange
-		local t = ratio * 2  -- normalize 0-0.5 to 0-1
-		local red = Color3.fromRGB(200, 50, 50)
-		local orange = Color3.fromRGB(255, 140, 0)
-		color = red:Lerp(orange, t)
+		-- Red (low strength)
+		color = Color3.fromRGB(200, 50, 50)
 	end
+	
 	self._strengthFill.BackgroundColor3 = color
 
 	-- Morale bar (placeholder)
