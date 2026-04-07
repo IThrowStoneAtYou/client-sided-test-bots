@@ -74,7 +74,7 @@ local WEAPON_DURATIONS = {
 local BEARER_MODE_CENTER    = 0   -- j : static, behind centre
 local BEARER_MODE_LEFT      = 1   -- h : front-left corner
 local BEARER_MODE_RIGHT     = 2   -- k : front-right corner
-local BEARER_MODE_PACING    = 3   -- l : moveleft andright behind last rank
+local BEARER_MODE_PACING    = 3   -- l : move left andright behind last rank
 
 local BEARER_SIDE_OFFSET_X = 5   -- studs outward beyond the corner soldier
 local BEARER_SIDE_OFFSET_Z = 0   -- studs back so it's beside rank 1, not in front
@@ -555,7 +555,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	end)
 end
 
-local function killNpc(shortId)
+local function killNpc(shortId)	
 	local npc = activeNpcs[shortId]
 	if not npc then return end
 
