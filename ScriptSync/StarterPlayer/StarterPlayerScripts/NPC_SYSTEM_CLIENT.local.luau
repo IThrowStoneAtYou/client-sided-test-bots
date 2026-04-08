@@ -598,6 +598,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				if not companySlots[compIdx] then continue end
 				local newMelee = not meleeMode[compIdx]
 				meleeMode[compIdx] = newMelee
+				hud:setMeleeState(compIdx, newMelee) -- Update HUD to show melee state
 				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
 				
 				if not newMelee then
@@ -628,25 +629,30 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		local pos    = UserInputService:GetMouseLocation()
 		local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
 		local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, meleeRayParams)
+		local foundTarget = false
+
 		if result then
 			-- Walk up hierarchy to find NPC model in Npc_Registry
 			local model = result.Instance
-			while model and model.Parent ~= workspace:FindFirstChild("Npc_Registry") do
+			local registry = workspace:FindFirstChild("Npc_Registry")
+			while model and model.Parent ~= registry and model ~= workspace do
 				model = model.Parent
 			end
-			if model then
+			
+			if model and model.Parent == registry then
 				local targetOwner   = model:GetAttribute("OwnerUserId")
 				local targetCompIdx = model:GetAttribute("CompanyIndex")
-				if targetOwner and targetOwner ~= localPlayer.UserId and targetCompIdx then
+				if targetCompIdx and (targetOwner ~= localPlayer.UserId) then
 					for _, compIdx in ipairs(selectedList) do
 						if meleeMode[compIdx] and companySlots[compIdx] then
 							Network.NpcMeleeTarget.Fire(compIdx, targetOwner, targetCompIdx)
 						end
 					end
+					foundTarget = true
 				end
 			end
 		end
-		return  -- Never start formation drag in melee mode
+		if foundTarget then return end -- Only block movement if we actually clicked an enemy
 	end
 
 	local hit = raycastMouse()

@@ -731,14 +731,10 @@ end
 local function flushRespawnQueue(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
-	-- Skip if company is completely empty
-	if not comp.slots or #comp.slots == 0 then return end
 	if comp.isBroken then return end
 	if comp.bearerRespawnGate then return end
 	if comp.isRespawning then return end  -- serialization lock
 	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
-	if isEnemyBearerNearby(player, companyIndex) then return end
-	-- pain
 
 	local bearerPos = nil
 	for _, sid in ipairs(comp.slots) do
@@ -748,6 +744,8 @@ local function flushRespawnQueue(player, companyIndex)
 			break
 		end
 	end
+	-- Fallback: If no bearer exists (company wiped), spawn at the formation anchor
+	bearerPos = bearerPos or (comp.anchorCF and comp.anchorCF.Position)
 	if not bearerPos then return end
 
 	local currentTime = os.clock()
@@ -774,10 +772,25 @@ local function flushRespawnQueue(player, companyIndex)
 
 		if npc and companies[player] and companies[player][companyIndex] then
 			local c = companies[player][companyIndex]
+			
+			-- Promotion Logic: If the company was wiped, the first bot back is the new bearer
+			local isNewBearer = (#c.slots == 0)
+			
 			npc.IsRegiment   = true
 			npc.CompanyOwner = player
 			npc.CompanyIndex = companyIndex
 			npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0, 0, -1)
+
+			if isNewBearer then
+				npc.IsFlagBearer = true
+				npc.BearerMode   = c.savedBearerMode or BEARER_MODE_CENTER
+				npc.IsPacing     = c.savedBearerPacing or false
+				npc.PaceDirection = 1
+				npc.WeaponState  = WEAPON_IDLE
+				npc.WeaponTimer  = 0
+				npc.WeaponTarget = nil
+				npc.AimAlign.Enabled = false
+			end
 
 			table.insert(c.slots, npc.ShortId)
 
@@ -823,11 +836,13 @@ local function flushRespawnQueue(player, companyIndex)
 					pos          = npc.Root.CFrame.Position,
 					yaw          = getYaw(npc.Root.CFrame),
 					teamName     = npc.TeamName,
-					isBearer     = false,
+					isBearer     = isNewBearer,
 					companyIndex = companyIndex,
 					ownerUserId  = player.UserId,
 				})
-				Network.NpcWeaponState.Fire(p, npc.ShortId, WEAPON_IDLE)
+				if not isNewBearer then
+					Network.NpcWeaponState.Fire(p, npc.ShortId, WEAPON_IDLE)
+				end
 			end
 
 			syncCompanies(player)
@@ -1281,7 +1296,7 @@ local function processMelee(dt)
 					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
 					if dist <= MELEE_ENGAGE_RANGE then
 						setNpcMeleeState(npc, MELEE_BOT_ATK)
-					else
+					elseif dist > MELEE_ENGAGE_RANGE + 2 then  -- small hysteresis to prevent flickering
 						setNpcMeleeState(npc, MELEE_ADVANCE)
 					end
 
@@ -1418,6 +1433,7 @@ RunService.Heartbeat:Connect(function(dt)
 	
 	processCombat(dt)
 	processTickets(dt)
+	processMelee(dt)
 
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
