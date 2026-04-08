@@ -24,6 +24,16 @@ local STATE_TO_ANIM = {
 	[7] = "Reload",
 }
 
+local MELEE_STATE_TO_ANIM = {
+	[1] = "bayonetidle",
+	[2] = "bayonetbottomstart",
+	[3] = "bayonetbottomidle",
+	[4] = "bayonetbottomattack",
+	[5] = "bayonetupstart",
+	[6] = "bayonetupidle",
+	[7] = "bayonetupattack",
+}
+
 local MusketUtils = {}
 MusketUtils.__index = MusketUtils
 
@@ -78,6 +88,14 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 		track.Priority = Enum.AnimationPriority.Action2
 		return track
 	end
+	
+	local function loadMelee(name)
+		local anim = ANIM_FOLDER:FindFirstChild(name)
+		if not anim then warn("[MusketUtils] Missing melee anim:", name) return nil end
+		local track = animator:LoadAnimation(anim)
+		track.Priority = Enum.AnimationPriority.Action3
+		return track
+	end
 
 	self._tracks = {
 		Idle          = load("Idle"),
@@ -88,6 +106,16 @@ function MusketUtils.new(clientModel: Model, teamName: string?)
 		Fire          = load("Fire"),
 		ReloadIdle    = load("ReloadIdle"),
 		Reload        = load("Reload"),
+	}
+	
+	self._meleeTracks = {
+		bayonetidle         = loadMelee("bayonetidle"),
+		bayonetbottomstart  = loadMelee("bayonetbottomstart"),
+		bayonetbottomidle   = loadMelee("bayonetbottomidle"),
+		bayonetbottomattack = loadMelee("bayonetbottomattack"),
+		bayonetupstart      = loadMelee("bayonetupstart"),
+		bayonetupidle       = loadMelee("bayonetupidle"),
+		bayonetupattack     = loadMelee("bayonetupattack"),
 	}
 
 	-- Load fire sounds from Close and Far folders
@@ -118,6 +146,10 @@ end
 
 function MusketUtils:Destroy()
 	self._destroyed = true
+	for _, track in pairs(self._meleeTracks or {}) do
+		if track then track:Stop() end
+	end
+	self._meleeTracks = {}
 	for _, track in pairs(self._tracks) do
 		if track then track:Stop() end
 	end
@@ -255,6 +287,29 @@ function MusketUtils:SetCanShoot(state: boolean)
 	if not state then
 		self:PlayState()
 	end
+end
+
+function MusketUtils:PlayMeleeState(state: number)
+	if self._destroyed then return end
+	for _, track in pairs(self._tracks) do
+		if track and track.IsPlaying then track:Stop() end
+	end
+	local animName = MELEE_STATE_TO_ANIM[state]
+	for name, track in pairs(self._meleeTracks or {}) do
+		if track and track.IsPlaying and name ~= animName then track:Stop() end
+	end
+	if animName then
+		local track = self._meleeTracks and self._meleeTracks[animName]
+		if track and not track.IsPlaying then track:Play() end
+	end
+end
+
+function MusketUtils:ExitMelee()
+	if self._destroyed then return end
+	for _, track in pairs(self._meleeTracks or {}) do
+		if track and track.IsPlaying then track:Stop(0.1) end
+	end
+	self:PlayState(0)
 end
 
 function MusketUtils:_playFireSound()

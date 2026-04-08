@@ -58,6 +58,20 @@ local WEAPON_FIRE          = 5
 local WEAPON_RELOAD_IDLE   = 6
 local WEAPON_RELOAD        = 7
 
+local MELEE_ENGAGE_RANGE      = 6
+local MELEE_DAMAGE            = 50
+local MELEE_BEARER_FLEE_RANGE = 30
+local MELEE_BEARER_FLEE_DIST  = 20
+
+local MELEE_IDLE      = 0
+local MELEE_ADVANCE   = 1
+local MELEE_BOT_START = 2
+local MELEE_BOT_IDLE  = 3
+local MELEE_BOT_ATK   = 4
+local MELEE_UP_START  = 5
+local MELEE_UP_IDLE   = 6
+local MELEE_UP_ATK    = 7
+
 local MUSKET_DAMAGE = 100
 
 local WEAPON_DURATIONS = {
@@ -71,10 +85,16 @@ local WEAPON_DURATIONS = {
 	[7] = 10.33,
 }
 
+local MELEE_DURATIONS = {
+	[0] = 0, [1] = 0,
+	[2] = 0.25, [3] = 0, [4] = 0.5,
+	[5] = 0.7,  [6] = 0, [7] = 0.333,
+}
+
 local BEARER_MODE_CENTER    = 0   -- j : static, behind centre
 local BEARER_MODE_LEFT      = 1   -- h : front-left corner
 local BEARER_MODE_RIGHT     = 2   -- k : front-right corner
-local BEARER_MODE_PACING    = 3   -- l : moveleft andright behind last rank
+local BEARER_MODE_PACING    = 3   -- l : move left andright behind last rank
 
 local BEARER_SIDE_OFFSET_X = 5   -- studs outward beyond the corner soldier
 local BEARER_SIDE_OFFSET_Z = 0   -- studs back so it's beside rank 1, not in front
@@ -301,6 +321,11 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		WeaponState  = WEAPON_IDLE,
 		WeaponTimer  = 0,
 		WeaponTarget = nil,
+		
+		MeleeState      = MELEE_IDLE,
+		MeleeTimer      = 0,
+		MeleeTarget     = nil,
+		_meleePathAccum = 0,
 	}
 
 	pathfinder.Reached:Connect(function()
@@ -555,7 +580,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	end)
 end
 
-local function killNpc(shortId)
+local function killNpc(shortId)	
 	local npc = activeNpcs[shortId]
 	if not npc then return end
 
@@ -941,6 +966,10 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							
 							originalRanks        = ranks,
 							originalFiles        = files,
+							
+							isMelee            = false,
+							meleeTargetPlayer  = nil,
+							meleeTargetCompIdx = nil,
 					}
 					
 					serverCanAttack[player] = serverCanAttack[player] or {}
@@ -1075,6 +1104,35 @@ local function setNpcWeaponState(npc, state, targetPos)
 	end
 end
 
+local function setNpcMeleeState(npc, state)
+	npc.MeleeState = state
+	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
+
+	for p in pairs(readyPlayers) do
+		Network.NpcMeleeState.Fire(p, npc.ShortId, state)
+	end
+
+	-- Deal damage on attack states
+	if (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) and npc.MeleeTarget then
+		local target = npc.MeleeTarget
+		if target and activeNpcs[target.ShortId] then
+			local dist = (target.Root.Position - npc.Root.Position).Magnitude
+			if dist <= MELEE_ENGAGE_RANGE + 2 then
+				applyDamage(target, MELEE_DAMAGE)
+			end
+		end
+	end
+
+	-- Face target during attacks
+	if npc.MeleeTarget and (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) then
+		local tPos = npc.MeleeTarget.Root and npc.MeleeTarget.Root.Position
+		if tPos then
+			local dir = Vector3.new(tPos.X - npc.Root.Position.X, 0, tPos.Z - npc.Root.Position.Z).Unit
+			npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
+		end
+	end
+end
+
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
 		for compIdx, comp in pairs(playerCompanies) do
@@ -1140,6 +1198,120 @@ local function processTickets(dt)
 	end
 end
 
+local function processMelee(dt)
+	for player, playerCompanies in pairs(companies) do
+		for compIdx, comp in pairs(playerCompanies) do
+			if not comp.isMelee then continue end
+
+			local targetComp = comp.meleeTargetPlayer
+				and companies[comp.meleeTargetPlayer]
+				and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
+
+			for _, shortId in ipairs(comp.slots) do
+				local npc = activeNpcs[shortId]
+				if not npc then continue end
+
+				-- Flag bearer: flee if enemy close, otherwise hold
+				if npc.IsFlagBearer then
+					if targetComp then
+						local nearestEnemyPos = nil
+						local nearestDist = MELEE_BEARER_FLEE_RANGE
+						for _, eSid in ipairs(targetComp.slots) do
+							local e = activeNpcs[eSid]
+							if e then
+								local d = (e.Root.Position - npc.Root.Position).Magnitude
+								if d < nearestDist then
+									nearestDist = d
+									nearestEnemyPos = e.Root.Position
+								end
+							end
+						end
+						if nearestEnemyPos then
+							local fleeDir = (npc.Root.Position - nearestEnemyPos).Unit
+							local fleePos = npc.Root.Position + fleeDir * MELEE_BEARER_FLEE_DIST
+							fleePos = Vector3.new(fleePos.X, npc.Root.Position.Y, fleePos.Z)
+							npc.RegimentTarget = fleePos
+							npc.Pathfinder:Run(fleePos)
+						end
+					end
+					continue
+				end
+
+				npc.MeleeTimer -= dt
+
+				-- Re-acquire if target died
+				if npc.MeleeTarget and not activeNpcs[npc.MeleeTarget.ShortId] then
+					npc.MeleeTarget = nil
+					npc.MeleeState  = MELEE_IDLE
+				end
+
+				if npc.MeleeState == MELEE_IDLE then
+					if not targetComp then continue end
+					local nearest, nearestDist = nil, math.huge
+					for _, eSid in ipairs(targetComp.slots) do
+						local e = activeNpcs[eSid]
+						if e and not e.IsFlagBearer then
+							local d = (e.Root.Position - npc.Root.Position).Magnitude
+							if d < nearestDist then nearestDist = d nearest = e end
+						end
+					end
+					if nearest then
+						npc.MeleeTarget = nearest
+						setNpcMeleeState(npc, MELEE_ADVANCE)
+					end
+
+				elseif npc.MeleeState == MELEE_ADVANCE then
+					if not npc.MeleeTarget then npc.MeleeState = MELEE_IDLE continue end
+					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
+					npc._meleePathAccum += dt
+					if npc._meleePathAccum >= 0.5 then
+						npc._meleePathAccum = 0
+						npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+					end
+					if dist <= MELEE_ENGAGE_RANGE then
+						npc.Pathfinder:Stop()
+						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+					end
+
+				elseif npc.MeleeState == MELEE_BOT_START then
+					if npc.MeleeTimer <= 0 then setNpcMeleeState(npc, MELEE_BOT_IDLE) end
+
+				elseif npc.MeleeState == MELEE_BOT_IDLE then
+					if not npc.MeleeTarget then setNpcMeleeState(npc, MELEE_ADVANCE) continue end
+					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
+					if dist <= MELEE_ENGAGE_RANGE then
+						setNpcMeleeState(npc, MELEE_BOT_ATK)
+					else
+						setNpcMeleeState(npc, MELEE_ADVANCE)
+					end
+
+				elseif npc.MeleeState == MELEE_BOT_ATK then
+					if npc.MeleeTimer <= 0 then
+						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+					end
+
+				elseif npc.MeleeState == MELEE_UP_START then
+					if npc.MeleeTimer <= 0 then setNpcMeleeState(npc, MELEE_UP_IDLE) end
+
+				elseif npc.MeleeState == MELEE_UP_IDLE then
+					if not npc.MeleeTarget then setNpcMeleeState(npc, MELEE_ADVANCE) continue end
+					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
+					if dist <= MELEE_ENGAGE_RANGE then
+						setNpcMeleeState(npc, MELEE_UP_ATK)
+					else
+						setNpcMeleeState(npc, MELEE_ADVANCE)
+					end
+
+				elseif npc.MeleeState == MELEE_UP_ATK then
+					if npc.MeleeTimer <= 0 then
+						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+					end
+				end
+			end
+		end
+	end
+end
+
 local function processCombat(dt)
 	for shortId, npc in pairs(activeNpcs) do
 		if npc.IsFlagBearer then continue end
@@ -1150,6 +1322,9 @@ local function processCombat(dt)
 		if not owner or not companyIdx then continue end
 
 		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
+		
+		local comp = companies[owner] and companies[owner][companyIdx]
+		if comp and comp.isMelee then continue end
 
 		-- hard abort
 		if not canShoot then
@@ -1464,5 +1639,64 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 				end
 			end
 		end
+	end
+end)
+
+Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
+	if not companies[player] or not companies[player][companyIndex] then return end
+	local comp = companies[player][companyIndex]
+	comp.isMelee = isMelee
+
+	for _, shortId in ipairs(comp.slots) do
+		local npc = activeNpcs[shortId]
+		if not npc or npc.IsFlagBearer then continue end
+		if isMelee then
+			-- Abort musket FSM
+			if npc.WeaponState ~= WEAPON_IDLE then
+				setNpcWeaponState(npc, WEAPON_IDLE, nil)
+			end
+			npc.AimAlign.Enabled = false
+			npc.MeleeState = MELEE_IDLE
+			npc.MeleeTimer = 0
+			npc.MeleeTarget = nil
+		else
+			-- Exit melee: reset everything
+			comp.meleeTargetPlayer  = nil
+			comp.meleeTargetCompIdx = nil
+			npc.MeleeState  = MELEE_IDLE
+			npc.MeleeTimer  = 0
+			npc.MeleeTarget = nil
+			npc.Pathfinder:Stop()
+			for p in pairs(readyPlayers) do
+				Network.NpcMeleeState.Fire(p, shortId, MELEE_IDLE)
+				Network.NpcWeaponState.Fire(p, shortId, WEAPON_IDLE)
+			end
+		end
+	end
+end)
+
+Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targetCompanyIndex)
+	if not companies[player] or not companies[player][companyIndex] then return end
+	local comp = companies[player][companyIndex]
+	if not comp.isMelee then return end
+
+	local targetPlayer = nil
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.UserId == targetOwnerUserId then targetPlayer = p break end
+	end
+	if not targetPlayer then return end
+	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
+
+	comp.meleeTargetPlayer  = targetPlayer
+	comp.meleeTargetCompIdx = targetCompanyIndex
+
+	-- Reset all bots to IDLE so processMelee re-acquires targets
+	for _, shortId in ipairs(comp.slots) do
+		local npc = activeNpcs[shortId]
+		if not npc or npc.IsFlagBearer then continue end
+		if npc.WeaponState ~= WEAPON_IDLE then setNpcWeaponState(npc, WEAPON_IDLE, nil) end
+		npc.MeleeState  = MELEE_IDLE
+		npc.MeleeTimer  = 0
+		npc.MeleeTarget = nil
 	end
 end)
