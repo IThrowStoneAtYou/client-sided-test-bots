@@ -36,7 +36,7 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-local MAX_TICKETS = 120   -- maximum strength tickets
+local MAX_TICKETS = 135   -- maximum strength tickets
 
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD

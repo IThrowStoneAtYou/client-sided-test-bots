@@ -460,7 +460,19 @@ end)
 
 Network.NpcFire.On(function(shortId, targetPos)
 	local mu = musketUtils[shortId]
-	if mu then
+	if not mu then return end
+
+	-- If we own this NPC, we are responsible for hit detection
+	if npcOwners[shortId] == localPlayer.UserId then
+		local victimId, actualHitPos = mu:CalculateHit(targetPos)
+		
+		-- Report the hit/miss to the server
+		Network.NpcHitReport.Fire(shortId, victimId, actualHitPos)
+		
+		-- Play visuals immediately for ourselves
+		mu:PlayFire(actualHitPos)
+	else
+		-- We are seeing someone else's shot (or a server bot's shot)
 		mu:PlayFire(targetPos)
 	end
 end)

@@ -33,7 +33,7 @@ local RANK_DEPTH    = 5
 local FLAG_OFFSET_Z = 8       
 local MOVE_RETRIES  = 2 
 
-local MAX_TICKETS            = 120
+local MAX_TICKETS            = 135
 local TICKET_REGEN_RATE      = 8
 local TICKET_REGEN_INTERVAL  = 5
 
@@ -72,8 +72,9 @@ local MELEE_UP_START  = 5
 local MELEE_UP_IDLE   = 6
 local MELEE_UP_ATK    = 7
 local MELEE_ADVANCE   = 8 -- Unique ID for the logic loop
+local MELEE_BACKPEDAL = 9
 
-local BULLET_SPREAD   = 5.5 -- degrees
+local BULLET_SPREAD   = 3 -- degrees
 
 local MUSKET_DAMAGE = 100
 
@@ -98,6 +99,7 @@ local MELEE_DURATIONS = {
 	[6] = 0,     -- bayonetupidle
 	[7] = 0.333, -- bayonetupattack
 	[8] = 0,     -- Advance
+	[9] = 0.8,   -- Backpedal duration
 }
 
 local BEARER_MODE_CENTER    = 0   -- j : static, behind centre
@@ -1195,10 +1197,15 @@ local function setNpcWeaponState(npc, state, targetPos)
 	end
 
 	if state == WEAPON_FIRE then
-		local actualHitPos = targetPos
-		local target = npc.WeaponTarget
-
 		if targetPos then
+			if npc.CompanyOwner then
+				-- Request the owner to calculate the hit (better hitboxes)
+				Network.NpcFire.Fire(npc.CompanyOwner, npc.ShortId, targetPos)
+			else
+				-- Fallback for world/unowned bots (server-side calculation)
+				local actualHitPos = targetPos
+				local target = npc.WeaponTarget
+
 			local origin = npc.Root.Position + Vector3.new(0, 1.5, 0) -- Approximate shoulder height
 			local direction = (targetPos - origin).Unit
 
@@ -1209,24 +1216,22 @@ local function setNpcWeaponState(npc, state, targetPos)
 			local spreadCF = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles(randomPitch, randomYaw, 0)
 			local finalDir = spreadCF.LookVector
 
-			-- Only exclude the shooter, not the whole registry!
 			combatRayParams.FilterDescendantsInstances = { npc.Model }
 			local result = workspace:Raycast(origin, finalDir * COMBAT_RANGE, combatRayParams)
 
 			if result then
 				actualHitPos = result.Position
-				-- Check if we hit the target's specific server parts (Torso/Root)
 				if target and target.Model and (result.Instance == target.Root or result.Instance.Name == "Torso") then
 					applyDamage(target, MUSKET_DAMAGE)
 				end
 			else
 				actualHitPos = origin + finalDir * COMBAT_RANGE
 			end
-		end
 
-		-- Tell clients exactly where the bullet landed so visuals match the server logic
-		for p in pairs(readyPlayers) do
-			Network.NpcFire.Fire(p, npc.ShortId, actualHitPos)
+				for p in pairs(readyPlayers) do
+					Network.NpcFire.Fire(p, npc.ShortId, actualHitPos)
+				end
+			end
 		end
 	end
 
@@ -1234,6 +1239,22 @@ local function setNpcWeaponState(npc, state, targetPos)
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
 	end
 end
+
+Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
+	local attacker = activeNpcs[attackerId]
+	if not attacker or attacker.CompanyOwner ~= player then return end
+
+	-- Apply damage if a victim was hit
+	if victimId > 0 then
+		local victim = activeNpcs[victimId]
+		if victim then
+			applyDamage(victim, MUSKET_DAMAGE)
+		end
+	end
+
+	-- Broadcast the tracer to everyone else so they see where the bullet landed
+	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
+end)
 
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
@@ -1396,61 +1417,91 @@ local function processMelee(dt)
 					end
 					if nearest then
 						npc.MeleeTarget = nearest
-					--	print("[Server Melee] NPC", npc.ShortId, "found new target:", nearest.ShortId)
-						setNpcMeleeState(npc, MELEE_ADVANCE)
-					end
-
-				elseif npc.MeleeState == MELEE_ADVANCE then
-					if not npc.MeleeTarget then 
-						-- We are in melee mode but have no specific person to kill.
-						-- Go back to idle to try and find the nearest enemy in the target company.
-						setNpcMeleeState(npc, MELEE_IDLE)
-						continue 
-					end
-					
-					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
-					
-					npc._meleePathAccum += dt
-					if npc._meleePathAccum >= 0.5 then
-						npc._meleePathAccum = 0
-						npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
-					end
-					if dist <= MELEE_ENGAGE_RANGE then
-						npc.Pathfinder:Stop()
-					--	print("[Server Melee] NPC", npc.ShortId, "in range of target. Starting attack.")
+						-- Choose stance immediately upon targeting
 						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 					end
 
+				elseif npc.MeleeState == MELEE_ADVANCE then -- Charging to a location
+					if not npc.MeleeTarget then 
+						setNpcMeleeState(npc, MELEE_IDLE)
+						continue 
+					end
+					setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+
 				elseif npc.MeleeState == MELEE_BOT_START then
-					if npc.MeleeTimer <= 0 then setNpcMeleeState(npc, MELEE_BOT_IDLE) end
+					-- Move towards target even during start anim
+					if npc.MeleeTarget and npc.MeleeTarget.Root then
+						npc._meleePathAccum += dt
+						if npc._meleePathAccum >= 0.4 then
+							npc._meleePathAccum = 0
+							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+						end
+					end
+					if npc.MeleeTimer <= 0 then 
+						setNpcMeleeState(npc, MELEE_BOT_IDLE) 
+					end
 
 				elseif npc.MeleeState == MELEE_BOT_IDLE then
-					if not npc.MeleeTarget then setNpcMeleeState(npc, MELEE_ADVANCE) continue end
+					if not npc.MeleeTarget or not npc.MeleeTarget.Root then setNpcMeleeState(npc, MELEE_IDLE) continue end
 					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
+					
+					npc._meleePathAccum += dt
+					if npc._meleePathAccum >= 0.4 then
+						npc._meleePathAccum = 0
+						npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+					end
+
 					if dist <= MELEE_ENGAGE_RANGE then
+						npc.Pathfinder:Stop()
 						setNpcMeleeState(npc, MELEE_BOT_ATK)
-					elseif dist > MELEE_ENGAGE_RANGE + 2 then  -- small hysteresis to prevent flickering
-						setNpcMeleeState(npc, MELEE_ADVANCE)
 					end
 
 				elseif npc.MeleeState == MELEE_BOT_ATK then
 					if npc.MeleeTimer <= 0 then
-						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+						setNpcMeleeState(npc, MELEE_BACKPEDAL)
 					end
 
 				elseif npc.MeleeState == MELEE_UP_START then
-					if npc.MeleeTimer <= 0 then setNpcMeleeState(npc, MELEE_UP_IDLE) end
+					if npc.MeleeTarget and npc.MeleeTarget.Root then
+						npc._meleePathAccum += dt
+						if npc._meleePathAccum >= 0.4 then
+							npc._meleePathAccum = 0
+							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+						end
+					end
+					if npc.MeleeTimer <= 0 then 
+						setNpcMeleeState(npc, MELEE_UP_IDLE) 
+					end
 
 				elseif npc.MeleeState == MELEE_UP_IDLE then
-					if not npc.MeleeTarget then setNpcMeleeState(npc, MELEE_ADVANCE) continue end
+					if not npc.MeleeTarget or not npc.MeleeTarget.Root then setNpcMeleeState(npc, MELEE_IDLE) continue end
 					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
+
+					npc._meleePathAccum += dt
+					if npc._meleePathAccum >= 0.4 then
+						npc._meleePathAccum = 0
+						npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+					end
+
 					if dist <= MELEE_ENGAGE_RANGE then
+						npc.Pathfinder:Stop()
 						setNpcMeleeState(npc, MELEE_UP_ATK)
-					else
-						setNpcMeleeState(npc, MELEE_ADVANCE)
 					end
 
 				elseif npc.MeleeState == MELEE_UP_ATK then
+					if npc.MeleeTimer <= 0 then
+						setNpcMeleeState(npc, MELEE_BACKPEDAL)
+					end
+
+				elseif npc.MeleeState == MELEE_BACKPEDAL then
+					if npc.MeleeTarget and npc.MeleeTarget.Root then
+						npc._meleePathAccum += dt
+						if npc._meleePathAccum >= 0.2 then
+							npc._meleePathAccum = 0
+							local fleeDir = (npc.Root.Position - npc.MeleeTarget.Root.Position).Unit
+							npc.Pathfinder:Run(npc.Root.Position + fleeDir * 8)
+						end
+					end
 					if npc.MeleeTimer <= 0 then
 						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 					end
@@ -1548,15 +1599,7 @@ end
 -- Server heartbeat that handles two main systems:
 --  1. COMBAT: Processes NPC-to-NPC targeting and shooting
 --  2. NETWORK BROADCAST: Sends position updates at dual rates
---
--- Update Rates:
---   - Near Rate (1/20 = 50ms): Detailed snapshots to players < 500 studs away
---   - Far Rate (1/4 = 250ms): Sparse updates to distant players
---
--- Optimization:
---   Uses accumulated deltas (nearAccum, farAccum) to skip checks between ticks
---   Large NPC batches are chunked (35 units per chunk) to avoid network limits
---
+
 local nearAccum = 0
 local farAccum  = 0
 
@@ -1865,6 +1908,6 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 		if not npc or npc.IsFlagBearer then continue end
 		if npc.WeaponState ~= WEAPON_IDLE then setNpcWeaponState(npc, WEAPON_IDLE, nil) end
 		npc.MeleeTarget = nil
-		setNpcMeleeState(npc, MELEE_IDLE)
+		setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 	end
 end)
