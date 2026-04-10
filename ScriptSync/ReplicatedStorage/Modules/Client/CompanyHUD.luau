@@ -49,6 +49,7 @@ function CompanyHUD.new(onSelectionChanged)
 	self._companies   = {}   -- { [index] = { count } }
 	self._cards       = {}
 	self._canAttackState = {}   -- [index] = boolean (true by default)
+	self._meleeState  = {}   -- [index] = boolean (false by default)
 	self._strengthData = {}     -- [index] = { tickets, isBroken, brokenTimer, enemyNearby }
 	self._onChanged   = onSelectionChanged or function() end
 
@@ -117,6 +118,17 @@ function CompanyHUD:setCanAttack(index: number, enabled: boolean)
 	end
 end
 
+-->>>>>>>>>>>>
+-- Updates the melee state for a given company and updates its card icon.
+function CompanyHUD:setMeleeState(index: number, enabled: boolean)
+	self._meleeState[index] = enabled
+	self:_refreshCard(index)
+
+	local selected = self:getSelectedList()
+	if #selected == 1 and selected[1] == index then
+		self:_updateGlobalPanel(index) -- Re-evaluate global panel if this company is selected
+	end
+end
 -->>>>>>>>>>>>
 -- Returns true if at least one company is selected.
 function CompanyHUD:hasSelection(): boolean
@@ -283,6 +295,7 @@ function CompanyHUD:_refreshCard(i: number)
 	local company = self._companies[i]
 	local isSel   = self._selected[i] == true
 	local canFire = self._canAttackState[i] ~= false  -- nil treated as true (default on)
+	local inMelee = self._meleeState[i] == true
 
 	cd.frame.Visible = company ~= nil
 	if not company then return end
@@ -290,13 +303,23 @@ function CompanyHUD:_refreshCard(i: number)
 	cd.countLabel.Text        = tostring(company.count)
 	cd.stroke.Thickness       = isSel and 3 or 1.5
 
-	if canFire then
-		cd.stroke.Transparency    = isSel and 0 or 0.6
-		cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or Color3.fromRGB(14, 14, 22)
+	if inMelee then
+		-- Special styling for melee mode
+		cd.stroke.Color           = Color3.fromRGB(255, 100, 100) -- Reddish for melee
+		cd.stroke.Transparency    = isSel and 0 or 0.3
+		cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(40, 20, 20) or Color3.fromRGB(25, 10, 10)
 	else
-		cd.stroke.Transparency    = 0.85
-		cd.frame.BackgroundColor3 = Color3.fromRGB(30, 14, 14)
+		-- Normal styling
+		cd.stroke.Color           = COMPANY_COLORS[i] -- Revert to company color
+		if canFire then
+			cd.stroke.Transparency    = isSel and 0 or 0.6
+			cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or Color3.fromRGB(14, 14, 22)
+		else
+			cd.stroke.Transparency    = 0.85
+			cd.frame.BackgroundColor3 = Color3.fromRGB(30, 14, 14)
+		end
 	end
+
 
 	local target = (isSel or cd.hovered) and cd.raisedPos or cd.restingPos
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()

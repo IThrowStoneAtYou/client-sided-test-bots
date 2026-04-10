@@ -478,8 +478,8 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
 
-	-- Skip if company is completely empty or only has bearer
-	if not comp.slots or #comp.slots < 2 then return end
+	-- Skip only if the company is actually empty
+	if not comp.slots or #comp.slots == 0 then return end
 
 	comp.bearerRespawnGate = true
 
@@ -617,15 +617,37 @@ local function killNpc(shortId)
 		comp.savedBearerPacing = npc.IsPacing   or false
 		
 		replaceBearer(owner, compIdx, deadPos)
-		-- Fall through to queue respawn - bearers must also be respawned!
+	else
+		-- Only fill gaps if a regular soldier died (bearers handled by replaceBearer)
+		local soldierIds = {}
+		for _, sid in ipairs(comp.slots) do
+			local s = activeNpcs[sid]
+			if s and not s.IsFlagBearer then
+				soldierIds[#soldierIds + 1] = sid
+			end
+		end
+
+		local soldierCount = #soldierIds
+		if soldierCount > 0 and comp.anchorCF then
+			local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, comp.ranks, comp.files)
+			for i, sid in ipairs(soldierIds) do
+				local s = activeNpcs[sid]
+				if not s then continue end
+				s.RegimentTarget = slots[i].Position
+				s.MoveRetries    = 0
+				task.spawn(function()
+					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+					s.Pathfinder:Stop()
+					s.Pathfinder:Run(slots[i].Position)
+				end)
+			end
+		end
 	end
 
 	-- Ticket deduction
 	local cost = wasWalking and TICKET_COST_MOVING or TICKET_COST_STATIONARY
-
 	if not comp.isBroken then
 		comp.tickets = math.max(0, comp.tickets - cost)
-
 		if comp.tickets <= 0 then
 			comp.isBroken         = true
 			comp.brokenTimer      = BROKEN_RECOVERY_TIME
@@ -634,44 +656,9 @@ local function killNpc(shortId)
 		broadcastStrength(owner, compIdx)
 	end
 
-	-- Always queue respawn, whether company is broken or not
 	if not comp.respawnQueue then comp.respawnQueue = {} end
 	table.insert(comp.respawnQueue, os.clock())
-
 	syncCompanies(owner)
-
-	-- Remaining soldiers fill formation gap immediately
-	local soldierIds = {}
-	for _, sid in ipairs(comp.slots) do
-		local s = activeNpcs[sid]
-		if s and not s.IsFlagBearer then
-			soldierIds[#soldierIds + 1] = sid
-		end
-	end
-
-	local soldierCount = #soldierIds
-	-- Only fill gaps if soldiers exist
-	if soldierCount > 0 and comp.anchorCF then
-		-- Keep original formation layout - don't recalculate ranks/files
-		-- Just fill slots with remaining soldiers using existing formation dimensions
-		local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, comp.ranks, comp.files)
-		for i, sid in ipairs(soldierIds) do
-			local s = activeNpcs[sid]
-			if not s then continue end
-			s.RegimentTarget = slots[i].Position
-			s.MoveRetries    = 0
-
-			task.spawn(function()
-				if s.ActiveTween then
-					s.ActiveTween:Cancel() 
-					s.ActiveTween = nil
-				end
-
-				s.Pathfinder:Stop()
-				s.Pathfinder:Run(slots[i].Position)
-			end)
-		end
-	end
 end
 
 local function applyDamage(targetNpc, damage)
@@ -731,14 +718,10 @@ end
 local function flushRespawnQueue(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
-	-- Skip if company is completely empty
-	if not comp.slots or #comp.slots == 0 then return end
 	if comp.isBroken then return end
 	if comp.bearerRespawnGate then return end
 	if comp.isRespawning then return end  -- serialization lock
 	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
-	if isEnemyBearerNearby(player, companyIndex) then return end
-	-- pain
 
 	local bearerPos = nil
 	for _, sid in ipairs(comp.slots) do
@@ -748,6 +731,8 @@ local function flushRespawnQueue(player, companyIndex)
 			break
 		end
 	end
+	-- Fallback: If no bearer exists (company wiped), spawn at the formation anchor
+	bearerPos = bearerPos or (comp.anchorCF and comp.anchorCF.Position)
 	if not bearerPos then return end
 
 	local currentTime = os.clock()
@@ -774,10 +759,25 @@ local function flushRespawnQueue(player, companyIndex)
 
 		if npc and companies[player] and companies[player][companyIndex] then
 			local c = companies[player][companyIndex]
+			
+			-- Promotion Logic: If the company was wiped, the first bot back is the new bearer
+			local isNewBearer = (#c.slots == 0)
+			
 			npc.IsRegiment   = true
 			npc.CompanyOwner = player
 			npc.CompanyIndex = companyIndex
 			npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0, 0, -1)
+
+			if isNewBearer then
+				npc.IsFlagBearer = true
+				npc.BearerMode   = c.savedBearerMode or BEARER_MODE_CENTER
+				npc.IsPacing     = c.savedBearerPacing or false
+				npc.PaceDirection = 1
+				npc.WeaponState  = WEAPON_IDLE
+				npc.WeaponTimer  = 0
+				npc.WeaponTarget = nil
+				npc.AimAlign.Enabled = false
+			end
 
 			table.insert(c.slots, npc.ShortId)
 
@@ -823,11 +823,13 @@ local function flushRespawnQueue(player, companyIndex)
 					pos          = npc.Root.CFrame.Position,
 					yaw          = getYaw(npc.Root.CFrame),
 					teamName     = npc.TeamName,
-					isBearer     = false,
+					isBearer     = isNewBearer,
 					companyIndex = companyIndex,
 					ownerUserId  = player.UserId,
 				})
-				Network.NpcWeaponState.Fire(p, npc.ShortId, WEAPON_IDLE)
+				if not isNewBearer then
+					Network.NpcWeaponState.Fire(p, npc.ShortId, WEAPON_IDLE)
+				end
 			end
 
 			syncCompanies(player)
@@ -1136,9 +1138,25 @@ end
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
 		for compIdx, comp in pairs(playerCompanies) do
-			-- Disable all processing if company is completely wiped out
-			if not comp.slots or #comp.slots == 0 then continue end
+			local slotCount = comp.slots and #comp.slots or 0
 			
+			-- Morale/Respawn logic for empty companies
+			if slotCount == 0 then
+				if comp.isBroken then
+					comp.brokenTimer = math.max(0, comp.brokenTimer - dt)
+					if comp.brokenTimer <= 0 then
+						comp.isBroken = false
+						comp.tickets = math.floor(MAX_TICKETS / 2)
+						broadcastStrength(player, compIdx)
+					end
+				end
+
+				if comp.respawnQueue and #comp.respawnQueue > 0 then
+					flushRespawnQueue(player, compIdx)
+				end
+				continue -- Skip heavy calculations (detection, decay, regen)
+			end
+
 			if comp.isBroken then
 				if comp.brokenTimer > 0 then
 					comp.brokenTimer = math.max(0, comp.brokenTimer - dt)
@@ -1170,7 +1188,7 @@ local function processTickets(dt)
 					if comp.tickets ~= prev then broadcastStrength(player, compIdx) end
 				end
 
-			-- Decay: Only drain if enemies nearby (to encourage defensive play)
+			-- Decay: Only drain if enemies nearby
 			local enemyNear = isEnemyBearerNearby(player, compIdx)
 			if enemyNear then
 				comp.decayAccum = (comp.decayAccum or 0) + dt
@@ -1202,6 +1220,8 @@ local function processMelee(dt)
 	for player, playerCompanies in pairs(companies) do
 		for compIdx, comp in pairs(playerCompanies) do
 			if not comp.isMelee then continue end
+			-- Shutdown logic: If no bots exist, don't calculate melee states/pathfinding
+			if not comp.slots or #comp.slots == 0 then continue end
 
 			local targetComp = comp.meleeTargetPlayer
 				and companies[comp.meleeTargetPlayer]
@@ -1281,7 +1301,7 @@ local function processMelee(dt)
 					local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
 					if dist <= MELEE_ENGAGE_RANGE then
 						setNpcMeleeState(npc, MELEE_BOT_ATK)
-					else
+					elseif dist > MELEE_ENGAGE_RANGE + 2 then  -- small hysteresis to prevent flickering
 						setNpcMeleeState(npc, MELEE_ADVANCE)
 					end
 
@@ -1418,6 +1438,7 @@ RunService.Heartbeat:Connect(function(dt)
 	
 	processCombat(dt)
 	processTickets(dt)
+	processMelee(dt)
 
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
