@@ -10,7 +10,6 @@ local ANIM_FOLDER     = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Musket")
 local SOUND_PATH      = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Sounds"):WaitForChild("Fire")
 
 local BULLET_SPEED    = 350  -- studs per second
-local BULLET_SPREAD   = 6    -- degrees, cone spread angle
 local SOUND_DISTANCE_THRESHOLD = 85  -- studs (from camera)
 
 local STATE_TO_ANIM = {
@@ -32,6 +31,7 @@ local MELEE_STATE_TO_ANIM = {
 	[5] = "bayonetupstart",
 	[6] = "bayonetupidle",
 	[7] = "bayonetupattack",
+	[8] = "bayonetidle",
 }
 
 local MusketUtils = {}
@@ -183,18 +183,8 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 	if totalDist < 0.01 then return end
 
 	local unitDir = direction.Unit
-	
-	-- Apply bullet spread in a cone
-	if BULLET_SPREAD > 0 then
-		local spreadRad = math.rad(BULLET_SPREAD)
-		local randomYaw = (math.random() - 0.5) * spreadRad
-		local randomPitch = (math.random() - 0.5) * spreadRad
-		local cf = CFrame.lookAt(Vector3.zero, unitDir)
-		cf = cf * CFrame.Angles(randomPitch, randomYaw, 0)
-		unitDir = cf.LookVector
-	end
 	local traveled = 0
-
+	
 	local bullet = Instance.new("Part")
 	bullet.Name       = "Bullet"
 	bullet.Anchored   = true
@@ -291,10 +281,12 @@ end
 
 function MusketUtils:PlayMeleeState(state: number)
 	if self._destroyed then return end
-	for _, track in pairs(self._tracks) do
+	for _, track in pairs(self._tracks or {}) do
 		if track and track.IsPlaying then track:Stop() end
 	end
 	local animName = MELEE_STATE_TO_ANIM[state]
+	print("[Client Anim] NPC", self._model.Name, "mapping State", state, "to Anim:", animName)
+
 	for name, track in pairs(self._meleeTracks or {}) do
 		if track and track.IsPlaying and name ~= animName then track:Stop() end
 	end
