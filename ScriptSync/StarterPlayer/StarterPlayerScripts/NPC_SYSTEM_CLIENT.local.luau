@@ -444,7 +444,7 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 		if npcOwner == ownerUserId then
 			local idx = rep.Client:GetAttribute("CompanyIndex")
 			if idx == companyIndex then
-				print("[APPLY] NPC", shortId, "->", canAttackState)
+			--	print("[APPLY] NPC", shortId, "->", canAttackState)
 				mu:SetCanShoot(canAttackState)
 			end
 		end
@@ -588,15 +588,15 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			end
 			
 		elseif key == Enum.KeyCode.T then
-			print("[Melee Input] T pressed. Toggling melee mode...")
+		--	print("[Melee Input] T pressed. Toggling melee mode...")
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
-			print(selectedList)
+		--	print(selectedList)
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
 				local newMelee = not meleeMode[compIdx]
 				meleeMode[compIdx] = newMelee
-				print("[Melee Input] Company", compIdx, "Melee Mode:", newMelee)
+			--	print("[Melee Input] Company", compIdx, "Melee Mode:", newMelee)
 				hud:setMeleeState(compIdx, newMelee) -- Update HUD to show melee state
 				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
 				
@@ -671,11 +671,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			end
 
 			if closestTarget then
-				print("[Melee Input] Targeted closest enemy company. Distance:", math.round(minTargetDist))
+			--	print("[Melee Input] Targeted closest enemy company. Distance:", math.round(minTargetDist))
 				for _, compIdx in ipairs(selectedList) do
 					if meleeMode[compIdx] and companySlots[compIdx] then
 						Network.NpcMeleeTarget.Fire(compIdx, closestTarget.ownerUserId, closestTarget.compIdx)
-						print("[Melee Input] Sent target command for Company", compIdx, "to Enemy Owner:", closestTarget.ownerUserId)
+					--	print("[Melee Input] Sent target command for Company", compIdx, "to Enemy Owner:", closestTarget.ownerUserId)
 					end
 				end
 				return  -- consumed the click

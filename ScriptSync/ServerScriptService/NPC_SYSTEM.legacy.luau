@@ -1023,7 +1023,7 @@ local function setNpcMeleeState(npc, state)
 	npc.MeleeState = state
 	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
 	
-	print("[Server Melee] NPC", npc.ShortId, "transitioning to State:", state, "Timer:", npc.MeleeTimer)
+--	print("[Server Melee] NPC", npc.ShortId, "transitioning to State:", state, "Timer:", npc.MeleeTimer)
 	
 	-- Reset hit gate when starting a new thrust animation
 	if state == MELEE_BOT_START or state == MELEE_UP_START then
@@ -1041,7 +1041,7 @@ local function setNpcMeleeState(npc, state)
 			local dist = (target.Root.Position - npc.Root.Position).Magnitude
 			if dist <= MELEE_ENGAGE_RANGE + 2 then
 				applyDamage(target, MELEE_DAMAGE)
-				print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
+			--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
 				npc.MeleeHasHit = true
 			end
 		end
@@ -1363,7 +1363,7 @@ local function processMelee(dt)
 						
 						if nearestEnemyPos then
 							-- Override follow position with flee position
-							print("[Server Melee] Flag Bearer", npc.ShortId, "is FLEEING from nearby enemy!")
+						--	print("[Server Melee] Flag Bearer", npc.ShortId, "is FLEEING from nearby enemy!")
 							local fleeDir = (npc.Root.Position - nearestEnemyPos).Unit
 							movePos = npc.Root.Position + fleeDir * MELEE_BEARER_FLEE_DIST
 						end
@@ -1379,7 +1379,7 @@ local function processMelee(dt)
 
 				-- Re-acquire if target died
 				if npc.MeleeTarget and not activeNpcs[npc.MeleeTarget.ShortId] then
-					print("[Server Melee] NPC", npc.ShortId, "target died or missing. Re-acquiring...")
+				--	print("[Server Melee] NPC", npc.ShortId, "target died or missing. Re-acquiring...")
 					npc.MeleeTarget = nil
 					setNpcMeleeState(npc, MELEE_IDLE)
 				end
@@ -1396,7 +1396,7 @@ local function processMelee(dt)
 					end
 					if nearest then
 						npc.MeleeTarget = nearest
-						print("[Server Melee] NPC", npc.ShortId, "found new target:", nearest.ShortId)
+					--	print("[Server Melee] NPC", npc.ShortId, "found new target:", nearest.ShortId)
 						setNpcMeleeState(npc, MELEE_ADVANCE)
 					end
 
@@ -1417,7 +1417,7 @@ local function processMelee(dt)
 					end
 					if dist <= MELEE_ENGAGE_RANGE then
 						npc.Pathfinder:Stop()
-						print("[Server Melee] NPC", npc.ShortId, "in range of target. Starting attack.")
+					--	print("[Server Melee] NPC", npc.ShortId, "in range of target. Starting attack.")
 						setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 					end
 
@@ -1793,7 +1793,7 @@ end)
 
 Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	if not companies[player] or not companies[player][companyIndex] then return end
-	print("[Server Network] Melee Toggle received from", player.Name, "for Company", companyIndex, "Value:", isMelee)
+--	print("[Server Network] Melee Toggle received from", player.Name, "for Company", companyIndex, "Value:", isMelee)
 	local comp = companies[player][companyIndex]
 	comp.isMelee = isMelee
 
@@ -1827,7 +1827,7 @@ end)
 
 Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targetCompanyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
-	print("[Server Network] Melee Target received from", player.Name, "Target Owner ID:", targetOwnerUserId)
+--	print("[Server Network] Melee Target received from", player.Name, "Target Owner ID:", targetOwnerUserId)
 	local comp = companies[player][companyIndex]
 	if not comp.isMelee then return end
 
@@ -1856,7 +1856,7 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 				setNpcMeleeState(eNpc, MELEE_IDLE)
 			end
 		end
-		print("[Server Melee] Mutual engagement established between", player.Name, "and", targetPlayer.Name)
+	--	print("[Server Melee] Mutual engagement established between", player.Name, "and", targetPlayer.Name)
 	end
 
 	-- Reset all bots to IDLE so processMelee re-acquires targets
