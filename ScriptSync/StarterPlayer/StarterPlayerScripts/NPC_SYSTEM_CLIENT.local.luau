@@ -56,7 +56,7 @@ local meleeRayParams = RaycastParams.new()
 meleeRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 local function updateMeleeRayFilter()
-	local list = {}
+	local list = { workspace:WaitForChild("Npc_Registry") }
 	if localPlayer.Character then table.insert(list, localPlayer.Character) end
 	meleeRayParams.FilterDescendantsInstances = list
 end
@@ -122,15 +122,13 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 	end
 
 	-- Only store owner if it's a real player (0 = no owner)
-	local hasOwner = ownerUserId and ownerUserId ~= 0
-	if hasOwner then
-		clientModel:SetAttribute("OwnerUserId", ownerUserId)
-		npcOwners[shortId] = ownerUserId
-	end
+	ownerUserId = ownerUserId or 0
+	clientModel:SetAttribute("OwnerUserId", ownerUserId)
+	npcOwners[shortId] = ownerUserId
 
 	if not isBearer then
 		local mu = MusketUtils.new(clientModel, teamName)
-		if companyIndex and hasOwner then
+		if companyIndex and ownerUserId ~= 0 then
 			local ownerState = canAttack[ownerUserId]
 			local shouldShoot = true
 
@@ -590,7 +588,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			end
 			
 		elseif key == Enum.KeyCode.T then
-			print("t yes")
+			print("[Melee Input] T pressed. Toggling melee mode...")
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
 			print(selectedList)
@@ -598,6 +596,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				if not companySlots[compIdx] then continue end
 				local newMelee = not meleeMode[compIdx]
 				meleeMode[compIdx] = newMelee
+				print("[Melee Input] Company", compIdx, "Melee Mode:", newMelee)
 				hud:setMeleeState(compIdx, newMelee) -- Update HUD to show melee state
 				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
 				
@@ -620,6 +619,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	local selectedList = hud:getSelectedList()
 
 	-- Check if any selected company is in melee mode
+	if #selectedList > 0 then print("[Melee Input] Click detected with", #selectedList, "companies selected.") end
 	local anyMelee = false
 	for _, compIdx in ipairs(selectedList) do
 		if meleeMode[compIdx] then anyMelee = true break end
@@ -629,30 +629,60 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		local pos    = UserInputService:GetMouseLocation()
 		local ray    = camera:ViewportPointToRay(pos.X, pos.Y)
 		local result = workspace:Raycast(ray.Origin, ray.Direction * 2000, meleeRayParams)
-		local foundTarget = false
 
 		if result then
-			-- Walk up hierarchy to find NPC model in Npc_Registry
-			local model = result.Instance
+			local clickPos = result.Position
+			local DETECT_RADIUS = 30  -- More forgiving radius for group targeting
+
+			-- Collect all enemy NPC candidates near the click
+			local candidates = {}
 			local registry = workspace:FindFirstChild("Npc_Registry")
-			while model and model.Parent ~= registry and model ~= workspace do
-				model = model.Parent
-			end
-			
-			if model and model.Parent == registry then
-				local targetOwner   = model:GetAttribute("OwnerUserId")
-				local targetCompIdx = model:GetAttribute("CompanyIndex")
-				if targetCompIdx and (targetOwner ~= localPlayer.UserId) then
-					for _, compIdx in ipairs(selectedList) do
-						if meleeMode[compIdx] and companySlots[compIdx] then
-							Network.NpcMeleeTarget.Fire(compIdx, targetOwner, targetCompIdx)
-						end
+			local closestTarget, minTargetDist = nil, math.huge
+
+			if registry then
+				for shortId, rep in pairs(replicators) do
+					if not (rep and rep.Client) then continue end
+					
+					local ownerUserId = rep.Client:GetAttribute("OwnerUserId") 
+					local compIdx     = rep.Client:GetAttribute("CompanyIndex")
+					
+					-- Enhanced targeting debug
+					if ownerUserId == nil or compIdx == nil then 
+						continue 
 					end
-					foundTarget = true
+					
+					if ownerUserId == localPlayer.UserId then 
+						continue -- skip own bots
+					end
+
+					local root = rep.Root
+					if not root then continue end
+					
+					-- Flat distance check
+					local dist = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(clickPos.X, 0, clickPos.Z)).Magnitude
+					if dist <= DETECT_RADIUS and dist < minTargetDist then
+						minTargetDist = dist
+						closestTarget = {
+							ownerUserId = ownerUserId,
+							compIdx     = compIdx,
+						}
+					end
 				end
 			end
+
+			if closestTarget then
+				print("[Melee Input] Targeted closest enemy company. Distance:", math.round(minTargetDist))
+				for _, compIdx in ipairs(selectedList) do
+					if meleeMode[compIdx] and companySlots[compIdx] then
+						Network.NpcMeleeTarget.Fire(compIdx, closestTarget.ownerUserId, closestTarget.compIdx)
+						print("[Melee Input] Sent target command for Company", compIdx, "to Enemy Owner:", closestTarget.ownerUserId)
+					end
+				end
+				return  -- consumed the click
+			end
 		end
-		if foundTarget then return end -- Only block movement if we actually clicked an enemy
+
+		-- Click missed all enemies — fall through to normal formation drag
 	end
 
 	local hit = raycastMouse()
