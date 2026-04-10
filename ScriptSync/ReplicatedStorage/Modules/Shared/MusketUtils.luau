@@ -11,6 +11,8 @@ local SOUND_PATH      = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("S
 
 local BULLET_SPEED    = 350  -- studs per second
 local SOUND_DISTANCE_THRESHOLD = 85  -- studs (from camera)
+local BULLET_SPREAD   = 3    -- degrees
+local COMBAT_RANGE    = 400
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",
@@ -170,6 +172,38 @@ function MusketUtils:FaceTarget(targetPos: Vector3)
 	root.CFrame = newCF
 end
 
+function MusketUtils:CalculateHit(targetPos: Vector3): (number, Vector3)
+	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)
+	local origin = muzzle and muzzle.Position or (self._model.PrimaryPart.Position + Vector3.new(0, 1.5, 0))
+	
+	local direction = (targetPos - origin).Unit
+	
+	-- Apply Spread
+	local spreadRad = math.rad(BULLET_SPREAD)
+	local randomYaw = (math.random() - 0.5) * spreadRad
+	local randomPitch = (math.random() - 0.5) * spreadRad
+	local spreadCF = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles(randomPitch, randomYaw, 0)
+	local finalDir = spreadCF.LookVector
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { self._model }
+
+	local result = workspace:Raycast(origin, finalDir * COMBAT_RANGE, rayParams)
+	local hitPos = origin + (finalDir * COMBAT_RANGE)
+	local victimId = 0
+
+	if result then
+		hitPos = result.Position
+		local hitModel = result.Instance:FindFirstAncestorOfClass("Model")
+		if hitModel and hitModel.Name:sub(1, 4) == "NPC_" then
+			victimId = tonumber(hitModel.Name:sub(5)) or 0
+		end
+	end
+
+	return victimId, hitPos
+end
+
 function MusketUtils:_fireBullet(targetPos: Vector3)
 	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)
 	if not muzzle then
@@ -229,7 +263,7 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { self._model, workspace:FindFirstChild("Npc_Registry") }
+	rayParams.FilterDescendantsInstances = { self._model }
 
 	task.spawn(function()
 		while traveled < totalDist do
