@@ -12,7 +12,7 @@ local TweenService      = game:GetService("TweenService")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
-local MatchManager = require(game.ServerScriptService.MatchManager)
+local MatchManager 		= require(ReplicatedStorage.Modules.Server.MatchManager)
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)

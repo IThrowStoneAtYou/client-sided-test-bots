@@ -178,3 +178,11 @@ event MatchIntermission {
     Data: u16
     -- secondsRemaining
 }
+
+event MatchNotification {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (string, u8, string, u8, u8, u16)
+    -- victimName, victimCompIdx, attackerName, attackerCompIdx, eventType(1=broke 2=overrun), cost
+}

@@ -23,7 +23,7 @@ local SLIDE_IN = TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirectio
 local FADE_OUT = TweenInfo.new(NOTIF_FADE, Enum.EasingStyle.Linear)
 
 local EVENT_COLOR = {
-	[1] = Color3.fromRGB(255, 160, 30),   -- broke:   orange
+	[1] = Color3.fromRGB(255, 255, 255),   -- broke: white
 	[2] = Color3.fromRGB(200, 55,  55),   -- overrun: red
 }
 
