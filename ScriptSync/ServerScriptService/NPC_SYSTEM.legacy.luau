@@ -12,6 +12,7 @@ local TweenService      = game:GetService("TweenService")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
+local MatchManager = require(game.ServerScriptService.MatchManager)
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -490,7 +491,6 @@ local function broadcastStrength(player, companyIndex)
 	end
 end
 
-
 local function replaceBearer(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
@@ -623,6 +623,16 @@ local function killNpc(shortId)
 	for i = #comp.slots, 1, -1 do
 		if comp.slots[i] == shortId then
 			table.remove(comp.slots, i)
+			
+			local teamName = npc.TeamName
+			MatchManager.onBotDied(teamName)
+
+			if #comp.slots == 0 then
+				MatchManager.onCompanyOverrun(
+					owner, compIdx,
+					comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+				)
+			end
 			break
 		end
 	end
@@ -666,9 +676,13 @@ local function killNpc(shortId)
 	if not comp.isBroken then
 		comp.tickets = math.max(0, comp.tickets - cost)
 		if comp.tickets <= 0 then
-			comp.isBroken         = true
-			comp.brokenTimer      = BROKEN_RECOVERY_TIME
+			comp.isBroken             = true
+			comp.brokenTimer          = BROKEN_RECOVERY_TIME
 			comp.brokenBroadcastAccum = 0
+			MatchManager.onCompanyBroke(
+				owner, compIdx,
+				comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+			)
 		end
 		broadcastStrength(owner, compIdx)
 	end
@@ -678,8 +692,19 @@ local function killNpc(shortId)
 	syncCompanies(owner)
 end
 
-local function applyDamage(targetNpc, damage)
+local function applyDamage(targetNpc, damage, attackerNpc)
 	if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
+
+	-- Track who last damaged this company so broke/overrun knows the attacker
+	if attackerNpc then
+		local comp = companies[targetNpc.CompanyOwner]
+			and companies[targetNpc.CompanyOwner][targetNpc.CompanyIndex]
+		if comp then
+			comp.lastAttackerPlayer  = attackerNpc.CompanyOwner
+			comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
+		end
+	end
+
 	targetNpc.Health -= damage
 	if targetNpc.Health <= 0 then
 		killNpc(targetNpc.ShortId)
@@ -763,7 +788,7 @@ local function setNpcMeleeState(npc, state)
 		if target and activeNpcs[target.ShortId] then
 			local dist = (target.Root.Position - npc.Root.Position).Magnitude
 			if dist <= MELEE_ENGAGE_RANGE + 2 then
-				applyDamage(target, MELEE_DAMAGE)
+				applyDamage(target, MELEE_DAMAGE, npc)
 				--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
 				npc.MeleeHasHit = true
 			end
@@ -1218,7 +1243,7 @@ local function setNpcWeaponState(npc, state, targetPos)
 			if result then
 				actualHitPos = result.Position
 				if target and target.Model and (result.Instance == target.Root or result.Instance.Name == "Torso") then
-					applyDamage(target, MUSKET_DAMAGE)
+					applyDamage(target, MUSKET_DAMAGE, npc)
 				end
 			else
 				actualHitPos = origin + finalDir * COMBAT_RANGE
@@ -1235,22 +1260,6 @@ local function setNpcWeaponState(npc, state, targetPos)
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
 	end
 end
-
-Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
-	local attacker = activeNpcs[attackerId]
-	if not attacker or attacker.CompanyOwner ~= player then return end
-
-	-- Apply damage if a victim was hit
-	if victimId > 0 then
-		local victim = activeNpcs[victimId]
-		if victim then
-			applyDamage(victim, MUSKET_DAMAGE)
-		end
-	end
-
-	-- Broadcast the tracer to everyone else so they see where the bullet landed
-	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
-end)
 
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
@@ -1318,6 +1327,8 @@ local function processTickets(dt)
 							comp.isBroken             = true
 							comp.brokenTimer          = BROKEN_RECOVERY_TIME
 							comp.brokenBroadcastAccum = 0
+							
+							MatchManager.onCompanyBroke(player.Team and player.Team.Name or nil)
 						end
 						broadcastStrength(player, compIdx)
 					end
@@ -1694,6 +1705,8 @@ end)
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
+	
+	MatchManager.syncPlayer(player)
 
 	local batchList = {}
 	for shortId, npc in pairs(activeNpcs) do
@@ -1906,4 +1919,20 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 		npc.MeleeTarget = nil
 		setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 	end
+end)
+
+Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
+	local attacker = activeNpcs[attackerId]
+	if not attacker or attacker.CompanyOwner ~= player then return end
+
+	-- Apply damage if a victim was hit
+	if victimId > 0 then
+		local victim = activeNpcs[victimId]
+		if victim then
+			applyDamage(victim, MUSKET_DAMAGE, activeNpcs[attackerId])
+		end
+	end
+
+	-- Broadcast the tracer to everyone else so they see where the bullet landed
+	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)
