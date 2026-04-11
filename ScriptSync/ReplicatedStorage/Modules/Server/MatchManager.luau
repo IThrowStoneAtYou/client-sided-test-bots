@@ -50,9 +50,10 @@ local teamTickets: { [number]: number } = {
 	[2] = STARTING_TICKETS,
 }
 
-local stage           = STAGE.WAITING
-local stageTimer      = 0
-local broadcastAccum  = 0
+local stage                    = STAGE.WAITING
+local stageTimer               = 0
+local broadcastAccum           = 0
+local intermissionBroadcastAccum = 0
 
 -- ── Borders ───────────────────────────────────────────────────────────
 
@@ -163,7 +164,11 @@ RunService.Heartbeat:Connect(function(dt)
 	stageTimer = math.max(0, stageTimer - dt)
 
 	if stage == STAGE.INTERMISSION then
-		broadcastIntermission()
+		intermissionBroadcastAccum += dt
+		if intermissionBroadcastAccum >= 1 then
+			intermissionBroadcastAccum -= 1
+			broadcastIntermission()
+		end
 
 		if stageTimer <= 0 then
 			startMatch()

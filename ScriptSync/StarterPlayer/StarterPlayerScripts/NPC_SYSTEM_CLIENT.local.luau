@@ -38,6 +38,9 @@ local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
 local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
 local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
 
+local localTimeRemaining = 0
+local localTimerMode     = "none"   -- "match" | "intermission" | "none"
+
 local meleeMode = {}  -- [companyIndex] = boolean
 
 local meleeRayParams = RaycastParams.new()
@@ -810,19 +813,24 @@ Network.NpcMeleeState.On(function(shortId, state)
 end)
 
 Network.MatchUpdate.On(function(t1, t2, timeRemaining)
+	localTimeRemaining = timeRemaining
+	localTimerMode     = "match"
 	matchHud:update(t1, t2, timeRemaining)
 end)
 
 Network.MatchEnd.On(function(winner, t1, t2)
+	localTimerMode = "none"
 	matchHud:showResult(winner, t1, t2)
 end)
 
 Network.MatchIntermission.On(function(secondsLeft)
+	localTimeRemaining = secondsLeft
+	localTimerMode     = "intermission"
 	matchHud:showIntermission(secondsLeft)
 end)
 
-Network.MatchNotification.On(function(victimName, victimComp, attackerName, attackerComp, eventType, cost)
-	notifHud:push(victimName, victimComp, attackerName, attackerComp, eventType, cost)
+Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost)
+	notifHud:push(vName, vIdx, aName, aIdx, eType, cost)
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────
@@ -839,9 +847,17 @@ RunService.RenderStepped:Connect(function(dt)
 	local parts   = {}
 	local cframes = {}
 
-	-- Update Compass
---compass:Update(camera.CFrame)
+	-- ── Client-side timer countdown ───────────────────────────────────
+	if localTimerMode ~= "none" then
+		localTimeRemaining = math.max(0, localTimeRemaining - dt)
+		if localTimerMode == "match" then
+			matchHud:setTimerOnly(localTimeRemaining)
+		elseif localTimerMode == "intermission" then
+			matchHud:setIntermissionTimer(localTimeRemaining)
+		end
+	end
 
+	-- ── NPC render ────────────────────────────────────────────────────
 	for _, rep in pairs(replicators) do
 		local cf = rep:ComputeCFrame(dt, serverTime)
 		if cf then

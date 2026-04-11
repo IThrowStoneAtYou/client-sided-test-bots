@@ -491,7 +491,153 @@ local function broadcastStrength(player, companyIndex)
 	end
 end
 
-local function replaceBearer(player, companyIndex, deadBearerPos)
+local applyDamage
+local setNpcMeleeState
+local killNpc
+local replaceBearer
+
+applyDamage = function(targetNpc, damage, attackerNpc)
+	if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
+
+	-- Track who last damaged this company so broke/overrun knows the attacker
+	if attackerNpc then
+		local comp = companies[targetNpc.CompanyOwner]
+			and companies[targetNpc.CompanyOwner][targetNpc.CompanyIndex]
+		if comp then
+			comp.lastAttackerPlayer  = attackerNpc.CompanyOwner
+			comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
+		end
+	end
+
+	targetNpc.Health -= damage
+	if targetNpc.Health <= 0 then
+		killNpc(targetNpc.ShortId)
+	end
+end
+
+setNpcMeleeState = function(npc, state)
+	npc.MeleeState = state
+	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
+
+	-- Reset hit gate when starting a new thrust animation
+	if state == MELEE_BOT_START or state == MELEE_UP_START then
+		npc.MeleeHasHit = false
+	end
+
+	for p in pairs(readyPlayers) do
+		Network.NpcMeleeState.Fire(p, npc.ShortId, state)
+	end
+
+	-- Deal damage only once during the actual attack phase
+	if (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) and npc.MeleeTarget and not npc.MeleeHasHit then
+		local target = npc.MeleeTarget
+		if target and activeNpcs[target.ShortId] then
+			local dist = (target.Root.Position - npc.Root.Position).Magnitude
+			if dist <= MELEE_ENGAGE_RANGE + 2 then
+				applyDamage(target, MELEE_DAMAGE, npc)
+				--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
+				npc.MeleeHasHit = true
+			end
+		end
+	end
+
+end
+
+killNpc = function(shortId)	
+	local npc = activeNpcs[shortId]
+	if not npc then return end
+
+	local wasBearer  = npc.IsFlagBearer
+	local deadPos    = npc.Root.Position
+	local wasWalking = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
+	local owner      = npc.CompanyOwner
+	local compIdx    = npc.CompanyIndex
+
+	for p in pairs(readyPlayers) do
+		Network.NpcDespawn.Fire(p, shortId)
+		if farLastSent[p] then farLastSent[p][shortId] = nil end
+	end
+
+	if npc.Pathfinder then npc.Pathfinder:Destroy() end
+	if npc.Model then npc.Model:Destroy() end
+	activeNpcs[shortId] = nil
+
+	if not owner or not compIdx then return end
+	local comp = companies[owner] and companies[owner][compIdx]
+	if not comp then return end
+
+	for i = #comp.slots, 1, -1 do
+		if comp.slots[i] == shortId then
+			table.remove(comp.slots, i)
+
+			local teamName = npc.TeamName
+			MatchManager.onBotDied(teamName)
+
+			if #comp.slots == 0 then
+				MatchManager.onCompanyOverrun(
+					owner, compIdx,
+					comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+				)
+			end
+			break
+		end
+	end
+
+	if wasBearer then
+		-- npc is still valid here, activeNpcs[shortId] was already cleared above
+		-- so read directly from the local npc reference captured at top of killNpc
+		comp.savedBearerMode   = npc.BearerMode or BEARER_MODE_CENTER
+		comp.savedBearerPacing = npc.IsPacing   or false
+
+		replaceBearer(owner, compIdx, deadPos)
+	else
+		local soldierIds = {}
+		for _, sid in ipairs(comp.slots) do
+			local s = activeNpcs[sid]
+			if s and not s.IsFlagBearer then
+				soldierIds[#soldierIds + 1] = sid
+			end
+		end
+
+		local soldierCount = #soldierIds
+		if not comp.isMelee and soldierCount > 0 and comp.anchorCF then
+			local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, comp.ranks, comp.files)
+			for i, sid in ipairs(soldierIds) do
+				local s = activeNpcs[sid]
+				if not s then continue end
+				s.RegimentTarget = slots[i].Position
+				s.MoveRetries    = 0
+				task.spawn(function()
+					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+					s.Pathfinder:Stop()
+					s.Pathfinder:Run(slots[i].Position)
+				end)
+			end
+		end
+	end
+
+	-- Ticket deduction
+	local cost = wasWalking and TICKET_COST_MOVING or TICKET_COST_STATIONARY
+	if not comp.isBroken then
+		comp.tickets = math.max(0, comp.tickets - cost)
+		if comp.tickets <= 0 then
+			comp.isBroken             = true
+			comp.brokenTimer          = BROKEN_RECOVERY_TIME
+			comp.brokenBroadcastAccum = 0
+			MatchManager.onCompanyBroke(
+				owner, compIdx,
+				comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+			)
+		end
+		broadcastStrength(owner, compIdx)
+	end
+
+	if not comp.respawnQueue then comp.respawnQueue = {} end
+	table.insert(comp.respawnQueue, os.clock())
+	syncCompanies(owner)
+end
+
+replaceBearer = function(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
 
@@ -570,7 +716,7 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 	end
 
 	local soldierCount = #soldierIds
-	if soldierCount > 0 and comp.anchorCF then
+	if not comp.isMelee and soldierCount > 0 and comp.anchorCF then
 		-- Use original formation dimensions - DO NOT recalculate ranks
 		-- Preserve the exact formation shape from when orderCompany was called
 		local files = comp.originalFiles or comp.files
@@ -595,120 +741,6 @@ local function replaceBearer(player, companyIndex, deadBearerPos)
 			comp.bearerRespawnGate = false
 		end
 	end)
-end
-
-local function killNpc(shortId)	
-	local npc = activeNpcs[shortId]
-	if not npc then return end
-
-	local wasBearer  = npc.IsFlagBearer
-	local deadPos    = npc.Root.Position
-	local wasWalking = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
-	local owner      = npc.CompanyOwner
-	local compIdx    = npc.CompanyIndex
-
-	for p in pairs(readyPlayers) do
-		Network.NpcDespawn.Fire(p, shortId)
-		if farLastSent[p] then farLastSent[p][shortId] = nil end
-	end
-
-	if npc.Pathfinder then npc.Pathfinder:Destroy() end
-	if npc.Model then npc.Model:Destroy() end
-	activeNpcs[shortId] = nil
-
-	if not owner or not compIdx then return end
-	local comp = companies[owner] and companies[owner][compIdx]
-	if not comp then return end
-
-	for i = #comp.slots, 1, -1 do
-		if comp.slots[i] == shortId then
-			table.remove(comp.slots, i)
-			
-			local teamName = npc.TeamName
-			MatchManager.onBotDied(teamName)
-
-			if #comp.slots == 0 then
-				MatchManager.onCompanyOverrun(
-					owner, compIdx,
-					comp.lastAttackerPlayer, comp.lastAttackerCompIdx
-				)
-			end
-			break
-		end
-	end
-
-	if wasBearer then
-		-- npc is still valid here, activeNpcs[shortId] was already cleared above
-		-- so read directly from the local npc reference captured at top of killNpc
-		comp.savedBearerMode   = npc.BearerMode or BEARER_MODE_CENTER
-		comp.savedBearerPacing = npc.IsPacing   or false
-		
-		replaceBearer(owner, compIdx, deadPos)
-	else
-		-- Only fill gaps if a regular soldier died (bearers handled by replaceBearer)
-		local soldierIds = {}
-		for _, sid in ipairs(comp.slots) do
-			local s = activeNpcs[sid]
-			if s and not s.IsFlagBearer then
-				soldierIds[#soldierIds + 1] = sid
-			end
-		end
-
-		local soldierCount = #soldierIds
-		if soldierCount > 0 and comp.anchorCF then
-			local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, comp.ranks, comp.files)
-			for i, sid in ipairs(soldierIds) do
-				local s = activeNpcs[sid]
-				if not s then continue end
-				s.RegimentTarget = slots[i].Position
-				s.MoveRetries    = 0
-				task.spawn(function()
-					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
-					s.Pathfinder:Stop()
-					s.Pathfinder:Run(slots[i].Position)
-				end)
-			end
-		end
-	end
-
-	-- Ticket deduction
-	local cost = wasWalking and TICKET_COST_MOVING or TICKET_COST_STATIONARY
-	if not comp.isBroken then
-		comp.tickets = math.max(0, comp.tickets - cost)
-		if comp.tickets <= 0 then
-			comp.isBroken             = true
-			comp.brokenTimer          = BROKEN_RECOVERY_TIME
-			comp.brokenBroadcastAccum = 0
-			MatchManager.onCompanyBroke(
-				owner, compIdx,
-				comp.lastAttackerPlayer, comp.lastAttackerCompIdx
-			)
-		end
-		broadcastStrength(owner, compIdx)
-	end
-
-	if not comp.respawnQueue then comp.respawnQueue = {} end
-	table.insert(comp.respawnQueue, os.clock())
-	syncCompanies(owner)
-end
-
-local function applyDamage(targetNpc, damage, attackerNpc)
-	if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
-
-	-- Track who last damaged this company so broke/overrun knows the attacker
-	if attackerNpc then
-		local comp = companies[targetNpc.CompanyOwner]
-			and companies[targetNpc.CompanyOwner][targetNpc.CompanyIndex]
-		if comp then
-			comp.lastAttackerPlayer  = attackerNpc.CompanyOwner
-			comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
-		end
-	end
-
-	targetNpc.Health -= damage
-	if targetNpc.Health <= 0 then
-		killNpc(targetNpc.ShortId)
-	end
 end
 
 local function despawnCompany(player: Player, companyIndex: number)
@@ -764,44 +796,6 @@ end
 local function broadcastCanAttackState(player, companyIndex, state)
 	for p in pairs(readyPlayers) do
 		Network.NpcCanAttackSync.Fire(p, companyIndex, state, player.UserId)
-	end
-end
-
-local function setNpcMeleeState(npc, state)
-	npc.MeleeState = state
-	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
-
-	--	print("[Server Melee] NPC", npc.ShortId, "transitioning to State:", state, "Timer:", npc.MeleeTimer)
-
-	-- Reset hit gate when starting a new thrust animation
-	if state == MELEE_BOT_START or state == MELEE_UP_START then
-		npc.MeleeHasHit = false
-	end
-
-	for p in pairs(readyPlayers) do
-		Network.NpcMeleeState.Fire(p, npc.ShortId, state)
-	end
-
-	-- Deal damage only once during the actual attack phase
-	if (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) and npc.MeleeTarget and not npc.MeleeHasHit then
-		local target = npc.MeleeTarget
-		if target and activeNpcs[target.ShortId] then
-			local dist = (target.Root.Position - npc.Root.Position).Magnitude
-			if dist <= MELEE_ENGAGE_RANGE + 2 then
-				applyDamage(target, MELEE_DAMAGE, npc)
-				--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
-				npc.MeleeHasHit = true
-			end
-		end
-	end
-
-	-- Face target during attacks
-	if npc.MeleeTarget and (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) then
-		local tPos = npc.MeleeTarget.Root and npc.MeleeTarget.Root.Position
-		if tPos then
-			local dir = Vector3.new(tPos.X - npc.Root.Position.X, 0, tPos.Z - npc.Root.Position.Z).Unit
-			npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
-		end
 	end
 end
 
@@ -1328,7 +1322,7 @@ local function processTickets(dt)
 							comp.brokenTimer          = BROKEN_RECOVERY_TIME
 							comp.brokenBroadcastAccum = 0
 							
-							MatchManager.onCompanyBroke(player.Team and player.Team.Name or nil)
+							MatchManager.onCompanyBroke(player, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
 						end
 						broadcastStrength(player, compIdx)
 					end
@@ -1373,7 +1367,9 @@ local function processMelee(dt)
 				-- Flag bearer: follow company center but flee if enemy is too close
 				if npc.IsFlagBearer then
 					local movePos = (validSoldiers > 0) and soldierCenter or npc.Root.Position
-					
+
+					npc._meleePathAccum += dt
+
 					if targetComp then
 						local nearestEnemyPos = nil
 						local nearestDist = math.huge
@@ -1388,7 +1384,7 @@ local function processMelee(dt)
 								end
 							end
 						end
-						
+
 						if nearestEnemyPos then
 							-- Override follow position with flee position
 						--	print("[Server Melee] Flag Bearer", npc.ShortId, "is FLEEING from nearby enemy!")
@@ -1397,7 +1393,8 @@ local function processMelee(dt)
 						end
 					end
 
-					if (npc.Root.Position - movePos).Magnitude > 4 then
+					if npc._meleePathAccum >= 0.4 and (npc.Root.Position - movePos).Magnitude > 4 then
+						npc._meleePathAccum = 0
 						npc.Pathfinder:Run(movePos)
 					end
 					continue
@@ -1712,26 +1709,7 @@ Network.NpcReady.On(function(player)
 	for shortId, npc in pairs(activeNpcs) do
 		if npc.Model and npc.Model.Parent then
 			local cf = npc.Root.CFrame
-			local npcOwner = nil
-
-			for p, comps in pairs(companies) do
-				for idx, company in pairs(comps) do
-					for _, slotId in ipairs(company.slots) do
-						if slotId == shortId then
-							npcOwner = p
-							break
-						end
-					end
-
-					if npcOwner then 
-						break 
-					end
-				end
-
-				if npcOwner then
-					break
-				end
-			end
+			local npcOwner = npc.CompanyOwner
 
 			table.insert(batchList, {
 				id           = shortId,
@@ -1883,10 +1861,7 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	local comp = companies[player][companyIndex]
 	if not comp.isMelee then return end
 
-	local targetPlayer = nil
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.UserId == targetOwnerUserId then targetPlayer = p break end
-	end
+	local targetPlayer = Players:GetPlayerByUserId(targetOwnerUserId)
 	if not targetPlayer then return end
 	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
 
@@ -1925,14 +1900,13 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 	local attacker = activeNpcs[attackerId]
 	if not attacker or attacker.CompanyOwner ~= player then return end
 
-	-- Apply damage if a victim was hit
 	if victimId > 0 then
 		local victim = activeNpcs[victimId]
-		if victim then
-			applyDamage(victim, MUSKET_DAMAGE, activeNpcs[attackerId])
+		-- Friendly fire guard: only damage enemies
+		if victim and victim.TeamName ~= attacker.TeamName then
+			applyDamage(victim, MUSKET_DAMAGE, attacker)
 		end
 	end
 
-	-- Broadcast the tracer to everyone else so they see where the bullet landed
 	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)

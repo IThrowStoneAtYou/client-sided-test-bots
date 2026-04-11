@@ -263,4 +263,16 @@ function MatchHUD:showResult(winner: number, t1: number, t2: number)
 	end
 end
 
+-->>>>>>>>>>>>
+-- Called every client frame to smoothly count down the timer locally.
+function MatchHUD:setTimerOnly(secs: number)
+	self._timer.Text       = fmtTime(secs)
+	self._timer.TextColor3 = Color3.fromRGB(215, 215, 215)
+end
+
+function MatchHUD:setIntermissionTimer(secs: number)
+	self._timer.Text       = "INTERMISSION " .. fmtTime(secs)
+	self._timer.TextColor3 = Color3.fromRGB(200, 200, 100)
+end
+
 return MatchHUD
