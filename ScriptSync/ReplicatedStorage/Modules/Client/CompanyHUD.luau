@@ -81,13 +81,6 @@ end
 -->>>>>>>>>>>>
 -- Returns the accent Color3 for a given company index.
 -- Used to tint UI elements and Highlight instances to company colors.
---
--- Color Mapping:
---   1 → Blue (65, 105, 210)
---   2 → Red (200, 55, 55)
---   3 → Green (55, 170, 90)
---   4 → Gold (210, 160, 35)
---
 function CompanyHUD.getColor(index: number): Color3
 	return COMPANY_COLORS[index]
 end
@@ -778,7 +771,7 @@ function CompanyHUD:_createBrokenPrompt()
 	local panel = Instance.new("Frame")
 	panel.Name              = "BrokenPrompt"
 	panel.Size              = UDim2.new(0, 320, 0, 90)
-	panel.Position          = UDim2.new(0.5, 0, 0, 10)
+	panel.Position 			= UDim2.new(0.5, 0, 0, 92)
 	panel.AnchorPoint       = Vector2.new(0.5, 0)
 	panel.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
 	panel.BackgroundTransparency = 0.15

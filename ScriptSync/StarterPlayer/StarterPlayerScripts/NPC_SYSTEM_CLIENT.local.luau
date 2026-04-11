@@ -1,18 +1,6 @@
 -->>>>>>>>>>>>
 -- NPC_SYSTEM_CLIENT
 -- Version 3.5.0
--- Input Handling:
---   - Click: Places formation at mouse position
---   - Drag: Creates formation preview, updates as you drag (distance = width)
---   - Shift+Click: Multi-select companies
---   - Right-Click: Deselect all
---
--- State Management:
---   - replicators: {shortId → NpcReplicator} for each NPC
---   - companySlots: {companyIndex → {shortId → true}} membership tracking
---   - bearerIds: {shortId → true} tracks which NPCs are flag-bearers
---   - musketUtils: {shortId → MusketUtils} combat/firing system
---   - npcOwners: {shortId → ownerUserId} tracks who spawned each NPC
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -27,11 +15,11 @@ local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild(
 local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
 local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompassHUD"))
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
+local MatchHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("MatchHUD"))
+local NotificationHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("NotificationHUD"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
-
---local RANK_SPACING = 4.5   -- must mirror RegimentFormation
 local COMPANY_GAP  = 10
 
 local Network = require(game.ReplicatedStorage.Blink.Client)
@@ -88,6 +76,10 @@ end
 local hud = CompanyHUD.new(function(selectedList)
 	NpcPreview.applyHighlights(replicators, companySlots, selectedList)
 end)
+
+local matchHud = MatchHUD.new()
+
+local notifHud = NotificationHUD.new()
 
 --local compass = CompassHUD.new()
 
@@ -815,6 +807,22 @@ Network.NpcMeleeState.On(function(shortId, state)
 			mu:PlayMeleeState(state)
 		end
 	end
+end)
+
+Network.MatchUpdate.On(function(t1, t2, timeRemaining)
+	matchHud:update(t1, t2, timeRemaining)
+end)
+
+Network.MatchEnd.On(function(winner, t1, t2)
+	matchHud:showResult(winner, t1, t2)
+end)
+
+Network.MatchIntermission.On(function(secondsLeft)
+	matchHud:showIntermission(secondsLeft)
+end)
+
+Network.MatchNotification.On(function(victimName, victimComp, attackerName, attackerComp, eventType, cost)
+	notifHud:push(victimName, victimComp, attackerName, attackerComp, eventType, cost)
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────

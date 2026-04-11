@@ -12,6 +12,7 @@ local TweenService      = game:GetService("TweenService")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
+local MatchManager 		= require(ReplicatedStorage.Modules.Server.MatchManager)
 
 local SERVER_MODEL  = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -490,7 +491,6 @@ local function broadcastStrength(player, companyIndex)
 	end
 end
 
-
 local function replaceBearer(player, companyIndex, deadBearerPos)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
@@ -623,6 +623,16 @@ local function killNpc(shortId)
 	for i = #comp.slots, 1, -1 do
 		if comp.slots[i] == shortId then
 			table.remove(comp.slots, i)
+			
+			local teamName = npc.TeamName
+			MatchManager.onBotDied(teamName)
+
+			if #comp.slots == 0 then
+				MatchManager.onCompanyOverrun(
+					owner, compIdx,
+					comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+				)
+			end
 			break
 		end
 	end
@@ -666,9 +676,13 @@ local function killNpc(shortId)
 	if not comp.isBroken then
 		comp.tickets = math.max(0, comp.tickets - cost)
 		if comp.tickets <= 0 then
-			comp.isBroken         = true
-			comp.brokenTimer      = BROKEN_RECOVERY_TIME
+			comp.isBroken             = true
+			comp.brokenTimer          = BROKEN_RECOVERY_TIME
 			comp.brokenBroadcastAccum = 0
+			MatchManager.onCompanyBroke(
+				owner, compIdx,
+				comp.lastAttackerPlayer, comp.lastAttackerCompIdx
+			)
 		end
 		broadcastStrength(owner, compIdx)
 	end
@@ -678,8 +692,19 @@ local function killNpc(shortId)
 	syncCompanies(owner)
 end
 
-local function applyDamage(targetNpc, damage)
+local function applyDamage(targetNpc, damage, attackerNpc)
 	if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
+
+	-- Track who last damaged this company so broke/overrun knows the attacker
+	if attackerNpc then
+		local comp = companies[targetNpc.CompanyOwner]
+			and companies[targetNpc.CompanyOwner][targetNpc.CompanyIndex]
+		if comp then
+			comp.lastAttackerPlayer  = attackerNpc.CompanyOwner
+			comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
+		end
+	end
+
 	targetNpc.Health -= damage
 	if targetNpc.Health <= 0 then
 		killNpc(targetNpc.ShortId)
@@ -742,12 +767,50 @@ local function broadcastCanAttackState(player, companyIndex, state)
 	end
 end
 
+local function setNpcMeleeState(npc, state)
+	npc.MeleeState = state
+	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
+
+	--	print("[Server Melee] NPC", npc.ShortId, "transitioning to State:", state, "Timer:", npc.MeleeTimer)
+
+	-- Reset hit gate when starting a new thrust animation
+	if state == MELEE_BOT_START or state == MELEE_UP_START then
+		npc.MeleeHasHit = false
+	end
+
+	for p in pairs(readyPlayers) do
+		Network.NpcMeleeState.Fire(p, npc.ShortId, state)
+	end
+
+	-- Deal damage only once during the actual attack phase
+	if (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) and npc.MeleeTarget and not npc.MeleeHasHit then
+		local target = npc.MeleeTarget
+		if target and activeNpcs[target.ShortId] then
+			local dist = (target.Root.Position - npc.Root.Position).Magnitude
+			if dist <= MELEE_ENGAGE_RANGE + 2 then
+				applyDamage(target, MELEE_DAMAGE, npc)
+				--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
+				npc.MeleeHasHit = true
+			end
+		end
+	end
+
+	-- Face target during attacks
+	if npc.MeleeTarget and (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) then
+		local tPos = npc.MeleeTarget.Root and npc.MeleeTarget.Root.Position
+		if tPos then
+			local dir = Vector3.new(tPos.X - npc.Root.Position.X, 0, tPos.Z - npc.Root.Position.Z).Unit
+			npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
+		end
+	end
+end
+
 local function flushRespawnQueue(player, companyIndex)
 	local comp = companies[player] and companies[player][companyIndex]
 	if not comp then return end
 	if comp.isBroken then return end
 	if comp.bearerRespawnGate then return end
-	if comp.isRespawning then return end  -- serialization lock
+	if comp.isRespawning then return end
 	if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
 
 	local bearerPos = nil
@@ -758,14 +821,12 @@ local function flushRespawnQueue(player, companyIndex)
 			break
 		end
 	end
-	-- Fallback: If no bearer exists (company wiped), spawn at the formation anchor
 	bearerPos = bearerPos or (comp.anchorCF and comp.anchorCF.Position)
 	if not bearerPos then return end
 
 	local currentTime = os.clock()
 	local RESPAWN_DELAY = 3
 
-	-- Find oldest entry that is ready
 	local readyIndex = nil
 	for i, deathTime in ipairs(comp.respawnQueue) do
 		if currentTime - deathTime >= RESPAWN_DELAY then
@@ -775,7 +836,6 @@ local function flushRespawnQueue(player, companyIndex)
 	end
 	if not readyIndex then return end
 
-	-- Remove this entry and lock
 	table.remove(comp.respawnQueue, readyIndex)
 	comp.isRespawning = true
 
@@ -786,33 +846,31 @@ local function flushRespawnQueue(player, companyIndex)
 
 		if npc and companies[player] and companies[player][companyIndex] then
 			local c = companies[player][companyIndex]
-			
-			-- Promotion Logic: If the company was wiped, the first bot back is the new bearer
+
 			local isNewBearer = (#c.slots == 0)
-			
-			npc.IsRegiment   = true
-			npc.CompanyOwner = player
+
+			npc.IsRegiment     = true
+			npc.CompanyOwner   = player
 			npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0, 0, -1)
 
 			if isNewBearer then
-				npc.IsFlagBearer = true
-				npc.BearerMode   = c.savedBearerMode or BEARER_MODE_CENTER
-				npc.IsPacing     = c.savedBearerPacing or false
+				npc.IsFlagBearer  = true
+				npc.BearerMode    = c.savedBearerMode or BEARER_MODE_CENTER
+				npc.IsPacing      = c.savedBearerPacing or false
 				npc.PaceDirection = 1
-				npc.WeaponState  = WEAPON_IDLE
-				npc.WeaponTimer  = 0
-				npc.WeaponTarget = nil
+				npc.WeaponState   = WEAPON_IDLE
+				npc.WeaponTimer   = 0
+				npc.WeaponTarget  = nil
 				npc.AimAlign.Enabled = false
 			elseif c.isMelee then
-				-- Issue 2: Ensure respawned NPCs inherit the melee state
-				npc.MeleeState = MELEE_IDLE
-				npc.MeleeTimer = 0
+				npc.MeleeState  = MELEE_IDLE
+				npc.MeleeTimer  = 0
 				npc.MeleeTarget = nil
 			end
 
 			table.insert(c.slots, npc.ShortId)
 
-			-- Reassign formation using original dimensions (preserved from spawn)
+			-- Collect non-bearer soldiers
 			local soldierIds = {}
 			for _, sid in ipairs(c.slots) do
 				local s = activeNpcs[sid]
@@ -822,8 +880,17 @@ local function flushRespawnQueue(player, companyIndex)
 			end
 
 			local soldierCount = #soldierIds
-			if soldierCount > 0 and c.anchorCF then
-				-- Use ORIGINAL ranks/files, not recalculated
+
+			if c.isMelee then
+				-- In melee mode: do not reassign formation slots.
+				-- Let processMelee acquire targets naturally on the next tick.
+				for _, sid in ipairs(soldierIds) do
+					local s = activeNpcs[sid]
+					if not s or s.IsFlagBearer then continue end
+					s.MeleeTarget = nil
+					setNpcMeleeState(s, MELEE_IDLE)
+				end
+			elseif soldierCount > 0 and c.anchorCF then
 				local ranks = c.originalRanks or c.ranks
 				local files = c.originalFiles or c.files
 				local slots = RegimentFormation.getSlots(c.anchorCF, soldierCount, ranks, files)
@@ -831,16 +898,13 @@ local function flushRespawnQueue(player, companyIndex)
 				for j, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
-
 					s.RegimentTarget = slots[j].Position
 					s.MoveRetries    = 0
-
 					task.spawn(function()
-						if s.ActiveTween then 
-							s.ActiveTween:Cancel() 
-							s.ActiveTween = nil 
+						if s.ActiveTween then
+							s.ActiveTween:Cancel()
+							s.ActiveTween = nil
 						end
-						
 						s.Pathfinder:Stop()
 						s.Pathfinder:Run(slots[j].Position)
 					end)
@@ -858,7 +922,7 @@ local function flushRespawnQueue(player, companyIndex)
 					companyIndex = npc.CompanyIndex,
 					ownerUserId  = player.UserId,
 				})
-				
+
 				if not isNewBearer and not c.isMelee then
 					Network.NpcWeaponState.Fire(p, npc.ShortId, WEAPON_IDLE)
 				elseif not isNewBearer and c.isMelee then
@@ -869,7 +933,6 @@ local function flushRespawnQueue(player, companyIndex)
 			syncCompanies(player)
 		end
 
-		-- Unlock — next heartbeat will process the next queued death
 		if companies[player] and companies[player][companyIndex] then
 			companies[player][companyIndex].isRespawning = false
 		end
@@ -938,8 +1001,9 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					if isBearer then
 						npc.IsFlagBearer  = true
 						npc.PaceDirection = 1
-						npc.BearerMode    = BEARER_MODE_CENTER  -- ADD
-						npc.IsPacing      = false               -- ADD
+						npc.BearerMode    = BEARER_MODE_CENTER 
+						npc.IsPacing      = false              
+						
 						-- Send bearer flag through spawn event
 						data.isBearer = true
 					end
@@ -1021,49 +1085,10 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	end
 end
 
-local function setNpcMeleeState(npc, state)
-	npc.MeleeState = state
-	npc.MeleeTimer = MELEE_DURATIONS[state] or 0
-	
---	print("[Server Melee] NPC", npc.ShortId, "transitioning to State:", state, "Timer:", npc.MeleeTimer)
-	
-	-- Reset hit gate when starting a new thrust animation
-	if state == MELEE_BOT_START or state == MELEE_UP_START then
-		npc.MeleeHasHit = false
-	end
-
-	for p in pairs(readyPlayers) do
-		Network.NpcMeleeState.Fire(p, npc.ShortId, state)
-	end
-
-	-- Deal damage only once during the actual attack phase
-	if (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) and npc.MeleeTarget and not npc.MeleeHasHit then
-		local target = npc.MeleeTarget
-		if target and activeNpcs[target.ShortId] then
-			local dist = (target.Root.Position - npc.Root.Position).Magnitude
-			if dist <= MELEE_ENGAGE_RANGE + 2 then
-				applyDamage(target, MELEE_DAMAGE)
-			--	print("[Server Melee] NPC", npc.ShortId, "HIT target", target.ShortId, "for", MELEE_DAMAGE, "damage.")
-				npc.MeleeHasHit = true
-			end
-		end
-	end
-
-	-- Face target during attacks
-	if npc.MeleeTarget and (state == MELEE_BOT_ATK or state == MELEE_UP_ATK) then
-		local tPos = npc.MeleeTarget.Root and npc.MeleeTarget.Root.Position
-		if tPos then
-			local dir = Vector3.new(tPos.X - npc.Root.Position.X, 0, tPos.Z - npc.Root.Position.Z).Unit
-			npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
-		end
-	end
-end
-
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	local company = playerCompanies[companyIndex]
 	if not company then return end
-	-- Skip if company is completely empty
 	if not company.slots or #company.slots == 0 then return end
 
 	local flat = Vector3.new(facingDir.X, 0, facingDir.Z)
@@ -1072,7 +1097,6 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 
 	local count = #company.slots
 
-	-- [FLAG BEARER LOGIC] Ensure math accounts for 1 bot being excluded from slots
 	local soldierCount = math.max(1, count - 1)
 	ranks = math.clamp(ranks, 1, soldierCount)
 	files = math.clamp(files, 1, soldierCount)
@@ -1088,7 +1112,6 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 
 		local targetCF
 
-		-- [FLAG BEARER LOGIC] Assign separate movement logic for bearer
 		if npc.IsFlagBearer then
 			targetCF = getBearerTarget(npc, {
 				anchorCF = anchorCF,
@@ -1101,32 +1124,30 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		end
 
 		npc.RegimentTarget = targetCF.Position
-		npc.RegimentFacing = flat 
-		
-		-- Transition to melee idle if mode is active
-		if company.isMelee and not npc.IsFlagBearer then
-			setNpcMeleeState(npc, MELEE_ADVANCE)
-		end
-		
+		npc.RegimentFacing = flat
 		npc.MoveRetries    = 0
 		npc.IsRegiment     = true
 
-		task.spawn(function()
-			if npc.ActiveTween then
-				npc.ActiveTween:Cancel()
-				npc.ActiveTween = nil
-			end
-
-			npc.Pathfinder:Stop()
-			npc.Pathfinder:Run(targetCF.Position)
-			npc.LastMoveTime = os.clock()
-		end)
+		if company.isMelee and not npc.IsFlagBearer then
+			-- processMelee owns pathing for soldiers in melee mode;
+			-- just nudge the state machine so it re-acquires a target.
+			setNpcMeleeState(npc, MELEE_ADVANCE)
+		else
+			task.spawn(function()
+				if npc.ActiveTween then
+					npc.ActiveTween:Cancel()
+					npc.ActiveTween = nil
+				end
+				npc.Pathfinder:Stop()
+				npc.Pathfinder:Run(targetCF.Position)
+				npc.LastMoveTime = os.clock()
+			end)
+		end
 	end
 
-	company.anchorCF     = anchorCF
-	company.ranks        = ranks
-	company.files        = files
-	-- Store original dimensions so respawns/deaths preserve formation shape
+	company.anchorCF      = anchorCF
+	company.ranks         = ranks
+	company.files         = files
 	company.originalRanks = ranks
 	company.originalFiles = files
 end
@@ -1222,7 +1243,7 @@ local function setNpcWeaponState(npc, state, targetPos)
 			if result then
 				actualHitPos = result.Position
 				if target and target.Model and (result.Instance == target.Root or result.Instance.Name == "Torso") then
-					applyDamage(target, MUSKET_DAMAGE)
+					applyDamage(target, MUSKET_DAMAGE, npc)
 				end
 			else
 				actualHitPos = origin + finalDir * COMBAT_RANGE
@@ -1239,22 +1260,6 @@ local function setNpcWeaponState(npc, state, targetPos)
 		Network.NpcWeaponState.Fire(p, npc.ShortId, state)
 	end
 end
-
-Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
-	local attacker = activeNpcs[attackerId]
-	if not attacker or attacker.CompanyOwner ~= player then return end
-
-	-- Apply damage if a victim was hit
-	if victimId > 0 then
-		local victim = activeNpcs[victimId]
-		if victim then
-			applyDamage(victim, MUSKET_DAMAGE)
-		end
-	end
-
-	-- Broadcast the tracer to everyone else so they see where the bullet landed
-	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
-end)
 
 local function processTickets(dt)
 	for player, playerCompanies in pairs(companies) do
@@ -1322,6 +1327,8 @@ local function processTickets(dt)
 							comp.isBroken             = true
 							comp.brokenTimer          = BROKEN_RECOVERY_TIME
 							comp.brokenBroadcastAccum = 0
+							
+							MatchManager.onCompanyBroke(player.Team and player.Team.Name or nil)
 						end
 						broadcastStrength(player, compIdx)
 					end
@@ -1698,6 +1705,8 @@ end)
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true
+	
+	MatchManager.syncPlayer(player)
 
 	local batchList = {}
 	for shortId, npc in pairs(activeNpcs) do
@@ -1910,4 +1919,20 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 		npc.MeleeTarget = nil
 		setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 	end
+end)
+
+Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
+	local attacker = activeNpcs[attackerId]
+	if not attacker or attacker.CompanyOwner ~= player then return end
+
+	-- Apply damage if a victim was hit
+	if victimId > 0 then
+		local victim = activeNpcs[victimId]
+		if victim then
+			applyDamage(victim, MUSKET_DAMAGE, activeNpcs[attackerId])
+		end
+	end
+
+	-- Broadcast the tracer to everyone else so they see where the bullet landed
+	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)

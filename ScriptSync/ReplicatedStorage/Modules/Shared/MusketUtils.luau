@@ -175,22 +175,27 @@ end
 function MusketUtils:CalculateHit(targetPos: Vector3): (number, Vector3)
 	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)
 	local origin = muzzle and muzzle.Position or (self._model.PrimaryPart.Position + Vector3.new(0, 1.5, 0))
-	
 	local direction = (targetPos - origin).Unit
-	
-	-- Apply Spread
+
 	local spreadRad = math.rad(BULLET_SPREAD)
-	local randomYaw = (math.random() - 0.5) * spreadRad
-	local randomPitch = (math.random() - 0.5) * spreadRad
-	local spreadCF = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles(randomPitch, randomYaw, 0)
+	local spreadCF = CFrame.lookAt(Vector3.zero, direction)
+		* CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
 	local finalDir = spreadCF.LookVector
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { self._model }
+
+	-- Also exclude the server-side invisible hitbox of this same NPC
+	local serverRegistry = workspace:FindFirstChild("Npc_Registry_Server")
+	local serverModel = serverRegistry and serverRegistry:FindFirstChild(self._model.Name)
+	local filter = { self._model }
+	if serverModel then
+		filter[2] = serverModel
+	end
+	rayParams.FilterDescendantsInstances = filter
 
 	local result = workspace:Raycast(origin, finalDir * COMBAT_RANGE, rayParams)
-	local hitPos = origin + (finalDir * COMBAT_RANGE)
+	local hitPos = origin + finalDir * COMBAT_RANGE
 	local victimId = 0
 
 	if result then
