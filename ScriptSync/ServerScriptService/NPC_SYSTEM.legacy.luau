@@ -121,6 +121,7 @@ local readyPlayers    = {}
 local farLastSent     = {}
 local companies       = {}
 local serverCanAttack = {}
+local sf              -- Forward declaration for ServerFunctions
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
@@ -328,7 +329,7 @@ end
 
 -- ── Init ServerFunctions ───────────────────────────────────────────────
 -- Must happen AFTER spawnNpc and syncCompanies are defined.
-local sf = ServerFunctions.init({
+sf = ServerFunctions.init({
 	-- State
 	activeNpcs      = activeNpcs,
 	companies       = companies,
