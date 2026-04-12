@@ -290,8 +290,9 @@ function CompanyHUD:_refreshCard(i: number)
 	local canFire = self._canAttackState[i] ~= false  -- nil treated as true (default on)
 	local inMelee = self._meleeState[i] == true
 
-	cd.frame.Visible = company ~= nil
-	if not company then return end
+	local hasCount = company ~= nil and company.count > 0
+	cd.frame.Visible = hasCount
+	if not hasCount then return end
 
 	cd.countLabel.Text        = tostring(company.count)
 	cd.stroke.Thickness       = isSel and 3 or 1.5
