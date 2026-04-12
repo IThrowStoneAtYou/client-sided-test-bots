@@ -77,13 +77,26 @@ local MELEE_ADVANCE   = 8
 local MELEE_BACKPEDAL = 9
 
 local WEAPON_DURATIONS = {
-	[0] = 0, [1] = 1.8, [2] = 1.0, [3] = 0.7,
-	[4] = 1.0, [5] = 0.75, [6] = 1.0, [7] = 10.33,
+	[0] = 0, 
+	[1] = 1.8, 
+	[2] = 1.0, 
+	[3] = 0.7,
+	[4] = 1.0, 
+	[5] = 0.75, 
+	[6] = 1.0, 
+	[7] = 10.33,
 }
 local MELEE_DURATIONS = {
-	[0] = 0, [1] = 0, [2] = 0.25, [3] = 0,
-	[4] = 0.5, [5] = 0.7, [6] = 0, [7] = 0.333,
-	[8] = 0, [9] = 0.8,
+	[0] = 0, 
+	[1] = 0, 
+	[2] = 0.25, 
+	[3] = 0,
+	[4] = 0.5, 
+	[5] = 0.7, 
+	[6] = 0, 
+	[7] = 0.333,
+	[8] = 0, 
+	[9] = 0.8,
 }
 
 local BEARER_MODE_CENTER   = 0
@@ -102,6 +115,7 @@ end
 if not PhysicsService:IsCollisionGroupRegistered(CLIENT_NPC_GROUP) then
 	PhysicsService:RegisterCollisionGroup(CLIENT_NPC_GROUP)
 end
+
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, NPC_COLLISION_GROUP, false)
 PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP,    CLIENT_NPC_GROUP,    false)
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP,    false)
@@ -643,86 +657,6 @@ end
 Players.PlayerAdded:Connect(hookChat)
 for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
 
--- ── Heartbeat ─────────────────────────────────────────────────────────
-local nearAccum = 0
-local farAccum  = 0
-
-RunService.Heartbeat:Connect(function(dt)
-	nearAccum += dt
-	farAccum  += dt
-
-	sf.processCombat(dt)
-	sf.processTickets(dt)
-	sf.processMelee(dt)
-
-	local doNear = nearAccum >= NEAR_RATE
-	local doFar  = farAccum  >= FAR_RATE
-
-	if not doNear and not doFar then return end
-	if doNear then nearAccum -= NEAR_RATE end
-	if doFar  then farAccum  -= FAR_RATE  end
-
-	local timestamp    = workspace:GetServerTimeNow()
-	local deadIds      = {}
-	local dirtyEntries = {}
-	local allFarEntries = {}
-
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			deadIds[#deadIds+1] = shortId; continue
-		end
-
-		local cf = npc.Root.CFrame
-		if doFar then allFarEntries[#allFarEntries+1] = makeBatchEntry(shortId, cf) end
-		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
-			dirtyEntries[#dirtyEntries+1] = makeBatchEntry(shortId, cf)
-			npc.LastSentCF = cf
-		end
-	end
-
-	for player in pairs(readyPlayers) do
-		local playerPos = getPlayerRootPos(player)
-		if not farLastSent[player] then farLastSent[player] = {} end
-
-		local playerFarSent = farLastSent[player]
-		local nearList = {}
-		local farList  = {}
-		local now      = os.clock()
-
-		if doNear then
-			for _, entry in ipairs(dirtyEntries) do
-				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then nearList[#nearList+1] = entry end
-			end
-		end
-
-		if doFar then
-			for _, entry in ipairs(allFarEntries) do
-				local sid  = entry.id
-				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist > CULL_RADIUS then
-					local last = playerFarSent[sid] or 0
-					if now - last >= FAR_RATE * 0.9 then
-						farList[#farList+1] = entry
-						playerFarSent[sid]  = now
-					end
-				end
-			end
-		end
-
-		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
-		if #farList  > 0 then fireChunked(player, timestamp, farList) end
-	end
-
-	for _, shortId in ipairs(deadIds) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
-		activeNpcs[shortId] = nil
-	end
-end)
-
 -- ── Remote Handlers ───────────────────────────────────────────────────
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
@@ -893,4 +827,84 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 		end
 	end
 	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
+end)
+
+-- ── Heartbeat ─────────────────────────────────────────────────────────
+local nearAccum = 0
+local farAccum  = 0
+
+RunService.Heartbeat:Connect(function(dt)
+	nearAccum += dt
+	farAccum  += dt
+
+	sf.processCombat(dt)
+	sf.processTickets(dt)
+	sf.processMelee(dt)
+
+	local doNear = nearAccum >= NEAR_RATE
+	local doFar  = farAccum  >= FAR_RATE
+
+	if not doNear and not doFar then return end
+	if doNear then nearAccum -= NEAR_RATE end
+	if doFar  then farAccum  -= FAR_RATE  end
+
+	local timestamp    = workspace:GetServerTimeNow()
+	local deadIds      = {}
+	local dirtyEntries = {}
+	local allFarEntries = {}
+
+	for shortId, npc in pairs(activeNpcs) do
+		if not (npc.Model and npc.Model.Parent) then
+			deadIds[#deadIds+1] = shortId; continue
+		end
+
+		local cf = npc.Root.CFrame
+		if doFar then allFarEntries[#allFarEntries+1] = makeBatchEntry(shortId, cf) end
+		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
+			dirtyEntries[#dirtyEntries+1] = makeBatchEntry(shortId, cf)
+			npc.LastSentCF = cf
+		end
+	end
+
+	for player in pairs(readyPlayers) do
+		local playerPos = getPlayerRootPos(player)
+		if not farLastSent[player] then farLastSent[player] = {} end
+
+		local playerFarSent = farLastSent[player]
+		local nearList = {}
+		local farList  = {}
+		local now      = os.clock()
+
+		if doNear then
+			for _, entry in ipairs(dirtyEntries) do
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
+				if dist <= CULL_RADIUS then nearList[#nearList+1] = entry end
+			end
+		end
+
+		if doFar then
+			for _, entry in ipairs(allFarEntries) do
+				local sid  = entry.id
+				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
+				if dist > CULL_RADIUS then
+					local last = playerFarSent[sid] or 0
+					if now - last >= FAR_RATE * 0.9 then
+						farList[#farList+1] = entry
+						playerFarSent[sid]  = now
+					end
+				end
+			end
+		end
+
+		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
+		if #farList  > 0 then fireChunked(player, timestamp, farList) end
+	end
+
+	for _, shortId in ipairs(deadIds) do
+		for player in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(player, shortId)
+			if farLastSent[player] then farLastSent[player][shortId] = nil end
+		end
+		activeNpcs[shortId] = nil
+	end
 end)
