@@ -1,5 +1,5 @@
 -->>>>>>>>>>>>
--- NPC_SYSTEM_CLIENT
+-- ClientScript
 -- Version 3.5.0
 -->>>>>>>>>>>>
 
@@ -641,7 +641,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	local selectedList = hud:getSelectedList()
 
 	-- Check if any selected company is in melee mode
-	if #selectedList > 0 then print("[Melee Input] Click detected with", #selectedList, "companies selected.") end
+	if #selectedList > 0 then
+	--	print("[Melee Input] Click detected with", #selectedList, "companies selected.")
+	end
+	
 	local anyMelee = false
 	for _, compIdx in ipairs(selectedList) do
 		if meleeMode[compIdx] then anyMelee = true break end

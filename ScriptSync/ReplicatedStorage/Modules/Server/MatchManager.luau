@@ -238,7 +238,6 @@ end
 
 function MatchManager.onBotDied(teamName: string?)
 	deduct(resolveTeam(teamName), COST_BOT_DEATH)
-	-- No notification for individual bot deaths — too spammy
 end
 
 local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, eventType, cost)
