@@ -207,7 +207,7 @@ function MusketUtils:CalculateHit(targetPos: Vector3): (number, Vector3)
 	end
 
 	return victimId, hitPos
-end
+end	
 
 function MusketUtils:_fireBullet(targetPos: Vector3)
 	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)

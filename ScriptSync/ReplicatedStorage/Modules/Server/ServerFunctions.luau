@@ -162,10 +162,11 @@ function ServerFunctions.init(ctx)
 				local origin    = npc.Root.Position + Vector3.new(0, 1.5, 0)
 				local direction = (targetPos - origin).Unit
 				local spreadRad = math.rad(C.BULLET_SPREAD)
-				local spreadCF  = CFrame.lookAt(Vector3.zero, direction)
-					* CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
+				local spreadCF  = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
 				local finalDir  = spreadCF.LookVector
+
 				combatRayParams.FilterDescendantsInstances = { npc.Model }
+
 				local result = workspace:Raycast(origin, finalDir * C.COMBAT_RANGE, combatRayParams)
 				local actualHitPos = origin + finalDir * C.COMBAT_RANGE
 				if result then
@@ -175,6 +176,7 @@ function ServerFunctions.init(ctx)
 						applyDamage(target, C.MUSKET_DAMAGE, npc)
 					end
 				end
+				
 				for p in pairs(readyPlayers) do
 					Network.NpcFire.Fire(p, npc.ShortId, actualHitPos)
 				end

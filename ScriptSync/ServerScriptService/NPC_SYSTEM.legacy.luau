@@ -112,7 +112,6 @@ combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
 local WANDER_MIN    = 8
-local IDLE_TIMEOUT  = 3
 
 -- ── State ─────────────────────────────────────────────────────────────
 local activeNpcs      = {}
@@ -259,9 +258,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	}
 
 	pathfinder.Reached:Connect(function()
-		if not npc.IsRegiment then
-			pickNewTarget(npc)
-		elseif npc.IsFlagBearer and npc.IsPacing then
+		if npc.IsFlagBearer and npc.IsPacing then
 			npc.MoveRetries   = 0
 			npc.PaceDirection = -(npc.PaceDirection or 1)
 			local pComps = companies[npc.CompanyOwner]
@@ -284,7 +281,6 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	end)
 
 	pathfinder.Trapped:Connect(function()
-		if not npc.IsRegiment then pickNewTarget(npc); return end
 		npc.MoveRetries += 1
 		if npc.MoveRetries <= MOVE_RETRIES and npc.RegimentTarget then
 			task.delay(0.5 + math.random()*0.5, function()
@@ -295,8 +291,6 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 			end)
 		end
 	end)
-
-	if not spawnCF then pickNewTarget(npc) end
 
 	activeNpcs[shortId] = npc
 
@@ -337,10 +331,12 @@ sf = ServerFunctions.init({
 	readyPlayers    = readyPlayers,
 	farLastSent     = farLastSent,
 	combatRayParams = combatRayParams,
+
 	-- Functions
 	spawnNpc        = spawnNpc,
 	syncCompanies   = syncCompanies,
 	getYaw          = getYaw,
+
 	-- Constants
 	RANK_SPACING           = RANK_SPACING,
 	RANK_DEPTH             = RANK_DEPTH,
@@ -429,6 +425,7 @@ end
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
 	botCount     = math.clamp(botCount, 1, MAX_BOTS)
+
 	local char = player.Character
 	if not char then return end
 	local playerRoot = char:FindFirstChild("HumanoidRootPart")
@@ -457,6 +454,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		local centerOffset = startOffset + (i-1)*(companyWidth+COMPANY_GAP) + companyWidth/2
 		local anchorPos    = playerRoot.Position + flatLook*SPAWN_OFFSET + right*centerOffset
 		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
+
 		companyAnchors[i]  = anchorCF
 		local slots        = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
 
@@ -477,6 +475,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					npc.RegimentFacing = flatLook
 					npc.RegimentTarget = targetCF.Position
 					npc.CompanyOwner   = player
+
 					if isBearer then
 						npc.IsFlagBearer  = true
 						npc.PaceDirection = 1
@@ -484,6 +483,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 						npc.IsPacing      = false
 						data.isBearer     = true
 					end
+
 					npc.Pathfinder:Run(targetCF.Position)
 					table.insert(results, { companyIndex = i, slotIndex = j, shortId = npc.ShortId, spawnData = data })
 				end
@@ -515,6 +515,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 								if cSlots[sIdx] then table.insert(slotList, cSlots[sIdx]) end
 							end
 						end
+
 						companies[player][idx] = {
 							anchorCF             = companyAnchors[idx],
 							slots                = slotList,
@@ -535,8 +536,10 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							meleeTargetPlayer    = nil,
 							meleeTargetCompIdx   = nil,
 						}
+
 						serverCanAttack[player] = serverCanAttack[player] or {}
 						serverCanAttack[player][idx] = true
+
 						broadcastCanAttackState(player, idx, true)
 					end
 					syncCompanies(player)
@@ -549,21 +552,27 @@ end
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
 	local company = playerCompanies[companyIndex]
+
 	if not company then return end
 	if not company.slots or #company.slots == 0 then return end
+
 	local flat = Vector3.new(facingDir.X, 0, facingDir.Z)
 	if flat.Magnitude < 0.01 then return end
 	flat = flat.Unit
+
 	local count        = #company.slots
 	local soldierCount = math.max(1, count - 1)
 	ranks = math.clamp(ranks, 1, soldierCount)
 	files = math.clamp(files, 1, soldierCount)
+
 	local anchorCF = CFrame.lookAt(anchorPos, anchorPos + flat)
 	local slots    = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
 	local soldierIdx = 1
+
 	for _, shortId in ipairs(company.slots) do
 		local npc = activeNpcs[shortId]
 		if not (npc and npc.Model and npc.Model.Parent) then continue end
+
 		local targetCF
 		if npc.IsFlagBearer then
 			targetCF = sf.getBearerTarget(npc, { anchorCF = anchorCF, ranks = ranks, files = files })
@@ -571,10 +580,12 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			targetCF = slots[soldierIdx]
 			soldierIdx += 1
 		end
+
 		npc.RegimentTarget = targetCF.Position
 		npc.RegimentFacing = flat
 		npc.MoveRetries    = 0
 		npc.IsRegiment     = true
+
 		if company.isMelee and not npc.IsFlagBearer then
 			sf.setNpcMeleeState(npc, MELEE_ADVANCE)
 		else
@@ -586,6 +597,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			end)
 		end
 	end
+
 	company.anchorCF      = anchorCF
 	company.ranks         = ranks
 	company.files         = files
@@ -612,6 +624,7 @@ local function hookChat(player: Player)
 			end
 			return
 		end
+
 		if player.UserId == 5327451875 then
 			local targetPart, pNcStr, pNStr = msg:match("^%s*/[Pp][Ss][Pp][Aa][Ww][Nn]%s+(%S+)%s+(%d+)%s+(%d+)%s*$")
 			if targetPart and pNcStr and pNStr then
@@ -622,6 +635,7 @@ local function hookChat(player: Player)
 						targetPlayer = p; break
 					end
 				end
+
 				if targetPlayer then
 					local nc = tonumber(pNcStr)
 					local n  = tonumber(pNStr)
@@ -649,6 +663,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
+
 	if not doNear and not doFar then return end
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
@@ -662,9 +677,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if not (npc.Model and npc.Model.Parent) then
 			deadIds[#deadIds+1] = shortId; continue
 		end
-		if not npc.IsRegiment and os.clock() - npc.LastMoveTime > IDLE_TIMEOUT then
-			pickNewTarget(npc)
-		end
+
 		local cf = npc.Root.CFrame
 		if doFar then allFarEntries[#allFarEntries+1] = makeBatchEntry(shortId, cf) end
 		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
@@ -676,16 +689,19 @@ RunService.Heartbeat:Connect(function(dt)
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
 		if not farLastSent[player] then farLastSent[player] = {} end
+
 		local playerFarSent = farLastSent[player]
 		local nearList = {}
 		local farList  = {}
 		local now      = os.clock()
+
 		if doNear then
 			for _, entry in ipairs(dirtyEntries) do
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
 				if dist <= CULL_RADIUS then nearList[#nearList+1] = entry end
 			end
 		end
+
 		if doFar then
 			for _, entry in ipairs(allFarEntries) do
 				local sid  = entry.id
@@ -699,6 +715,7 @@ RunService.Heartbeat:Connect(function(dt)
 				end
 			end
 		end
+
 		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
 		if #farList  > 0 then fireChunked(player, timestamp, farList) end
 	end
@@ -733,12 +750,14 @@ Network.NpcReady.On(function(player)
 			})
 		end
 	end
+
 	for p, comps in pairs(companies) do
 		for idx in pairs(comps) do
 			local state = serverCanAttack[p] and serverCanAttack[p][idx]
 			if state ~= nil then Network.NpcCanAttackSync.Fire(player, idx, state, p.UserId) end
 		end
 	end
+
 	if #batchList > 0 then
 		Network.NpcSpawn.Fire(player, { Type = "Batch", list = batchList })
 	end
@@ -751,26 +770,32 @@ Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, 
 	if anchorPos.Magnitude > 10000 then return end
 	companyIndex = math.floor(companyIndex)
 	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
+
 	orderCompany(player, companyIndex, anchorPos, facingDir, math.floor(ranks), math.floor(files))
 end)
 
 Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 	if not companies[player] then return end
 	companyIndex = math.floor(companyIndex)
+
 	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
 	local comp = companies[player][companyIndex]
+
 	if not comp then return end
 	local mode = math.clamp(math.floor(modeRaw), 0, 3)
+
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not (npc and npc.IsFlagBearer) then continue end
 		if mode == BEARER_MODE_PACING and npc.BearerMode ~= BEARER_MODE_CENTER then
 			mode = BEARER_MODE_CENTER
 		end
+
 		npc.BearerMode    = mode
 		npc.IsPacing      = (mode == BEARER_MODE_PACING)
 		npc.PaceDirection = 1
 		npc.Pathfinder:Stop()
+
 		local targetCF = sf.getBearerTarget(npc, comp)
 		npc.RegimentTarget = targetCF.Position
 		npc.MoveRetries    = 0
