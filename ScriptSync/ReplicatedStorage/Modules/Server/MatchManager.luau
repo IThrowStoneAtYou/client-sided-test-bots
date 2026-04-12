@@ -20,7 +20,7 @@ local Teams      = game:GetService("Teams")
 -- ── Config ────────────────────────────────────────────────────────────
 
 local STARTING_TICKETS    = 10000
-local MATCH_DURATION      = 25 * 60
+local MATCH_DURATION      = 20 * 60
 local INTERMISSION_DURATION = 5
 local BROADCAST_INTERVAL  = 10   -- seconds between MatchUpdate fires during match
 
