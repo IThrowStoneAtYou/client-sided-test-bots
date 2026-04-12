@@ -164,12 +164,6 @@ local function fireChunked(player, timestamp, entries)
 	end
 end
 
-local function pickNewTarget(npc)
-	npc.Target       = randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN)
-	npc.LastMoveTime = os.clock()
-	npc.Pathfinder:Run(npc.Target)
-end
-
 -- ── Company management ────────────────────────────────────────────────
 local function syncCompanies(player: Player)
 	local playerCompanies = companies[player]
