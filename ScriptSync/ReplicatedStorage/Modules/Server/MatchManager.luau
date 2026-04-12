@@ -59,8 +59,7 @@ local intermissionBroadcastAccum = 0
 
 local function openBorders()
 	local ok, folder = pcall(function()
-		return workspace:WaitForChild("game", 5)
-			:WaitForChild("game_border", 5)
+		return workspace:WaitForChild("game", 5) :WaitForChild("game_border", 5)
 	end)
 	if not ok or not folder then
 		warn("[MatchManager] Could not find workspace.game.game_border")
@@ -73,6 +72,7 @@ local function openBorders()
 			part.CanCollide = false
 			part.CanQuery   = false
 			part.CanTouch   = false
+			part.Transparency = 1
 		else
 			warn("[MatchManager] Border part not found:", name)
 		end
