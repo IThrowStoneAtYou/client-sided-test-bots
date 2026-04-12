@@ -411,6 +411,21 @@ Network.NpcCompanySync.On(function(data)
 		end
 	end
 
+	-- Re-populate npcOwners from stored model attributes.
+	-- Every sync clears npcOwners for old slots; without this step
+	-- all surviving and freshly-respawned bots lose hit-detection ownership.
+	for _, slotSet in pairs(companySlots) do
+		for sid in pairs(slotSet) do
+			local rep = replicators[sid]
+			if rep and rep.Client then
+				local stored = rep.Client:GetAttribute("OwnerUserId")
+				if stored and stored ~= 0 then
+					npcOwners[sid] = stored
+				end
+			end
+		end
+	end
+
 	hud:syncCompanies(data)
 	NpcPreview.applyHighlights(replicators, companySlots, hud:getSelectedList())
 end)
