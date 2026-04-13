@@ -1,5 +1,5 @@
 -->>>>>>>>>>>>
--- NPC_SYSTEM_SERVER
+-- ServerScript
 -- Version 4.0.0
 -- Core game logic lives in ServerFunctions.
 -->>>>>>>>>>>>
@@ -735,13 +735,17 @@ end)
 Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
 	serverCanAttack[player] = serverCanAttack[player] or {}
+	
 	local current  = serverCanAttack[player][companyIndex]
 	if current == nil then current = true end
+	
 	local newState = not current
 	serverCanAttack[player][companyIndex] = newState
+	
 	for p in pairs(readyPlayers) do
 		Network.NpcCanAttackSync.Fire(p, companyIndex, newState, player.UserId)
 	end
+	
 	if not newState then
 		local comp = companies[player] and companies[player][companyIndex]
 		if comp then
@@ -763,6 +767,7 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	if not companies[player] or not companies[player][companyIndex] then return end
 	local comp = companies[player][companyIndex]
 	comp.isMelee = isMelee
+	
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
@@ -779,6 +784,7 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 			npc.MeleeTimer  = 0
 			npc.MeleeTarget = nil
 			npc.Pathfinder:Stop()
+			
 			for p in pairs(readyPlayers) do
 				Network.NpcMeleeState.Fire(p, shortId, MELEE_NONE)
 				Network.NpcWeaponState.Fire(p, shortId, WEAPON_IDLE)
@@ -791,11 +797,13 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	if not companies[player] or not companies[player][companyIndex] then return end
 	local comp = companies[player][companyIndex]
 	if not comp.isMelee then return end
+	
 	local targetPlayer = Players:GetPlayerByUserId(targetOwnerUserId)
 	if not targetPlayer then return end
 	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
 	comp.meleeTargetPlayer  = targetPlayer
 	comp.meleeTargetCompIdx = targetCompanyIndex
+	
 	local targetComp = companies[targetPlayer][targetCompanyIndex]
 	if targetComp and targetComp.isMelee then
 		targetComp.meleeTargetPlayer  = player
@@ -808,6 +816,7 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 			end
 		end
 	end
+	
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
@@ -826,6 +835,7 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 			sf.applyDamage(victim, MUSKET_DAMAGE, attacker)
 		end
 	end
+	
 	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)
 

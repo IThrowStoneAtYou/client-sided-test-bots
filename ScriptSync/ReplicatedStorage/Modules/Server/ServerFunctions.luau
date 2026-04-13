@@ -108,7 +108,9 @@ function ServerFunctions.init(ctx)
 				comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
 			end
 		end
+		
 		targetNpc.Health -= damage
+		
 		if targetNpc.Health <= 0 then
 			killNpc(targetNpc.ShortId)
 		end
@@ -635,6 +637,7 @@ function ServerFunctions.init(ctx)
 				if not comp.isMelee then continue end
 				local soldierCenter = Vector3.zero
 				local validSoldiers = 0
+				
 				for _, sid in ipairs(comp.slots) do
 					local n = activeNpcs[sid]
 					if n and n.Root and not n.IsFlagBearer then
@@ -642,6 +645,7 @@ function ServerFunctions.init(ctx)
 						validSoldiers += 1
 					end
 				end
+				
 				if validSoldiers > 0 then soldierCenter /= validSoldiers end
 				local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 				for _, shortId in ipairs(comp.slots) do

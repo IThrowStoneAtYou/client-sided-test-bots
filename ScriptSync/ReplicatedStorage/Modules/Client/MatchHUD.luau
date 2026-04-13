@@ -110,11 +110,13 @@ function MatchHUD:_build()
 	barBg.BorderSizePixel        = 0
 	barBg.ZIndex                 = 21
 	barBg.Parent                 = container
-
-	local barBgCorner = Instance.new("UICorner")
-	barBgCorner.CornerRadius = UDim.new(0, 4)
-	barBgCorner.Parent       = barBg
-
+	
+	local cStroke = Instance.new("UIStroke")
+	cStroke.Color        = Color3.fromRGB(55, 55, 75)
+	cStroke.Thickness    = 1.5
+	cStroke.Transparency = 0.4
+	cStroke.Parent       = barBg
+	
 	-- Red — grows from left
 	local redBar = Instance.new("Frame")
 	redBar.Name                   = "RedBar"
@@ -127,10 +129,6 @@ function MatchHUD:_build()
 	redBar.ZIndex                 = 22
 	redBar.Parent                 = barBg
 
-	local redCorner = Instance.new("UICorner")
-	redCorner.CornerRadius = UDim.new(0, 4)
-	redCorner.Parent       = redBar
-
 	-- Blue — retreats from right
 	local blueBar = Instance.new("Frame")
 	blueBar.Name                   = "BlueBar"
@@ -142,10 +140,6 @@ function MatchHUD:_build()
 	blueBar.BorderSizePixel        = 0
 	blueBar.ZIndex                 = 22
 	blueBar.Parent                 = barBg
-
-	local blueCorner = Instance.new("UICorner")
-	blueCorner.CornerRadius = UDim.new(0, 4)
-	blueCorner.Parent       = blueBar
 
 	-- Seam
 	local seam = Instance.new("Frame")

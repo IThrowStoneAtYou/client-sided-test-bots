@@ -181,7 +181,7 @@ function NotificationHUD:push(
 	table.insert(self._stack, entry)
 	self:_restack()
 
-	-- Lifetime → fade out → remove
+	-- Lifetime, fade out, remove
 	task.delay(NOTIF_LIFETIME, function()
 		if not frame.Parent then return end
 		local goals = {}

@@ -1,5 +1,5 @@
 -->>>>>>>>>>>>
--- NPC_SYSTEM_CLIENT
+-- ClientScript
 -- Version 3.5.0
 -->>>>>>>>>>>>
 
@@ -641,7 +641,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	local selectedList = hud:getSelectedList()
 
 	-- Check if any selected company is in melee mode
-	if #selectedList > 0 then print("[Melee Input] Click detected with", #selectedList, "companies selected.") end
+	if #selectedList > 0 then
+	--	print("[Melee Input] Click detected with", #selectedList, "companies selected.")
+	end
+	
 	local anyMelee = false
 	for _, compIdx in ipairs(selectedList) do
 		if meleeMode[compIdx] then anyMelee = true break end
@@ -849,14 +852,7 @@ Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost)
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────
--- This is the heart of the client-side rendering system.
--- Every frame, it:
---   1. Computes new CFrame for each NPC via interpolation
---   2. Updates animator state (walk vs idle) based on velocity
---   3. Batches all CFrame updates into a single physics call
--- By collecting all updates first then applying them in a batch,
--- we minimize physics engine overhead and ensure smooth synchronized rendering.
---
+
 RunService.RenderStepped:Connect(function(dt)
 	local serverTime = workspace:GetServerTimeNow()
 	local parts   = {}
