@@ -245,10 +245,10 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 	local vc = Color3.fromRGB(200, 200, 200)
 	local ac = Color3.fromRGB(200, 200, 200)
 	if victimPlayer and victimPlayer.Team then
-		vc = Color3.fromBrickColor(victimPlayer.Team.TeamColor)
+		vc = victimPlayer.Team.TeamColor.Color
 	end
 	if attackerPlayer and attackerPlayer.Team then
-		ac = Color3.fromBrickColor(attackerPlayer.Team.TeamColor)
+		ac = attackerPlayer.Team.TeamColor.Color
 	end
 	
 	print("vc:", vc, "ac:", ac)

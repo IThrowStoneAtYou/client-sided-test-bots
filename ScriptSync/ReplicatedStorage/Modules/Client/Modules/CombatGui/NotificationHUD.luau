@@ -17,7 +17,6 @@ local NOTIF_GAP      = 5
 local NOTIF_LIFETIME = 5
 local NOTIF_FADE     = 0.5
 local MAX_NOTIFS     = 6
-local TOP_OFFSET     = 90   -- sits below MatchHUD
 
 local SLIDE_IN = TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local FADE_OUT = TweenInfo.new(NOTIF_FADE, Enum.EasingStyle.Linear)
@@ -49,21 +48,26 @@ function NotificationHUD.new()
 	gui.Parent          = playerGui
 	self._gui = gui
 
+	local posFrame = Instance.new("Frame")
+	posFrame.Name = "PosFrame"
+	posFrame.BackgroundTransparency = 1
+	posFrame.Position = UDim2.new(0.492, 0, 0.15, 90)
+	posFrame.Size = UDim2.new(0, 22, 0, 20)
+	posFrame.Parent = gui
+	self._posFrame = posFrame
+
+	local layout = Instance.new("UIListLayout")
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.Padding = UDim.new(0, NOTIF_GAP)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = posFrame
+
 	self._stack = {}   -- { frame, tweenables[] }
 
 	return self
 end
 
 -- ── Internal ──────────────────────────────────────────────────────────
-
--- Smoothly slides all active notifications to their correct Y position.
-function NotificationHUD:_restack()
-	for i, entry in ipairs(self._stack) do
-		local targetY = TOP_OFFSET + (i - 1) * (NOTIF_H + NOTIF_GAP)
-		entry.frame.Position = UDim2.new(1, -(NOTIF_W + 10), 0, targetY)
-	end
-end
-
 function NotificationHUD:_remove(entry)
 	for i, e in ipairs(self._stack) do
 		if e == entry then
@@ -72,7 +76,6 @@ function NotificationHUD:_remove(entry)
 		end
 	end
 	entry.frame:Destroy()
-	self:_restack()
 end
 
 -- ── Public API ────────────────────────────────────────────────────────
@@ -102,42 +105,17 @@ function NotificationHUD:push(
 	local frame = Instance.new("Frame")
 	frame.Name                   = "Notif"
 	frame.Size                   = UDim2.new(0, NOTIF_W, 0, NOTIF_H)
-	frame.Position = UDim2.new(1, -(NOTIF_W + 10), 0, TOP_OFFSET)
-	frame.AnchorPoint            = Vector2.new(0, 0)
-	frame.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
-	frame.BackgroundTransparency = 0.1
+	frame.BackgroundTransparency = 1
+	frame.BackgroundTransparency = 1
 	frame.BorderSizePixel        = 0
 	frame.ZIndex                 = 30
-	frame.Parent                 = self._gui
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 5)
-	corner.Parent       = frame
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color        = color
-	stroke.Thickness    = 1.5
-	stroke.Transparency = 0.35
-	stroke.Parent       = frame
-
-	-- Left accent stripe
-	local accent = Instance.new("Frame")
-	accent.Size             = UDim2.new(0, 3, 1, 0)
-	accent.Position         = UDim2.new(0, 0, 0, 0)
-	accent.BackgroundColor3 = color
-	accent.BorderSizePixel  = 0
-	accent.ZIndex           = 31
-	accent.Parent           = frame
-
-	local accentCorner = Instance.new("UICorner")
-	accentCorner.CornerRadius = UDim.new(0, 5)
-	accentCorner.Parent       = accent
+	frame.Parent                 = self._posFrame
 
 	-- Main label: "VictimName - CO N  broke  by  AttackerName - CO M"
 	local mainLabel = Instance.new("TextLabel")
 	mainLabel.Name                  = "Main"
-	mainLabel.Size 					= UDim2.new(1, -16, 1, 0)
-	mainLabel.Position              = UDim2.new(0, 12, 0, 0)
+	mainLabel.Size 					= UDim2.new(1, 0, 1, 0)
+	mainLabel.Position              = UDim2.new(0, 0, 0, 0)
 	mainLabel.BackgroundTransparency = 1
 	mainLabel.RichText              = true
 	local verb = eventType == 1 and "broken" or "overrun"
@@ -151,22 +129,18 @@ function NotificationHUD:push(
 	mainLabel.TextColor3            = Color3.fromRGB(215, 215, 215)
 	mainLabel.Font                  = Enum.Font.Gotham
 	mainLabel.TextSize              = 11
-	mainLabel.TextXAlignment        = Enum.TextXAlignment.Left
+	mainLabel.TextXAlignment        = Enum.TextXAlignment.Center
 	mainLabel.TextTruncate          = Enum.TextTruncate.AtEnd
 	mainLabel.ZIndex                = 31
 	mainLabel.Parent                = frame
 
 	-- Collect everything that needs fading
 	local tweenables = {
-		{ obj = frame,     prop = "BackgroundTransparency", full = 0.1,  gone = 1    },
-		{ obj = stroke,    prop = "Transparency",           full = 0.35, gone = 1    },
-		{ obj = accent,    prop = "BackgroundTransparency", full = 0,    gone = 1    },
 		{ obj = mainLabel, prop = "TextTransparency",       full = 0,    gone = 1    },
 	}
 
 	local entry = { frame = frame, tweenables = tweenables }
 	table.insert(self._stack, entry)
-	self:_restack()
 
 	-- Lifetime, fade out, remove
 	task.delay(NOTIF_LIFETIME, function()
