@@ -17,16 +17,11 @@ local Players    = game:GetService("Players")
 local Network    = require(game.ReplicatedStorage.Blink.Server)
 local Teams      = game:GetService("Teams")
 
+local GameSettings = require(game.ReplicatedStorage.Modules.Shared.GameSettings)
+
 -- ── Config ────────────────────────────────────────────────────────────
-
-local STARTING_TICKETS    = 10000
-local MATCH_DURATION      = 20 * 60
-local INTERMISSION_DURATION = 5
 local BROADCAST_INTERVAL  = 10   -- seconds between MatchUpdate fires during match
-
-local COST_BOT_DEATH = 5
-local COST_BROKE     = 200
-local COST_OVERRUN   = 500
+-- Config is now handled via GameSettings
 
 -- Map your actual Roblox Team names here
 local TEAM_NAME_TO_INDEX: { [string]: number } = {
@@ -46,8 +41,8 @@ local STAGE = {
 -- ── State ─────────────────────────────────────────────────────────────
 
 local teamTickets: { [number]: number } = {
-	[1] = STARTING_TICKETS,
-	[2] = STARTING_TICKETS,
+	[1] = GameSettings.STARTING_TICKETS,
+	[2] = GameSettings.STARTING_TICKETS,
 }
 
 local stage                    = STAGE.WAITING
@@ -99,18 +94,18 @@ end
 
 local function startIntermission()
 	stage      = STAGE.INTERMISSION
-	stageTimer = INTERMISSION_DURATION
+	stageTimer = GameSettings.INTERMISSION_DURATION
 	broadcastIntermission()
 	print("[MatchManager] Intermission started.")
 end
 
 local function startMatch()
 	stage        = STAGE.MATCH
-	stageTimer   = MATCH_DURATION
+	stageTimer   = GameSettings.MATCH_DURATION
 	broadcastAccum = 0
 
-	teamTickets[1] = STARTING_TICKETS
-	teamTickets[2] = STARTING_TICKETS
+	teamTickets[1] = GameSettings.STARTING_TICKETS
+	teamTickets[2] = GameSettings.STARTING_TICKETS
 
 	openBorders()
 	broadcastUpdate()
@@ -237,7 +232,7 @@ local function deduct(teamIndex: number?, amount: number)
 end
 
 function MatchManager.onBotDied(teamName: string?)
-	deduct(resolveTeam(teamName), COST_BOT_DEATH)
+	deduct(resolveTeam(teamName), GameSettings.COST_BOT_DEATH)
 end
 
 local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, eventType, cost)
@@ -257,14 +252,14 @@ end
 
 function MatchManager.onCompanyBroke(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
 	local teamName = victimPlayer and victimPlayer.Team and victimPlayer.Team.Name or nil
-	deduct(resolveTeam(teamName), COST_BROKE)
-	fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, 1, COST_BROKE)
+	deduct(resolveTeam(teamName), GameSettings.COST_BROKE)
+	fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, 1, GameSettings.COST_BROKE)
 end
 
 function MatchManager.onCompanyOverrun(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
 	local teamName = victimPlayer and victimPlayer.Team and victimPlayer.Team.Name or nil
-	deduct(resolveTeam(teamName), COST_OVERRUN)
-	fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, 2, COST_OVERRUN)
+	deduct(resolveTeam(teamName), GameSettings.COST_OVERRUN)
+	fireNotification(victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx, 2, GameSettings.COST_OVERRUN)
 end
 
 function MatchManager.syncPlayer(player: Player)
