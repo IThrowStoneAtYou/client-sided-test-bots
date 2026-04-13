@@ -8,16 +8,20 @@ local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
 local RunService 		= game:GetService("RunService")
 
+local CombatGui = ReplicatedStorage.Modules.Client.Modules.CombatGui
+
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
-local CompanyHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
-local NpcPreview        = require(ReplicatedStorage.Modules.Client:WaitForChild("NpcPreview"))
-local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild("CompassHUD"))
+local NpcPreview        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("NpcPreview"))
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
-local MatchHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("MatchHUD"))
-local NotificationHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("NotificationHUD"))
 local AdminPanel        = require(ReplicatedStorage.Modules.Client:WaitForChild("AdminPanel"))
+
+-- Combat Gui
+local CompanyHUD        = require(CombatGui.CompanyHUD)
+local CompassHUD        = require(CombatGui.CompassHUD)
+local MatchHUD 			= require(CombatGui.MatchHUD)
+local NotificationHUD 	= require(CombatGui.NotificationHUD)
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3

@@ -13,7 +13,7 @@ local TweenService      = game:GetService("TweenService")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
-local MatchManager      = require(ReplicatedStorage.Modules.Server.MatchManager)
+local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
 local ServerFunctions   = require(ReplicatedStorage.Modules.Server.ServerFunctions)
 
 local SERVER_MODEL        = ReplicatedStorage:WaitForChild("SERVER")
