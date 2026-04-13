@@ -19,7 +19,7 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
-local CompanyHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("CompanyHUD"))
+local CompanyHUD = require(ReplicatedStorage.Modules.Client.Modules.CombatGui:WaitForChild("CompanyHUD"))
 
 -- ── Constants ─────────────────────────────────────────────────────────
 local DOT_SIZE = Vector3.new(1.2, 0.3, 1.2)
