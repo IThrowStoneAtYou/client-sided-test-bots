@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local MatchManager      = require(ReplicatedStorage.Modules.Server.MatchManager)
+local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
 local ServerFunctions = {}
 
@@ -132,8 +133,8 @@ function ServerFunctions.init(ctx)
 			local target = npc.MeleeTarget
 			if target and activeNpcs[target.ShortId] then
 				local dist = (target.Root.Position - npc.Root.Position).Magnitude
-				if dist <= C.MELEE_ENGAGE_RANGE + 2 then
-					applyDamage(target, C.MELEE_DAMAGE, npc)
+				if dist <= GameSettings.MELEE_ENGAGE_RANGE + 2 then
+					applyDamage(target, GameSettings.MELEE_DAMAGE, npc)
 					npc.MeleeHasHit = true
 				end
 			end
@@ -164,19 +165,19 @@ function ServerFunctions.init(ctx)
 			else
 				local origin    = npc.Root.Position + Vector3.new(0, 1.5, 0)
 				local direction = (targetPos - origin).Unit
-				local spreadRad = math.rad(C.BULLET_SPREAD)
+				local spreadRad = math.rad(GameSettings.BULLET_SPREAD)
 				local spreadCF  = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
 				local finalDir  = spreadCF.LookVector
 
 				combatRayParams.FilterDescendantsInstances = { npc.Model }
 
-				local result = workspace:Raycast(origin, finalDir * C.COMBAT_RANGE, combatRayParams)
+				local result = workspace:Raycast(origin, finalDir * GameSettings.COMBAT_RANGE, combatRayParams)
 				local actualHitPos = origin + finalDir * C.COMBAT_RANGE
 				if result then
 					actualHitPos = result.Position
 					local target = npc.WeaponTarget
 					if target and target.Model and (result.Instance == target.Root or result.Instance.Name == "Torso") then
-						applyDamage(target, C.MUSKET_DAMAGE, npc)
+						applyDamage(target, GameSettings.MUSKET_DAMAGE, npc)
 					end
 				end
 				
@@ -507,7 +508,7 @@ function ServerFunctions.init(ctx)
 						local otherTeam = other.TeamName
 						if otherTeam and otherTeam ~= myTeam then
 							local otherPos = other.Root and other.Root.Position
-							if otherPos and (otherPos - myPos).Magnitude <= C.COMBAT_RANGE then
+							if otherPos and (otherPos - myPos).Magnitude <= GameSettings.COMBAT_RANGE then
 								enemiesInRange[#enemiesInRange+1] = other
 							end
 						end
@@ -661,7 +662,7 @@ function ServerFunctions.init(ctx)
 								local e = activeNpcs[eSid]
 								if e and e.Root then
 									local d = (e.Root.Position - npc.Root.Position).Magnitude
-									if d < nearestDist and d < C.MELEE_BEARER_FLEE_RANGE then
+									if d < nearestDist and d < GameSettings.MELEE_BEARER_FLEE_RANGE then
 										nearestDist = d
 										nearestEnemyPos = e.Root.Position
 									end
@@ -669,7 +670,7 @@ function ServerFunctions.init(ctx)
 							end
 							if nearestEnemyPos then
 								local fleeDir = (npc.Root.Position - nearestEnemyPos).Unit
-								movePos = npc.Root.Position + fleeDir * C.MELEE_BEARER_FLEE_DIST
+								movePos = npc.Root.Position + fleeDir * GameSettings.MELEE_BEARER_FLEE_DIST
 							end
 						end
 						if npc._meleePathAccum >= 0.4 and (npc.Root.Position - movePos).Magnitude > 4 then
@@ -717,7 +718,7 @@ function ServerFunctions.init(ctx)
 							npc._meleePathAccum = 0
 							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
 						end
-						if dist <= C.MELEE_ENGAGE_RANGE then
+							if dist <= GameSettings.MELEE_ENGAGE_RANGE then
 							npc.Pathfinder:Stop()
 							setNpcMeleeState(npc, C.MELEE_BOT_ATK)
 						end
@@ -740,7 +741,7 @@ function ServerFunctions.init(ctx)
 							npc._meleePathAccum = 0
 							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
 						end
-						if dist <= C.MELEE_ENGAGE_RANGE then
+							if dist <= GameSettings.MELEE_ENGAGE_RANGE then
 							npc.Pathfinder:Stop()
 							setNpcMeleeState(npc, C.MELEE_UP_ATK)
 						end

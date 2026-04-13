@@ -17,6 +17,7 @@ local CompassHUD        = require(ReplicatedStorage.Modules.Client:WaitForChild(
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
 local MatchHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("MatchHUD"))
 local NotificationHUD = require(ReplicatedStorage.Modules.Client:WaitForChild("NotificationHUD"))
+local AdminPanel        = require(ReplicatedStorage.Modules.Client:WaitForChild("AdminPanel"))
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
@@ -885,3 +886,5 @@ end)
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join
 Network.NpcReady.Fire()
+
+AdminPanel.new(Network)

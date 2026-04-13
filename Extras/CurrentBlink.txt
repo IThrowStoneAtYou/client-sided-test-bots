@@ -186,3 +186,35 @@ event MatchNotification {
     Data: (string, u8, string, u8, u8, u16)
     -- victimName, victimCompIdx, attackerName, attackerCompIdx, eventType(1=broke 2=overrun), cost
 }
+
+event AdminUpdateBots {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: struct {
+        walkSpeed:            f32,
+        maxBots:              u16,
+        maxCompanies:         u8,
+        combatRange:          f32,
+        musketDamage:         f32,
+        bulletSpread:         f32,
+        meleeEngageRange:     f32,
+        meleeDamage:          f32,
+        meleeBearerFleeRange: f32,
+        meleeBearerFleeDist:  f32,
+    }
+}
+
+event AdminUpdateMatch {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: struct {
+        startingTickets:      u32,
+        matchDuration:        u32,
+        intermissionDuration: u16,
+        costBotDeath:         u16,
+        costBroke:            u16,
+        costOverrun:          u16,
+    }
+}
