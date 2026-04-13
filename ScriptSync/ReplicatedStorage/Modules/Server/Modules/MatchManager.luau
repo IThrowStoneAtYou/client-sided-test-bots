@@ -239,13 +239,30 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 	local victimName   = victimPlayer   and victimPlayer.Name   or "Unknown"
 	local attackerName = attackerPlayer and attackerPlayer.Name or "Unknown"
 	local aCompIdx     = attackerCompIdx or 0
+	
+	print("fireNotification called:", victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
+
+	local vc = Color3.fromRGB(200, 200, 200)
+	local ac = Color3.fromRGB(200, 200, 200)
+	if victimPlayer and victimPlayer.Team then
+		vc = Color3.fromBrickColor(victimPlayer.Team.TeamColor)
+	end
+	if attackerPlayer and attackerPlayer.Team then
+		ac = Color3.fromBrickColor(attackerPlayer.Team.TeamColor)
+	end
+	
+	print("vc:", vc, "ac:", ac)
+
+	local vColorInt = math.floor(vc.R * 255) * 65536 + math.floor(vc.G * 255) * 256 + math.floor(vc.B * 255)
+	local aColorInt = math.floor(ac.R * 255) * 65536 + math.floor(ac.G * 255) * 256 + math.floor(ac.B * 255)
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		Network.MatchNotification.Fire(
 			player,
 			victimName,   victimCompIdx,
 			attackerName, aCompIdx,
-			eventType,    cost
+			eventType,    cost,
+			vColorInt,    aColorInt
 		)
 	end
 end

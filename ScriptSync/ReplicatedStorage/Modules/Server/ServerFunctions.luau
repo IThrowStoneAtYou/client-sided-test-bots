@@ -632,7 +632,7 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	local function processMelee(dt)
+	local function processMelee(dt) -- cluster fuck
 		for player, playerCompanies in pairs(companies) do
 			for compIdx, comp in pairs(playerCompanies) do
 				if not comp.isMelee then continue end

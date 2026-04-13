@@ -32,8 +32,8 @@ local GameSettings = {
 
 	-- ── Match ──────────────────────────────────────────────────────────
 	STARTING_TICKETS      = 10000,
-	MATCH_DURATION        = 20 * 60,   -- seconds
-	INTERMISSION_DURATION = 5,
+	MATCH_DURATION        = 15 * 60,   -- seconds
+	INTERMISSION_DURATION = 20,
 	COST_BOT_DEATH        = 5,
 	COST_BROKE            = 200,
 	COST_OVERRUN          = 500,
