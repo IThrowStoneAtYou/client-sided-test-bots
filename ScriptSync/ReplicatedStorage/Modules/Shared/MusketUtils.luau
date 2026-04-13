@@ -324,7 +324,7 @@ function MusketUtils:PlayMeleeState(state: number)
 		if track and track.IsPlaying then track:Stop() end
 	end
 	local animName = MELEE_STATE_TO_ANIM[state]
-	print("[Client Anim] NPC", self._model.Name, "mapping State", state, "to Anim:", animName)
+--	print("[Client Anim] NPC", self._model.Name, "mapping State", state, "to Anim:", animName)
 
 	for name, track in pairs(self._meleeTracks or {}) do
 		if track and track.IsPlaying and name ~= animName then track:Stop() end

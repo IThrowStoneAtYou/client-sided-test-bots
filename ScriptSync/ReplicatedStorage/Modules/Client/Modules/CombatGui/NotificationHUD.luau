@@ -60,9 +60,7 @@ end
 function NotificationHUD:_restack()
 	for i, entry in ipairs(self._stack) do
 		local targetY = TOP_OFFSET + (i - 1) * (NOTIF_H + NOTIF_GAP)
-		TweenService:Create(entry.frame, SLIDE_IN, {
-			Position = UDim2.new(1, -(NOTIF_W + 10), 0, targetY),
-		}):Play()
+		entry.frame.Position = UDim2.new(1, -(NOTIF_W + 10), 0, targetY)
 	end
 end
 
@@ -83,12 +81,14 @@ end
 -- eventType: 1 = broke, 2 = overrun
 -- cost: raw ticket number (200, 500, …)
 function NotificationHUD:push(
-	victimName:   string,
-	victimComp:   number,
-	attackerName: string,
-	attackerComp: number,
-	eventType:    number,
-	cost:         number
+	victimName:    string,
+	victimComp:    number,
+	attackerName:  string,
+	attackerComp:  number,
+	eventType:     number,
+	cost:          number,
+	victimColor:   Color3,
+	attackerColor: Color3
 )
 	-- Evict oldest if full
 	if #self._stack >= MAX_NOTIFS then
@@ -102,7 +102,7 @@ function NotificationHUD:push(
 	local frame = Instance.new("Frame")
 	frame.Name                   = "Notif"
 	frame.Size                   = UDim2.new(0, NOTIF_W, 0, NOTIF_H)
-	frame.Position               = UDim2.new(1, 10, 0, TOP_OFFSET)
+	frame.Position = UDim2.new(1, -(NOTIF_W + 10), 0, TOP_OFFSET)
 	frame.AnchorPoint            = Vector2.new(0, 0)
 	frame.BackgroundColor3       = Color3.fromRGB(14, 14, 22)
 	frame.BackgroundTransparency = 0.1
@@ -136,15 +136,17 @@ function NotificationHUD:push(
 	-- Main label: "VictimName - CO N  broke  by  AttackerName - CO M"
 	local mainLabel = Instance.new("TextLabel")
 	mainLabel.Name                  = "Main"
-	mainLabel.Size                  = UDim2.new(1, -70, 1, 0)
+	mainLabel.Size 					= UDim2.new(1, -16, 1, 0)
 	mainLabel.Position              = UDim2.new(0, 12, 0, 0)
 	mainLabel.BackgroundTransparency = 1
 	mainLabel.RichText              = true
-	mainLabel.Text                  = string.format(
-		'<b>%s</b> CO %d  <font color="#%s">%s</font>  by  <b>%s</b> CO %d',
-		victimName,   victimComp,
-		color:ToHex(), verb,
-		attackerName, attackerComp
+	local verb = eventType == 1 and "broken" or "overrun"
+	mainLabel.Text = string.format(
+		'<font color="#%s"><b>%s CO %d</b></font>  %s by  <font color="#%s"><b>%s CO %d</b></font>  <b>-%d</b>',
+		victimColor:ToHex(),   victimName,   victimComp,
+		verb,
+		attackerColor:ToHex(), attackerName, attackerComp,
+		cost
 	)
 	mainLabel.TextColor3            = Color3.fromRGB(215, 215, 215)
 	mainLabel.Font                  = Enum.Font.Gotham
@@ -154,27 +156,12 @@ function NotificationHUD:push(
 	mainLabel.ZIndex                = 31
 	mainLabel.Parent                = frame
 
-	-- Cost label right-aligned
-	local costLabel = Instance.new("TextLabel")
-	costLabel.Name                  = "Cost"
-	costLabel.Size                  = UDim2.new(0, 55, 1, 0)
-	costLabel.Position              = UDim2.new(1, -58, 0, 0)
-	costLabel.BackgroundTransparency = 1
-	costLabel.Text                  = "-" .. tostring(cost)
-	costLabel.TextColor3            = color
-	costLabel.Font                  = Enum.Font.GothamBold
-	costLabel.TextSize              = 13
-	costLabel.TextXAlignment        = Enum.TextXAlignment.Right
-	costLabel.ZIndex                = 31
-	costLabel.Parent                = frame
-
 	-- Collect everything that needs fading
 	local tweenables = {
 		{ obj = frame,     prop = "BackgroundTransparency", full = 0.1,  gone = 1    },
 		{ obj = stroke,    prop = "Transparency",           full = 0.35, gone = 1    },
 		{ obj = accent,    prop = "BackgroundTransparency", full = 0,    gone = 1    },
 		{ obj = mainLabel, prop = "TextTransparency",       full = 0,    gone = 1    },
-		{ obj = costLabel, prop = "TextTransparency",       full = 0,    gone = 1    },
 	}
 
 	local entry = { frame = frame, tweenables = tweenables }

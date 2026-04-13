@@ -852,8 +852,18 @@ Network.MatchIntermission.On(function(secondsLeft)
 	matchHud:showIntermission(secondsLeft)
 end)
 
-Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost)
-	notifHud:push(vName, vIdx, aName, aIdx, eType, cost)
+Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost, vColorInt, aColorInt)
+	local vColor = Color3.fromRGB(
+		math.floor(vColorInt / 65536) % 256,
+		math.floor(vColorInt / 256) % 256,
+		vColorInt % 256
+	)
+	local aColor = Color3.fromRGB(
+		math.floor(aColorInt / 65536) % 256,
+		math.floor(aColorInt / 256) % 256,
+		aColorInt % 256
+	)
+	notifHud:push(vName, vIdx, aName, aIdx, eType, cost, vColor, aColor)
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────
