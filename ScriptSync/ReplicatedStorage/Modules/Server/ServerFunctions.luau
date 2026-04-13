@@ -108,7 +108,9 @@ function ServerFunctions.init(ctx)
 				comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
 			end
 		end
+		
 		targetNpc.Health -= damage
+		
 		if targetNpc.Health <= 0 then
 			killNpc(targetNpc.ShortId)
 		end
