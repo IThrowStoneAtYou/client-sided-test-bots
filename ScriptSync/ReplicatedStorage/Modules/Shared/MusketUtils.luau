@@ -172,7 +172,7 @@ function MusketUtils:FaceTarget(targetPos: Vector3)
 	root.CFrame = newCF
 end
 
-function MusketUtils:CalculateHit(targetPos: Vector3): (number, Vector3)
+function MusketUtils:CalculateHit(targetPos: Vector3, ignoreList: {Instance}?): (number, Vector3)
 	local muzzle = self._musket and self._musket:FindFirstChild("Muzzle", true)
 	local origin = muzzle and muzzle.Position or (self._model.PrimaryPart.Position + Vector3.new(0, 1.5, 0))
 	local direction = (targetPos - origin).Unit
@@ -192,6 +192,13 @@ function MusketUtils:CalculateHit(targetPos: Vector3): (number, Vector3)
 	if serverModel then
 		filter[2] = serverModel
 	end
+	
+	if ignoreList then
+		for _, inst in ipairs(ignoreList) do
+			table.insert(filter, inst)
+		end
+	end
+	
 	rayParams.FilterDescendantsInstances = filter
 
 	local result = workspace:Raycast(origin, finalDir * COMBAT_RANGE, rayParams)

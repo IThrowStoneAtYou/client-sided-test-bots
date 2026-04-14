@@ -5,7 +5,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
-local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local RegimentFormation = require(ReplicatedStorage.Modules.Shared.RegimentFormation)
 local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
@@ -101,6 +101,8 @@ function ServerFunctions.init(ctx)
 
 	applyDamage = function(targetNpc, damage, attackerNpc)
 		if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
+		if targetNpc.Health <= 0 or targetNpc._dying then return end
+
 		if attackerNpc then
 			local comp = companies[targetNpc.CompanyOwner]
 				and companies[targetNpc.CompanyOwner][targetNpc.CompanyIndex]
@@ -113,13 +115,20 @@ function ServerFunctions.init(ctx)
 		targetNpc.Health -= damage
 		
 		if targetNpc.Health <= 0 then
+			targetNpc._dying = true
 			killNpc(targetNpc.ShortId)
 		end
 	end
 
 	setNpcMeleeState = function(npc, state)
+		if npc.MeleeState == state then return end
+
 		npc.MeleeState = state
-		npc.MeleeTimer = C.MELEE_DURATIONS[state] or 0
+		-- Reset pathing accumulator so the new state's movement logic triggers immediately
+		npc._meleePathAccum = 0 
+		
+		-- Add temporal jitter (0-200ms) to desynchronize bot behavior
+		npc.MeleeTimer = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
 		
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START then
 			npc.MeleeHasHit = false
@@ -133,7 +142,7 @@ function ServerFunctions.init(ctx)
 			local target = npc.MeleeTarget
 			if target and activeNpcs[target.ShortId] then
 				local dist = (target.Root.Position - npc.Root.Position).Magnitude
-				if dist <= (GameSettings.MELEE_ENGAGE_RANGE + 2) then
+				if dist <= (GameSettings.MELEE_ENGAGE_RANGE + 3.5) then
 					applyDamage(target, GameSettings.MELEE_DAMAGE, npc)
 					npc.MeleeHasHit = true
 				end
@@ -200,17 +209,14 @@ function ServerFunctions.init(ctx)
 		local wasWalking = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
 		local owner      = npc.CompanyOwner
 		local compIdx    = npc.CompanyIndex
-		
-		for p in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(p, shortId)
-			if farLastSent[p] then farLastSent[p][shortId] = nil end
-		end
-		
+
+		-- We no longer fire NpcDespawn here; NPC_SYSTEM.legacy's Heartbeat 
+		-- loop will detect the missing model and fire it in a batch.
 		if npc.Pathfinder then npc.Pathfinder:Destroy() end
 		if npc.Model      then npc.Model:Destroy() end
 		
-		activeNpcs[shortId] = nil
-		if not owner or not compIdx then return end
+	--	activeNpcs[shortId] = nil
+		if not owner or not compIdx then activeNpcs[shortId] = nil return end
 		local comp = companies[owner] and companies[owner][compIdx]
 		if not comp then return end
 		
@@ -402,6 +408,8 @@ function ServerFunctions.init(ctx)
 				npc.IsRegiment     = true
 				npc.CompanyOwner   = player
 				npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0,0,-1)
+				-- Ensure ID is set before state logic
+				npc.CompanyIndex   = companyIndex
 				
 				if isNewBearer then
 					npc.IsFlagBearer  = true
@@ -428,13 +436,9 @@ function ServerFunctions.init(ctx)
 				
 				local soldierCount = #soldierIds
 				if c.isMelee then
-					for _, sid in ipairs(soldierIds) do
-						local s = activeNpcs[sid]
-						if not s or s.IsFlagBearer then continue end
-						s.MeleeTarget = nil
-						setNpcMeleeState(s, C.MELEE_IDLE)
-					end
-					
+					-- Only initialize the new NPC, don't reset the whole company
+					npc.MeleeTarget = nil
+					setNpcMeleeState(npc, C.MELEE_IDLE)
 				elseif soldierCount > 0 and c.anchorCF then
 					local ranks = c.originalRanks or c.ranks
 					local files = c.originalFiles or c.files
@@ -689,7 +693,7 @@ function ServerFunctions.init(ctx)
 						local nearest, nearestDist = nil, math.huge
 						for _, eSid in ipairs(targetComp.slots) do
 							local e = activeNpcs[eSid]
-							if e and not e.IsFlagBearer then
+							if e then -- Bots can now target anyone, including bearers
 								local d = (e.Root.Position - npc.Root.Position).Magnitude
 								if d < nearestDist then nearestDist = d; nearest = e end
 							end

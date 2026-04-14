@@ -475,7 +475,16 @@ Network.NpcFire.On(function(shortId, targetPos)
 
 	-- If we own this NPC, we are responsible for hit detection
 	if npcOwners[shortId] == localPlayer.UserId then
-		local victimId, actualHitPos = mu:CalculateHit(targetPos)
+		-- Gather friendlies to prevent friendly-fire/body-blocking
+		local ignore = {}
+		local myTeam = replicators[shortId].Client:GetAttribute("TeamName")
+		for _, otherRep in pairs(replicators) do
+			if otherRep.Client and otherRep.Client:GetAttribute("TeamName") == myTeam then
+				table.insert(ignore, otherRep.Client)
+			end
+		end
+
+		local victimId, actualHitPos = mu:CalculateHit(targetPos, ignore)
 		
 		-- Report the hit/miss to the server
 		Network.NpcHitReport.Fire(shortId, victimId, actualHitPos)

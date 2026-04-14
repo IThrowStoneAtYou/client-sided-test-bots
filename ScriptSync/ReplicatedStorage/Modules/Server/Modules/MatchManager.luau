@@ -21,7 +21,6 @@ local GameSettings = require(game.ReplicatedStorage.Modules.Shared.GameSettings)
 
 -- ── Config ────────────────────────────────────────────────────────────
 local BROADCAST_INTERVAL  = 10   -- seconds between MatchUpdate fires during match
--- Config is now handled via GameSettings
 
 -- Map your actual Roblox Team names here
 local TEAM_NAME_TO_INDEX: { [string]: number } = {
