@@ -5,7 +5,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Network           = require(game.ReplicatedStorage.Blink.Server)
-local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
+local RegimentFormation = require(ReplicatedStorage.Modules.Shared.RegimentFormation)
 local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
