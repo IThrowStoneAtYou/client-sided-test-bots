@@ -125,6 +125,32 @@ local companies       = {}
 local serverCanAttack = {}
 local sf              -- Forward declaration for ServerFunctions
 
+-- ── Performance Pooling ──────────────────────────────────────────────
+local ENTRY_POOL    = {}
+local USED_ENTRIES  = {}
+local DIRTY_ENTRIES = {}
+local FAR_ENTRIES   = {}
+local DEAD_IDS      = {}
+local NEAR_BUFFER   = {}
+local FAR_BUFFER    = {}
+local CHUNK_BUFFER  = table.create(CHUNK_SIZE)
+
+local function getPooledEntry(id, pos, yaw)
+	local t = table.remove(ENTRY_POOL) or { id = 0, pos = Vector3.zero, yaw = 0 }
+	t.id = id
+	t.pos = pos
+	t.yaw = yaw
+	table.insert(USED_ENTRIES, t)
+	return t
+end
+
+local function releaseEntries()
+	for _, t in ipairs(USED_ENTRIES) do
+		table.insert(ENTRY_POOL, t)
+	end
+	table.clear(USED_ENTRIES)
+end
+
 -- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
@@ -152,18 +178,17 @@ local function getPlayerRootPos(player)
 	return root and root.Position or nil
 end
 
-local function makeBatchEntry(shortId, cf)
-	return { id = shortId, pos = cf.Position, yaw = getYaw(cf) }
-end
-
 local function fireChunked(player, timestamp, entries)
 	for i = 1, #entries, CHUNK_SIZE do
-		local chunk = {}
+		table.clear(CHUNK_BUFFER)
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
-			local e = entries[j]
-			chunk[#chunk+1] = { id = e.id, pos = e.pos, yaw = e.yaw }
+			-- Since entries[j] is already a pooled table with id/pos/yaw, 
+			-- we just pass the reference directly to the chunk array.
+			table.insert(CHUNK_BUFFER, entries[j])
 		end
-		Network.NpcBatch.Fire(player, timestamp, chunk)
+		-- Blink serializes the data into its own buffer immediately during Fire, 
+		-- so it is safe to reuse CHUNK_BUFFER for the next iteration/player.
+		Network.NpcBatch.Fire(player, timestamp, CHUNK_BUFFER)
 	end
 end
 
@@ -298,7 +323,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 				id           = shortId,
 				pos          = cf.Position,
 				yaw          = getYaw(cf),
-				teamName     = teamName,
+				teamName     = teamName :: any,
 				isBearer     = npc.IsFlagBearer,
 				companyIndex = companyIndex,
 				ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
@@ -311,7 +336,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		id           = shortId,
 		pos          = cf.Position,
 		yaw          = getYaw(cf),
-		teamName     = teamName,
+		teamName     = teamName :: any,
 		isBearer     = npc.IsFlagBearer,
 		companyIndex = companyIndex,
 		ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
@@ -840,20 +865,30 @@ RunService.Heartbeat:Connect(function(dt)
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
 
-	local timestamp    = workspace:GetServerTimeNow()
-	local deadIds      = {}
-	local dirtyEntries = {}
-	local allFarEntries = {}
+	local timestamp = workspace:GetServerTimeNow()
+	table.clear(DEAD_IDS)
+	table.clear(DIRTY_ENTRIES)
+	table.clear(FAR_ENTRIES)
 
 	for shortId, npc in pairs(activeNpcs) do
 		if not (npc.Model and npc.Model.Parent) then
-			deadIds[#deadIds+1] = shortId; continue
+			table.insert(DEAD_IDS, shortId)
+			continue
 		end
 
 		local cf = npc.Root.CFrame
-		if doFar then allFarEntries[#allFarEntries+1] = makeBatchEntry(shortId, cf) end
+		local entry -- Shared entry for this NPC this frame
+
+		if doFar then
+			entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
+			table.insert(FAR_ENTRIES, entry)
+		end
+
 		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
-			dirtyEntries[#dirtyEntries+1] = makeBatchEntry(shortId, cf)
+			if not entry then
+				entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
+			end
+			table.insert(DIRTY_ENTRIES, entry)
 			npc.LastSentCF = cf
 		end
 	end
@@ -863,40 +898,43 @@ RunService.Heartbeat:Connect(function(dt)
 		if not farLastSent[player] then farLastSent[player] = {} end
 
 		local playerFarSent = farLastSent[player]
-		local nearList = {}
-		local farList  = {}
 		local now      = os.clock()
+		table.clear(NEAR_BUFFER)
+		table.clear(FAR_BUFFER)
 
 		if doNear then
-			for _, entry in ipairs(dirtyEntries) do
+			for _, entry in ipairs(DIRTY_ENTRIES) do
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then nearList[#nearList+1] = entry end
+				if dist <= CULL_RADIUS then table.insert(NEAR_BUFFER, entry) end
 			end
 		end
 
 		if doFar then
-			for _, entry in ipairs(allFarEntries) do
+			for _, entry in ipairs(FAR_ENTRIES) do
 				local sid  = entry.id
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
 				if dist > CULL_RADIUS then
 					local last = playerFarSent[sid] or 0
 					if now - last >= FAR_RATE * 0.9 then
-						farList[#farList+1] = entry
+						table.insert(FAR_BUFFER, entry)
 						playerFarSent[sid]  = now
 					end
 				end
 			end
 		end
 
-		if #nearList > 0 then fireChunked(player, timestamp, nearList) end
-		if #farList  > 0 then fireChunked(player, timestamp, farList) end
+		if #NEAR_BUFFER > 0 then fireChunked(player, timestamp, NEAR_BUFFER) end
+		if #FAR_BUFFER  > 0 then fireChunked(player, timestamp, FAR_BUFFER) end
 	end
 
-	for _, shortId in ipairs(deadIds) do
+	for _, shortId in ipairs(DEAD_IDS) do
 		for player in pairs(readyPlayers) do
 			Network.NpcDespawn.Fire(player, shortId)
 			if farLastSent[player] then farLastSent[player][shortId] = nil end
 		end
 		activeNpcs[shortId] = nil
 	end
+
+	-- Return all entry tables to the pool for reuse in the next Heartbeat step
+	releaseEntries()
 end)
