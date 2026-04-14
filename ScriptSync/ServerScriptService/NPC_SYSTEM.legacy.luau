@@ -862,9 +862,24 @@ RunService.Heartbeat:Connect(function(dt)
 	sf.processTickets(dt)
 	sf.processMelee(dt)
 
+	-- 1. Identify and clean up dead NPCs EVERY frame to prevent population bloat
+	table.clear(DEAD_IDS)
+	for shortId, npc in pairs(activeNpcs) do
+		if not (npc.Model and npc.Model.Parent) then
+			table.insert(DEAD_IDS, shortId)
+		end
+	end
+
+	for _, shortId in ipairs(DEAD_IDS) do
+		for player in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(player, shortId)
+			if farLastSent[player] then farLastSent[player][shortId] = nil end
+		end
+		activeNpcs[shortId] = nil
+	end
+
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
-
 	if not doNear and not doFar then return end
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
@@ -872,15 +887,12 @@ RunService.Heartbeat:Connect(function(dt)
 	local timestamp = workspace:GetServerTimeNow() -- GetServerTimeNow is safe to call
 	local now = os.clock()
 	
-	table.clear(DEAD_IDS)
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
 	-- ── Parallel Phase 1: NPC State Collection ──────────────────────────
-	task.desynchronize()
-
 	for shortId, npc in pairs(activeNpcs) do
-		-- Note: We assume dead NPCs are cleaned up in the previous serial wrap-up
+		-- Note: Dead NPCs were just cleaned up above
 		local cf = npc.Root.CFrame
 		local entry -- Shared entry for this NPC this frame
 
@@ -945,21 +957,6 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if near and #near > 0 then fireChunked(player, timestamp, near) end
 		if far  and #far  > 0 then fireChunked(player, timestamp, far) end
-	end
-
-	-- Find dead NPCs (Must be done in Serial to check .Parent safely/consistently)
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			table.insert(DEAD_IDS, shortId)
-		end
-	end
-
-	for _, shortId in ipairs(DEAD_IDS) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
-		activeNpcs[shortId] = nil
 	end
 
 	-- Return all entry tables to the pool for reuse in the next Heartbeat step
