@@ -15,20 +15,18 @@ local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
 local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
 local ServerFunctions   = require(ReplicatedStorage.Modules.Server.ServerFunctions)
+local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
 local SERVER_MODEL        = ReplicatedStorage:WaitForChild("SERVER")
 local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 -- ── Config ────────────────────────────────────────────────────────────
-local WALK_SPEED    = 15
 local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 500
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local MAX_BOTS      = 45
-local MAX_COMPANIES = 4
 local SPAWN_OFFSET  = 16
 local COMPANY_GAP   = 15
 local RANK_SPACING  = 4.7
@@ -47,10 +45,6 @@ local BROKEN_RECOVERY_TIME   = 20
 local BEARER_NEARBY_RADIUS   = 120
 local BEARER_REPLACE_DELAY   = 3
 
-local COMBAT_RANGE   = 400
-local MUSKET_DAMAGE  = 100
-local BULLET_SPREAD  = 3
-
 local WEAPON_IDLE          = 0
 local WEAPON_MAKE_READY    = 1
 local WEAPON_MAKEREADY_IDLE = 2
@@ -59,11 +53,6 @@ local WEAPON_AIM_IDLE      = 4
 local WEAPON_FIRE          = 5
 local WEAPON_RELOAD_IDLE   = 6
 local WEAPON_RELOAD        = 7
-
-local MELEE_ENGAGE_RANGE      = 7
-local MELEE_DAMAGE            = 50
-local MELEE_BEARER_FLEE_RANGE = 30
-local MELEE_BEARER_FLEE_DIST  = 20
 
 local MELEE_NONE      = 0
 local MELEE_IDLE      = 1
@@ -207,7 +196,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	local root     = model.HumanoidRootPart
 	local humanoid = model.Humanoid
 	humanoid.AutoRotate = true
-	humanoid.WalkSpeed  = WALK_SPEED
+	humanoid.WalkSpeed  = GameSettings.WALK_SPEED
 
 	local cf = spawnCF or CFrame.new(randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0,4,0))
 	root.CFrame  = cf
@@ -357,13 +346,6 @@ sf = ServerFunctions.init({
 	BEARER_SIDE_OFFSET_Z   = BEARER_SIDE_OFFSET_Z,
 	BEARER_NEARBY_RADIUS   = BEARER_NEARBY_RADIUS,
 	BEARER_REPLACE_DELAY   = BEARER_REPLACE_DELAY,
-	COMBAT_RANGE           = COMBAT_RANGE,
-	MUSKET_DAMAGE          = MUSKET_DAMAGE,
-	BULLET_SPREAD          = BULLET_SPREAD,
-	MELEE_ENGAGE_RANGE     = MELEE_ENGAGE_RANGE,
-	MELEE_DAMAGE           = MELEE_DAMAGE,
-	MELEE_BEARER_FLEE_RANGE = MELEE_BEARER_FLEE_RANGE,
-	MELEE_BEARER_FLEE_DIST = MELEE_BEARER_FLEE_DIST,
 	MELEE_NONE             = MELEE_NONE,
 	MELEE_IDLE             = MELEE_IDLE,
 	MELEE_BOT_START        = MELEE_BOT_START,
@@ -431,8 +413,8 @@ local function despawnAllCompanies(player: Player)
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
-	companyCount = math.clamp(companyCount, 1, MAX_COMPANIES)
-	botCount     = math.clamp(botCount, 1, MAX_BOTS)
+	companyCount = math.clamp(companyCount, 1, GameSettings.MAX_COMPANIES)
+	botCount     = math.clamp(botCount, 1, GameSettings.MAX_BOTS)
 
 	local char = player.Character
 	if not char then return end
@@ -627,7 +609,7 @@ local function hookChat(player: Player)
 		if ncStr and nStr then
 			local nc = tonumber(ncStr)
 			local n  = tonumber(nStr)
-			if nc and n and nc >= 1 and nc <= MAX_COMPANIES and n >= 1 then
+			if nc and n and nc >= 1 and nc <= GameSettings.MAX_COMPANIES and n >= 1 then
 				spawnAllCompanies(player, nc, n)
 			end
 			return
@@ -697,7 +679,7 @@ Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, 
 	if typeof(facingDir) ~= "Vector3" then return end
 	if anchorPos.Magnitude > 10000 then return end
 	companyIndex = math.floor(companyIndex)
-	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
+	if companyIndex < 1 or companyIndex > GameSettings.MAX_COMPANIES then return end
 
 	orderCompany(player, companyIndex, anchorPos, facingDir, math.floor(ranks), math.floor(files))
 end)
@@ -706,7 +688,7 @@ Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 	if not companies[player] then return end
 	companyIndex = math.floor(companyIndex)
 
-	if companyIndex < 1 or companyIndex > MAX_COMPANIES then return end
+	if companyIndex < 1 or companyIndex > GameSettings.MAX_COMPANIES then return end
 	local comp = companies[player][companyIndex]
 
 	if not comp then return end
@@ -832,7 +814,7 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 	if victimId > 0 then
 		local victim = activeNpcs[victimId]
 		if victim and victim.TeamName ~= attacker.TeamName then
-			sf.applyDamage(victim, MUSKET_DAMAGE, attacker)
+			sf.applyDamage(victim, GameSettings.MUSKET_DAMAGE, attacker)
 		end
 	end
 	

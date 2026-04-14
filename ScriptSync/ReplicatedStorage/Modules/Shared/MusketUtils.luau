@@ -338,7 +338,7 @@ end
 function MusketUtils:ExitMelee()
 	if self._destroyed then return end
 	for _, track in pairs(self._meleeTracks or {}) do
-		if track and track.IsPlaying then track:Stop(0.1) end
+		if track and track.IsPlaying then track:Stop() end
 	end
 	self:PlayState(0)
 end

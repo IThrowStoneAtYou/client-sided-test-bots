@@ -882,7 +882,7 @@ function CompanyHUD:_updateBrokenPrompt()
 	end
 
 	self._brokenPrompt.Visible   = true
-	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " — BROKEN"
+	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " BROKEN"
 	self._brokenStroke.Color     = COMPANY_COLORS[idx]
 	self._brokenTimerVal.Text    = math.ceil(sd.brokenTimer) .. "s"
 

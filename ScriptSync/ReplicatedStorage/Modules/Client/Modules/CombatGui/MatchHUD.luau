@@ -12,10 +12,12 @@ local TweenService = game:GetService("TweenService")
 local Players      = game:GetService("Players")
 
 local FLAG_IMG  = "rbxassetid://13488010851"
+local FLAG_GB  = "rbxassetid://88813497029040"
+local FLAG_FR  = "rbxassetid://139065210013036"
 local BAR_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
--- Team 1 = gold/amber side (left)
-local TEAM1_BAR_COLOR = Color3.fromRGB(196, 148, 18)
+-- Team 1 = red side (left)
+local TEAM1_BAR_COLOR = Color3.fromRGB(170, 0, 0)
 -- Team 2 = dark navy side (right)
 local TEAM2_BAR_COLOR = Color3.fromRGB(28, 42, 90)
 
@@ -83,8 +85,8 @@ function MatchHUD:_build()
 	flagL.AnchorPoint          = Vector2.new(0, 0)
 	flagL.BackgroundColor3     = Color3.fromRGB(22, 22, 34)
 	flagL.BackgroundTransparency = 0.1
-	flagL.Image                = FLAG_IMG
-	flagL.ScaleType            = Enum.ScaleType.Fit
+	flagL.Image                = FLAG_GB --FLAG_IMG
+	flagL.ScaleType            = Enum.ScaleType.Crop
 	flagL.ZIndex               = 25
 	flagL.Parent               = row
 
@@ -106,8 +108,8 @@ function MatchHUD:_build()
 	flagR.AnchorPoint          = Vector2.new(0, 0)
 	flagR.BackgroundColor3     = Color3.fromRGB(22, 22, 34)
 	flagR.BackgroundTransparency = 0.1
-	flagR.Image                = FLAG_IMG
-	flagR.ScaleType            = Enum.ScaleType.Fit
+	flagR.Image                = FLAG_FR
+	flagR.ScaleType            = Enum.ScaleType.Crop
 	flagR.ZIndex               = 25
 	flagR.Parent               = row
 

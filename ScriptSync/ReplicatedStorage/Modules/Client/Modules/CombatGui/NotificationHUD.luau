@@ -106,7 +106,6 @@ function NotificationHUD:push(
 	frame.Name                   = "Notif"
 	frame.Size                   = UDim2.new(0, NOTIF_W, 0, NOTIF_H)
 	frame.BackgroundTransparency = 1
-	frame.BackgroundTransparency = 1
 	frame.BorderSizePixel        = 0
 	frame.ZIndex                 = 30
 	frame.Parent                 = self._posFrame
