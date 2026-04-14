@@ -135,6 +135,10 @@ local NEAR_BUFFER   = {}
 local FAR_BUFFER    = {}
 local CHUNK_BUFFER  = table.create(CHUNK_SIZE)
 
+-- Per-player results buffer to store networking tasks computed in parallel
+local PLAYER_WORK_NEAR = {}
+local PLAYER_WORK_FAR  = {}
+
 local function getPooledEntry(id, pos, yaw)
 	local t = table.remove(ENTRY_POOL) or { id = 0, pos = Vector3.zero, yaw = 0 }
 	t.id = id
@@ -865,17 +869,18 @@ RunService.Heartbeat:Connect(function(dt)
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
 
-	local timestamp = workspace:GetServerTimeNow()
+	local timestamp = workspace:GetServerTimeNow() -- GetServerTimeNow is safe to call
+	local now = os.clock()
+	
 	table.clear(DEAD_IDS)
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			table.insert(DEAD_IDS, shortId)
-			continue
-		end
+	-- ── Parallel Phase 1: NPC State Collection ──────────────────────────
+	task.desynchronize()
 
+	for shortId, npc in pairs(activeNpcs) do
+		-- Note: We assume dead NPCs are cleaned up in the previous serial wrap-up
 		local cf = npc.Root.CFrame
 		local entry -- Shared entry for this NPC this frame
 
@@ -898,14 +903,19 @@ RunService.Heartbeat:Connect(function(dt)
 		if not farLastSent[player] then farLastSent[player] = {} end
 
 		local playerFarSent = farLastSent[player]
-		local now      = os.clock()
-		table.clear(NEAR_BUFFER)
-		table.clear(FAR_BUFFER)
+		
+		-- Create or clear local buffers for this player's work
+		if not PLAYER_WORK_NEAR[player] then PLAYER_WORK_NEAR[player] = {} end
+		if not PLAYER_WORK_FAR[player]  then PLAYER_WORK_FAR[player]  = {} end
+		table.clear(PLAYER_WORK_NEAR[player])
+		table.clear(PLAYER_WORK_FAR[player])
 
 		if doNear then
 			for _, entry in ipairs(DIRTY_ENTRIES) do
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then table.insert(NEAR_BUFFER, entry) end
+				if dist <= CULL_RADIUS then 
+					table.insert(PLAYER_WORK_NEAR[player], entry) 
+				end
 			end
 		end
 
@@ -916,15 +926,32 @@ RunService.Heartbeat:Connect(function(dt)
 				if dist > CULL_RADIUS then
 					local last = playerFarSent[sid] or 0
 					if now - last >= FAR_RATE * 0.9 then
-						table.insert(FAR_BUFFER, entry)
-						playerFarSent[sid]  = now
+						table.insert(PLAYER_WORK_FAR[player], entry)
+						-- We update farLastSent in Parallel; it's script-local, so it's safe 
+						-- as long as no other actor is writing to it.
+						playerFarSent[sid] = now
 					end
 				end
 			end
 		end
+	end
 
-		if #NEAR_BUFFER > 0 then fireChunked(player, timestamp, NEAR_BUFFER) end
-		if #FAR_BUFFER  > 0 then fireChunked(player, timestamp, FAR_BUFFER) end
+	-- ── Serial Wrap-up: Networking & Cleanup ───────────────────────────
+	task.synchronize()
+
+	for player in pairs(readyPlayers) do
+		local near = PLAYER_WORK_NEAR[player]
+		local far  = PLAYER_WORK_FAR[player]
+
+		if near and #near > 0 then fireChunked(player, timestamp, near) end
+		if far  and #far  > 0 then fireChunked(player, timestamp, far) end
+	end
+
+	-- Find dead NPCs (Must be done in Serial to check .Parent safely/consistently)
+	for shortId, npc in pairs(activeNpcs) do
+		if not (npc.Model and npc.Model.Parent) then
+			table.insert(DEAD_IDS, shortId)
+		end
 	end
 
 	for _, shortId in ipairs(DEAD_IDS) do
