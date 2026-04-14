@@ -13,7 +13,7 @@ local ServerFunctions = {}
 
 function ServerFunctions.init(ctx)
 
-	-- ── Shared state (same tables as NPC_SYSTEM, passed by reference) ─────
+	-- ── Shared state ───────────────────────────────────────────────────────
 	local activeNpcs      = ctx.activeNpcs
 	local companies       = ctx.companies
 	local serverCanAttack = ctx.serverCanAttack
@@ -133,7 +133,7 @@ function ServerFunctions.init(ctx)
 			local target = npc.MeleeTarget
 			if target and activeNpcs[target.ShortId] then
 				local dist = (target.Root.Position - npc.Root.Position).Magnitude
-				if dist <= GameSettings.MELEE_ENGAGE_RANGE + 2 then
+				if dist <= (GameSettings.MELEE_ENGAGE_RANGE + 2) then
 					applyDamage(target, GameSettings.MELEE_DAMAGE, npc)
 					npc.MeleeHasHit = true
 				end
@@ -172,7 +172,7 @@ function ServerFunctions.init(ctx)
 				combatRayParams.FilterDescendantsInstances = { npc.Model }
 
 				local result = workspace:Raycast(origin, finalDir * GameSettings.COMBAT_RANGE, combatRayParams)
-				local actualHitPos = origin + finalDir * C.COMBAT_RANGE
+				local actualHitPos = origin + finalDir * GameSettings.COMBAT_RANGE
 				if result then
 					actualHitPos = result.Position
 					local target = npc.WeaponTarget

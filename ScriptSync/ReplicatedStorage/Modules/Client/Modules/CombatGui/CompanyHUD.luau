@@ -772,7 +772,7 @@ function CompanyHUD:_createBrokenPrompt()
 	local panel = Instance.new("Frame")
 	panel.Name              = "BrokenPrompt"
 	panel.Size              = UDim2.new(0, 320, 0, 90)
-	panel.Position 			= UDim2.new(0.5, 0, 0, 92)
+	panel.Position 			= UDim2.new(0.501, 0, -0.679, 450)
 	panel.AnchorPoint       = Vector2.new(0.5, 0)
 	panel.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
 	panel.BackgroundTransparency = 0.15
@@ -882,7 +882,7 @@ function CompanyHUD:_updateBrokenPrompt()
 	end
 
 	self._brokenPrompt.Visible   = true
-	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " — BROKEN"
+	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " BROKEN"
 	self._brokenStroke.Color     = COMPANY_COLORS[idx]
 	self._brokenTimerVal.Text    = math.ceil(sd.brokenTimer) .. "s"
 

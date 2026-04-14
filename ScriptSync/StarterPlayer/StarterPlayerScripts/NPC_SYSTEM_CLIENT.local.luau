@@ -136,8 +136,6 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 				shouldShoot = ownerState[companyIndex]
 			end
 
-		--	print("[SPAWN APPLY] NPC", shortId, "owner:", ownerUserId, "company:", companyIndex, "->", shouldShoot)
-
 			mu:SetCanShoot(shouldShoot)
 		else
 			mu:SetCanShoot(true)
@@ -437,7 +435,6 @@ end)
 
 -- applies server canAttack state and enforces it on all matching NPCs
 Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
---	print("[SYNC] owner:", ownerUserId, "company:", companyIndex, "canAttack:", canAttackState)
 
 	if not canAttack[ownerUserId] then
 		canAttack[ownerUserId] = {}
@@ -459,7 +456,6 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 		if npcOwner == ownerUserId then
 			local idx = rep.Client:GetAttribute("CompanyIndex")
 			if idx == companyIndex then
-			--	print("[APPLY] NPC", shortId, "->", canAttackState)
 				mu:SetCanShoot(canAttackState)
 			end
 		end
@@ -605,25 +601,19 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		elseif key == Enum.KeyCode.E then
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
-		--	print("client 1")
-
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
 				-- Send the toggle to the server (it will broadcast back)
 				Network.NpcCanAttackToggle.Fire(compIdx)
-			--	print("client 2")
 			end
 			
 		elseif key == Enum.KeyCode.T then
-		--	print("[Melee Input] T pressed. Toggling melee mode...")
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
-		--	print(selectedList)
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
 				local newMelee = not meleeMode[compIdx]
 				meleeMode[compIdx] = newMelee
-			--	print("[Melee Input] Company", compIdx, "Melee Mode:", newMelee)
 				hud:setMeleeState(compIdx, newMelee) -- Update HUD to show melee state
 				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
 				
@@ -701,11 +691,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			end
 
 			if closestTarget then
-			--	print("[Melee Input] Targeted closest enemy company. Distance:", math.round(minTargetDist))
 				for _, compIdx in ipairs(selectedList) do
 					if meleeMode[compIdx] and companySlots[compIdx] then
 						Network.NpcMeleeTarget.Fire(compIdx, closestTarget.ownerUserId, closestTarget.compIdx)
-					--	print("[Melee Input] Sent target command for Company", compIdx, "to Enemy Owner:", closestTarget.ownerUserId)
 					end
 				end
 				return  -- consumed the click
