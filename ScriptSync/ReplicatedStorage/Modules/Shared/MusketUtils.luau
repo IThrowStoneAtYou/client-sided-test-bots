@@ -9,10 +9,10 @@ local MUSKET_TEMPLATE = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("M
 local ANIM_FOLDER     = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Musket")
 local SOUND_PATH      = ReplicatedStorage.Shared.Npc.Item.Musket:WaitForChild("Sounds"):WaitForChild("Fire")
 
+local GameSettings = require(ReplicatedStorage.Modules.Shared.GameSettings)
+
 local BULLET_SPEED    = 350  -- studs per second
-local SOUND_DISTANCE_THRESHOLD = 85  -- studs (from camera)
-local BULLET_SPREAD   = 3    -- degrees
-local COMBAT_RANGE    = 400
+local SOUND_DISTANCE_THRESHOLD = 350  -- studs (from camera)
 
 local STATE_TO_ANIM = {
 	[0] = "Idle",
@@ -177,9 +177,8 @@ function MusketUtils:CalculateHit(targetPos: Vector3, ignoreList: {Instance}?): 
 	local origin = muzzle and muzzle.Position or (self._model.PrimaryPart.Position + Vector3.new(0, 1.5, 0))
 	local direction = (targetPos - origin).Unit
 
-	local spreadRad = math.rad(BULLET_SPREAD)
-	local spreadCF = CFrame.lookAt(Vector3.zero, direction)
-		* CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
+	local spreadRad = math.rad(GameSettings.BULLET_SPREAD)
+	local spreadCF = CFrame.lookAt(Vector3.zero, direction) * CFrame.Angles((math.random()-0.5)*spreadRad, (math.random()-0.5)*spreadRad, 0)
 	local finalDir = spreadCF.LookVector
 
 	local rayParams = RaycastParams.new()
@@ -201,8 +200,8 @@ function MusketUtils:CalculateHit(targetPos: Vector3, ignoreList: {Instance}?): 
 	
 	rayParams.FilterDescendantsInstances = filter
 
-	local result = workspace:Raycast(origin, finalDir * COMBAT_RANGE, rayParams)
-	local hitPos = origin + finalDir * COMBAT_RANGE
+	local result = workspace:Raycast(origin, finalDir * GameSettings.COMBAT_RANGE, rayParams)
+	local hitPos = origin + finalDir * GameSettings.COMBAT_RANGE
 	local victimId = 0
 
 	if result then

@@ -949,7 +949,7 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 
 	-- ── Serial Wrap-up: Networking & Cleanup ───────────────────────────
-	task.synchronize()
+--	task.synchronize()
 
 	for player in pairs(readyPlayers) do
 		local near = PLAYER_WORK_NEAR[player]

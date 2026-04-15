@@ -130,7 +130,7 @@ function ServerFunctions.init(ctx)
 		-- Add temporal jitter (0-200ms) to desynchronize bot behavior
 		npc.MeleeTimer = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
 		
-		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START then
+		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
 		end
 		
@@ -259,7 +259,8 @@ function ServerFunctions.init(ctx)
 				for _, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
-					s.MeleeTarget = nil
+					s.MeleeTarget  = nil
+					s.MeleeHasHit  = false
 					setNpcMeleeState(s, C.MELEE_IDLE)
 				end
 			end
