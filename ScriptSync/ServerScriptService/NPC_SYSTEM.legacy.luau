@@ -862,7 +862,7 @@ RunService.Heartbeat:Connect(function(dt)
 	sf.processTickets(dt)
 	sf.processMelee(dt)
 
-	-- 1. Identify and clean up dead NPCs EVERY frame to prevent population bloat
+	-- Identify and clean up dead NPCs EVERY frame to prevent population bloat
 	table.clear(DEAD_IDS)
 	for shortId, npc in pairs(activeNpcs) do
 		if not (npc.Model and npc.Model.Parent) then
@@ -890,7 +890,6 @@ RunService.Heartbeat:Connect(function(dt)
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
-	-- ── Parallel Phase 1: NPC State Collection ──────────────────────────
 	for shortId, npc in pairs(activeNpcs) do
 		-- Note: Dead NPCs were just cleaned up above
 		local cf = npc.Root.CFrame
@@ -939,17 +938,13 @@ RunService.Heartbeat:Connect(function(dt)
 					local last = playerFarSent[sid] or 0
 					if now - last >= FAR_RATE * 0.9 then
 						table.insert(PLAYER_WORK_FAR[player], entry)
-						-- We update farLastSent in Parallel; it's script-local, so it's safe 
-						-- as long as no other actor is writing to it.
+
 						playerFarSent[sid] = now
 					end
 				end
 			end
 		end
 	end
-
-	-- ── Serial Wrap-up: Networking & Cleanup ───────────────────────────
---	task.synchronize()
 
 	for player in pairs(readyPlayers) do
 		local near = PLAYER_WORK_NEAR[player]
