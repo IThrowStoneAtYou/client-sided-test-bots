@@ -1,9 +1,11 @@
 -->>>>>>>>>>>>
 -- SERVER_FUNCTIONS
--- Version 1.0.0
+-- Version 1.1.0
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
+
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared.RegimentFormation)
 local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
@@ -26,8 +28,10 @@ function ServerFunctions.init(ctx)
 	local syncCompanies = ctx.syncCompanies
 	local getYaw        = ctx.getYaw
 
-	-- ── Constants shorthand ────────────────────────────────────────────────
-	local C = ctx
+	-- ── Constants ─────────────────────────────────────────────────────────
+	-- C aliases NpcConstants so existing C.X references throughout this
+	-- module need no renaming. ctx no longer carries constants.
+	local C = NpcConstants
 
 	-- ── Forward declarations ───────────────────────────────────────────────
 	local applyDamage
@@ -111,33 +115,38 @@ function ServerFunctions.init(ctx)
 				comp.lastAttackerCompIdx = attackerNpc.CompanyIndex
 			end
 		end
-		
+
 		targetNpc.Health -= damage
-		
+
 		if targetNpc.Health <= 0 then
 			targetNpc._dying = true
 			killNpc(targetNpc.ShortId)
 		end
 	end
 
+	-->>>>>>>>>>>>
+	-- Fix: MeleeHasHit is now also reset when transitioning to MELEE_IDLE.
+	-- Previously it was only reset on BOT_START / UP_START, which meant a
+	-- survivor that was force-reset to IDLE (on a teammate's death) kept
+	-- MeleeHasHit = true and could never deal damage again in that cycle.
 	setNpcMeleeState = function(npc, state)
 		if npc.MeleeState == state then return end
 
 		npc.MeleeState = state
-		-- Reset pathing accumulator so the new state's movement logic triggers immediately
-		npc._meleePathAccum = 0 
-		
-		-- Add temporal jitter (0-200ms) to desynchronize bot behavior
+		npc._meleePathAccum = 0
+
 		npc.MeleeTimer = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
-		
+
+		-- Reset hit flag on any state that begins a fresh attack sequence
+		-- (includes IDLE so survivors reset properly when their company re-engages)
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
 		end
-		
+
 		for p in pairs(readyPlayers) do
 			Network.NpcMeleeState.Fire(p, npc.ShortId, state)
 		end
-		
+
 		if (state == C.MELEE_BOT_ATK or state == C.MELEE_UP_ATK) and npc.MeleeTarget and not npc.MeleeHasHit then
 			local target = npc.MeleeTarget
 			if target and activeNpcs[target.ShortId] then
@@ -148,7 +157,7 @@ function ServerFunctions.init(ctx)
 				end
 			end
 		end
-		
+
 		if npc.MeleeTarget and (state == C.MELEE_BOT_ATK or state == C.MELEE_UP_ATK) then
 			local tPos = npc.MeleeTarget.Root and npc.MeleeTarget.Root.Position
 			if tPos then
@@ -161,13 +170,13 @@ function ServerFunctions.init(ctx)
 	setNpcWeaponState = function(npc, state, targetPos)
 		npc.WeaponState = state
 		npc.WeaponTimer = C.WEAPON_DURATIONS[state] or 0
-		
+
 		if state == C.WEAPON_TO_AIM then
 			npc.AimAlign.Enabled = true
 		elseif state == C.WEAPON_FIRE or state == C.WEAPON_IDLE then
 			npc.AimAlign.Enabled = false
 		end
-		
+
 		if state == C.WEAPON_FIRE and targetPos then
 			if npc.CompanyOwner then
 				Network.NpcFire.Fire(npc.CompanyOwner, npc.ShortId, targetPos)
@@ -189,13 +198,13 @@ function ServerFunctions.init(ctx)
 						applyDamage(target, GameSettings.MUSKET_DAMAGE, npc)
 					end
 				end
-				
+
 				for p in pairs(readyPlayers) do
 					Network.NpcFire.Fire(p, npc.ShortId, actualHitPos)
 				end
 			end
 		end
-		
+
 		for p in pairs(readyPlayers) do
 			Network.NpcWeaponState.Fire(p, npc.ShortId, state)
 		end
@@ -210,16 +219,13 @@ function ServerFunctions.init(ctx)
 		local owner      = npc.CompanyOwner
 		local compIdx    = npc.CompanyIndex
 
-		-- We no longer fire NpcDespawn here; NPC_SYSTEM.legacy's Heartbeat 
-		-- loop will detect the missing model and fire it in a batch.
 		if npc.Pathfinder then npc.Pathfinder:Destroy() end
 		if npc.Model      then npc.Model:Destroy() end
-		
-	--	activeNpcs[shortId] = nil
+
 		if not owner or not compIdx then activeNpcs[shortId] = nil return end
 		local comp = companies[owner] and companies[owner][compIdx]
 		if not comp then return end
-		
+
 		for i = #comp.slots, 1, -1 do
 			if comp.slots[i] == shortId then
 				table.remove(comp.slots, i)
@@ -230,7 +236,7 @@ function ServerFunctions.init(ctx)
 				break
 			end
 		end
-		
+
 		if wasBearer then
 			comp.savedBearerMode   = npc.BearerMode or C.BEARER_MODE_CENTER
 			comp.savedBearerPacing = npc.IsPacing   or false
@@ -256,6 +262,10 @@ function ServerFunctions.init(ctx)
 					end)
 				end
 			elseif comp.isMelee and soldierCount > 0 then
+				-->>>>>>>>>>>>
+				-- Fix: also reset MeleeHasHit here so survivors that were
+				-- mid-attack don't carry a stale true value into their next
+				-- attack cycle after being force-reset to IDLE.
 				for _, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
@@ -265,7 +275,7 @@ function ServerFunctions.init(ctx)
 				end
 			end
 		end
-		
+
 		local cost = wasWalking and C.TICKET_COST_MOVING or C.TICKET_COST_STATIONARY
 		if not comp.isBroken then
 			comp.tickets = math.max(0, comp.tickets - cost)
@@ -277,7 +287,7 @@ function ServerFunctions.init(ctx)
 			end
 			broadcastStrength(owner, compIdx)
 		end
-		
+
 		if not comp.respawnQueue then comp.respawnQueue = {} end
 		table.insert(comp.respawnQueue, os.clock())
 		syncCompanies(owner)
@@ -287,15 +297,15 @@ function ServerFunctions.init(ctx)
 		local comp = companies[player] and companies[player][companyIndex]
 		if not comp then return end
 		if not comp.slots or #comp.slots == 0 then return end
-		
+
 		comp.bearerRespawnGate = true
-		
+
 		local candidates = {}
 		for _, sid in ipairs(comp.slots) do
 			local npc = activeNpcs[sid]
 			if npc and not npc.IsFlagBearer then candidates[#candidates+1] = sid end
 		end
-		
+
 		if #candidates == 0 then
 			task.delay(C.BEARER_REPLACE_DELAY, function()
 				if companies[player] and companies[player][companyIndex] then
@@ -304,7 +314,7 @@ function ServerFunctions.init(ctx)
 			end)
 			return
 		end
-		
+
 		local chosenId  = candidates[math.random(1, #candidates)]
 		local chosenNpc = activeNpcs[chosenId]
 		if not chosenNpc then
@@ -315,7 +325,7 @@ function ServerFunctions.init(ctx)
 			end)
 			return
 		end
-		
+
 		chosenNpc.IsFlagBearer   = true
 		chosenNpc.BearerMode     = comp.savedBearerMode  or C.BEARER_MODE_CENTER
 		chosenNpc.IsPacing       = comp.savedBearerPacing or false
@@ -324,27 +334,27 @@ function ServerFunctions.init(ctx)
 		chosenNpc.WeaponTimer    = 0
 		chosenNpc.WeaponTarget   = nil
 		chosenNpc.AimAlign.Enabled = false
-		
+
 		for p in pairs(readyPlayers) do
 			Network.NpcWeaponState.Fire(p, chosenId, C.WEAPON_IDLE)
 			Network.NpcBecomeBearer.Fire(p, chosenId)
 		end
-		
+
 		chosenNpc.RegimentTarget = deadBearerPos
 		chosenNpc.MoveRetries    = 0
-		
+
 		task.spawn(function()
 			if chosenNpc.ActiveTween then chosenNpc.ActiveTween:Cancel() chosenNpc.ActiveTween = nil end
 			chosenNpc.Pathfinder:Stop()
 			chosenNpc.Pathfinder:Run(deadBearerPos)
 		end)
-		
+
 		local soldierIds = {}
 		for _, sid in ipairs(comp.slots) do
 			local s = activeNpcs[sid]
 			if s and not s.IsFlagBearer then soldierIds[#soldierIds+1] = sid end
 		end
-		
+
 		local soldierCount = #soldierIds
 		if not comp.isMelee and soldierCount > 0 and comp.anchorCF then
 			local files = comp.originalFiles or comp.files
@@ -355,7 +365,7 @@ function ServerFunctions.init(ctx)
 				if not s then continue end
 				s.RegimentTarget = slots[i].Position
 				s.MoveRetries    = 0
-				
+
 				task.spawn(function()
 					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
 					s.Pathfinder:Stop()
@@ -363,7 +373,7 @@ function ServerFunctions.init(ctx)
 				end)
 			end
 		end
-		
+
 		task.delay(C.BEARER_REPLACE_DELAY, function()
 			if companies[player] and companies[player][companyIndex] then
 				comp.bearerRespawnGate = false
@@ -378,27 +388,27 @@ function ServerFunctions.init(ctx)
 		if comp.bearerRespawnGate then return end
 		if comp.isRespawning      then return end
 		if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
-		
+
 		local bearerPos
 		for _, sid in ipairs(comp.slots) do
 			local npc = activeNpcs[sid]
 			if npc and npc.IsFlagBearer then bearerPos = npc.Root.Position; break end
 		end
-		
+
 		bearerPos = bearerPos or (comp.anchorCF and comp.anchorCF.Position)
 		if not bearerPos then return end
 		local currentTime = os.clock()
 		local RESPAWN_DELAY = 3
 		local readyIndex
-		
+
 		for i, deathTime in ipairs(comp.respawnQueue) do
 			if currentTime - deathTime >= RESPAWN_DELAY then readyIndex = i; break end
 		end
-		
+
 		if not readyIndex then return end
 		table.remove(comp.respawnQueue, readyIndex)
 		comp.isRespawning = true
-		
+
 		task.spawn(function()
 			local offset  = Vector3.new(math.random(-3,3), 4, math.random(-3,3))
 			local spawnCF = CFrame.new(bearerPos + offset)
@@ -409,9 +419,8 @@ function ServerFunctions.init(ctx)
 				npc.IsRegiment     = true
 				npc.CompanyOwner   = player
 				npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0,0,-1)
-				-- Ensure ID is set before state logic
 				npc.CompanyIndex   = companyIndex
-				
+
 				if isNewBearer then
 					npc.IsFlagBearer  = true
 					npc.BearerMode    = c.savedBearerMode  or C.BEARER_MODE_CENTER
@@ -426,18 +435,17 @@ function ServerFunctions.init(ctx)
 					npc.MeleeTimer  = 0
 					npc.MeleeTarget = nil
 				end
-				
+
 				table.insert(c.slots, npc.ShortId)
-				
+
 				local soldierIds = {}
 				for _, sid in ipairs(c.slots) do
 					local s = activeNpcs[sid]
 					if s and not s.IsFlagBearer then soldierIds[#soldierIds+1] = sid end
 				end
-				
+
 				local soldierCount = #soldierIds
 				if c.isMelee then
-					-- Only initialize the new NPC, don't reset the whole company
 					npc.MeleeTarget = nil
 					setNpcMeleeState(npc, C.MELEE_IDLE)
 				elseif soldierCount > 0 and c.anchorCF then
@@ -456,7 +464,7 @@ function ServerFunctions.init(ctx)
 						end)
 					end
 				end
-				
+
 				for p in pairs(readyPlayers) do
 					Network.NpcSpawn.Fire(p, {
 						Type         = "Single",
@@ -476,7 +484,7 @@ function ServerFunctions.init(ctx)
 				end
 				syncCompanies(player)
 			end
-			
+
 			if companies[player] and companies[player][companyIndex] then
 				companies[player][companyIndex].isRespawning = false
 			end
@@ -503,7 +511,7 @@ function ServerFunctions.init(ctx)
 				end
 				continue
 			end
-			
+
 			if npc.WeaponState == C.WEAPON_IDLE then
 				local myTeam         = npc.TeamName
 				local myPos          = npc.Root.Position
@@ -519,7 +527,7 @@ function ServerFunctions.init(ctx)
 						end
 					end
 				end
-				
+
 				if #enemiesInRange > 0 then
 					local enemy = enemiesInRange[math.random(1, #enemiesInRange)]
 					npc.WeaponTarget = enemy
@@ -527,7 +535,7 @@ function ServerFunctions.init(ctx)
 				end
 				continue
 			end
-			
+
 			npc.WeaponTimer -= dt
 			if npc.AimAlign.Enabled and npc.WeaponTarget then
 				local aimPos = npc.WeaponTarget.Root and npc.WeaponTarget.Root.Position
@@ -536,12 +544,12 @@ function ServerFunctions.init(ctx)
 					npc.AimAlign.CFrame = CFrame.lookAt(npc.Root.Position, npc.Root.Position + dir)
 				end
 			end
-			
+
 			if npc.WeaponTimer > 0 then continue end
-			
+
 			local target    = npc.WeaponTarget
 			local targetPos = target and target.Root and target.Root.Position
-			
+
 			if npc.WeaponState == C.WEAPON_MAKE_READY then
 				setNpcWeaponState(npc, C.WEAPON_MAKEREADY_IDLE, nil)
 			elseif npc.WeaponState == C.WEAPON_MAKEREADY_IDLE then
@@ -584,7 +592,7 @@ function ServerFunctions.init(ctx)
 					end
 					continue
 				end
-				
+
 				if comp.isBroken then
 					if comp.brokenTimer > 0 then
 						comp.brokenTimer = math.max(0, comp.brokenTimer - dt)
@@ -610,7 +618,7 @@ function ServerFunctions.init(ctx)
 						comp.tickets = math.min(C.MAX_TICKETS, comp.tickets + C.TICKET_REGEN_RATE)
 						if comp.tickets ~= prev then broadcastStrength(player, compIdx) end
 					end
-					
+
 					if isEnemyBearerNearby(player, compIdx) then
 						comp.decayAccum = (comp.decayAccum or 0) + dt
 						if comp.decayAccum >= C.TICKET_DECAY_INTERVAL then
@@ -628,7 +636,7 @@ function ServerFunctions.init(ctx)
 							end
 						end
 					end
-					
+
 					if comp.respawnQueue and #comp.respawnQueue > 0 then
 						flushRespawnQueue(player, compIdx)
 					end
@@ -637,13 +645,13 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	local function processMelee(dt) -- cluster fuck
+	local function processMelee(dt)
 		for player, playerCompanies in pairs(companies) do
 			for compIdx, comp in pairs(playerCompanies) do
 				if not comp.isMelee then continue end
 				local soldierCenter = Vector3.zero
 				local validSoldiers = 0
-				
+
 				for _, sid in ipairs(comp.slots) do
 					local n = activeNpcs[sid]
 					if n and n.Root and not n.IsFlagBearer then
@@ -651,7 +659,7 @@ function ServerFunctions.init(ctx)
 						validSoldiers += 1
 					end
 				end
-				
+
 				if validSoldiers > 0 then soldierCenter /= validSoldiers end
 				local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 				for _, shortId in ipairs(comp.slots) do
@@ -694,7 +702,7 @@ function ServerFunctions.init(ctx)
 						local nearest, nearestDist = nil, math.huge
 						for _, eSid in ipairs(targetComp.slots) do
 							local e = activeNpcs[eSid]
-							if e then -- Bots can now target anyone, including bearers
+							if e then
 								local d = (e.Root.Position - npc.Root.Position).Magnitude
 								if d < nearestDist then nearestDist = d; nearest = e end
 							end
@@ -723,7 +731,7 @@ function ServerFunctions.init(ctx)
 							npc._meleePathAccum = 0
 							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
 						end
-							if dist <= GameSettings.MELEE_ENGAGE_RANGE then
+						if dist <= GameSettings.MELEE_ENGAGE_RANGE then
 							npc.Pathfinder:Stop()
 							setNpcMeleeState(npc, C.MELEE_BOT_ATK)
 						end
@@ -746,7 +754,7 @@ function ServerFunctions.init(ctx)
 							npc._meleePathAccum = 0
 							npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
 						end
-							if dist <= GameSettings.MELEE_ENGAGE_RANGE then
+						if dist <= GameSettings.MELEE_ENGAGE_RANGE then
 							npc.Pathfinder:Stop()
 							setNpcMeleeState(npc, C.MELEE_UP_ATK)
 						end
