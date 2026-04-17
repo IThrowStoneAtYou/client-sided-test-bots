@@ -1,6 +1,6 @@
 -->>>>>>>>>>>>
 -- ServerScript
--- Version 4.0.0
+-- Version 4.1.0
 -- Core game logic lives in ServerFunctions.
 -->>>>>>>>>>>>
 
@@ -16,87 +16,47 @@ local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChil
 local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.MatchManager)
 local ServerFunctions   = require(ReplicatedStorage.Modules.Server.ServerFunctions)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
+local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
 
-local SERVER_MODEL        = ReplicatedStorage:WaitForChild("SERVER")
-local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+-- ── Destructure NpcConstants for local use ────────────────────────────
+-- Pure-networking / performance constants stay as locals below;
+-- everything else comes from the shared module.
+local SPAWN_OFFSET         = NpcConstants.SPAWN_OFFSET
+local COMPANY_GAP          = NpcConstants.COMPANY_GAP
+local RANK_SPACING         = NpcConstants.RANK_SPACING
+local RANK_DEPTH           = NpcConstants.RANK_DEPTH
+local FLAG_OFFSET_Z        = NpcConstants.FLAG_OFFSET_Z
+local MOVE_RETRIES         = NpcConstants.MOVE_RETRIES
+local MAX_TICKETS          = NpcConstants.MAX_TICKETS
+local WEAPON_IDLE          = NpcConstants.WEAPON_IDLE
+local WEAPON_DURATIONS     = NpcConstants.WEAPON_DURATIONS
+local MELEE_NONE           = NpcConstants.MELEE_NONE
+local MELEE_IDLE           = NpcConstants.MELEE_IDLE
+local MELEE_BOT_START      = NpcConstants.MELEE_BOT_START
+local MELEE_UP_START       = NpcConstants.MELEE_UP_START
+local MELEE_ADVANCE        = NpcConstants.MELEE_ADVANCE
+local MELEE_DURATIONS      = NpcConstants.MELEE_DURATIONS
+local BEARER_MODE_CENTER   = NpcConstants.BEARER_MODE_CENTER
+local BEARER_MODE_PACING   = NpcConstants.BEARER_MODE_PACING
 
--- ── Config ────────────────────────────────────────────────────────────
+-- ── Server-only performance / networking constants ────────────────────
+-- These are never needed by ServerFunctions or the client so they stay local.
 local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
 local CULL_RADIUS   = 500
 local DELTA_POS     = 0.08
 local DELTA_ROT     = 0.01
-local SPAWN_OFFSET  = 16
-local COMPANY_GAP   = 15
-local RANK_SPACING  = 4.7
-local RANK_DEPTH    = 5
-local FLAG_OFFSET_Z = 8
-local MOVE_RETRIES  = 2
 
-local MAX_TICKETS            = 135
-local TICKET_REGEN_RATE      = 8
-local TICKET_REGEN_INTERVAL  = 5
-local TICKET_DECAY_RATE      = 6
-local TICKET_DECAY_INTERVAL  = 5
-local TICKET_COST_STATIONARY = 2
-local TICKET_COST_MOVING     = 4
-local BROKEN_RECOVERY_TIME   = 20
-local BEARER_NEARBY_RADIUS   = 120
-local BEARER_REPLACE_DELAY   = 3
-
-local WEAPON_IDLE          = 0
-local WEAPON_MAKE_READY    = 1
-local WEAPON_MAKEREADY_IDLE = 2
-local WEAPON_TO_AIM        = 3
-local WEAPON_AIM_IDLE      = 4
-local WEAPON_FIRE          = 5
-local WEAPON_RELOAD_IDLE   = 6
-local WEAPON_RELOAD        = 7
-
-local MELEE_NONE      = 0
-local MELEE_IDLE      = 1
-local MELEE_BOT_START = 2
-local MELEE_BOT_IDLE  = 3
-local MELEE_BOT_ATK   = 4
-local MELEE_UP_START  = 5
-local MELEE_UP_IDLE   = 6
-local MELEE_UP_ATK    = 7
-local MELEE_ADVANCE   = 8
-local MELEE_BACKPEDAL = 9
-
-local WEAPON_DURATIONS = {
-	[0] = 0, 
-	[1] = 1.8, 
-	[2] = 1.0, 
-	[3] = 0.7,
-	[4] = 1.0, 
-	[5] = 0.75, 
-	[6] = 1.0, 
-	[7] = 10.33,
-}
-local MELEE_DURATIONS = {
-	[0] = 0, 
-	[1] = 0, 
-	[2] = 0.25, 
-	[3] = 0,
-	[4] = 0.5, 
-	[5] = 0.7, 
-	[6] = 0, 
-	[7] = 0.333,
-	[8] = 0, 
-	[9] = 0.8,
-}
-
-local BEARER_MODE_CENTER   = 0
-local BEARER_MODE_LEFT     = 1
-local BEARER_MODE_RIGHT    = 2
-local BEARER_MODE_PACING   = 3
-local BEARER_SIDE_OFFSET_X = 5
-local BEARER_SIDE_OFFSET_Z = 0
+local SERVER_MODEL        = ReplicatedStorage:WaitForChild("SERVER")
+local ROTATION_TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 local NPC_COLLISION_GROUP = "NpcGroup"
 local CLIENT_NPC_GROUP    = "ClientNpcGroup"
+
+local WANDER_CENTER = Vector3.new(0, 0, 0)
+local WANDER_RADIUS = 60
+local WANDER_MIN    = 8
 
 if not PhysicsService:IsCollisionGroupRegistered(NPC_COLLISION_GROUP) then
 	PhysicsService:RegisterCollisionGroup(NPC_COLLISION_GROUP)
@@ -111,10 +71,6 @@ PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP
 
 local combatRayParams = RaycastParams.new()
 combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local WANDER_CENTER = Vector3.new(0, 0, 0)
-local WANDER_RADIUS = 60
-local WANDER_MIN    = 8
 
 -- ── State ─────────────────────────────────────────────────────────────
 local activeNpcs      = {}
@@ -135,7 +91,6 @@ local NEAR_BUFFER   = {}
 local FAR_BUFFER    = {}
 local CHUNK_BUFFER  = table.create(CHUNK_SIZE)
 
--- Per-player results buffer to store networking tasks computed in parallel
 local PLAYER_WORK_NEAR = {}
 local PLAYER_WORK_FAR  = {}
 
@@ -186,12 +141,8 @@ local function fireChunked(player, timestamp, entries)
 	for i = 1, #entries, CHUNK_SIZE do
 		table.clear(CHUNK_BUFFER)
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
-			-- Since entries[j] is already a pooled table with id/pos/yaw, 
-			-- we just pass the reference directly to the chunk array.
 			table.insert(CHUNK_BUFFER, entries[j])
 		end
-		-- Blink serializes the data into its own buffer immediately during Fire, 
-		-- so it is safe to reuse CHUNK_BUFFER for the next iteration/player.
 		Network.NpcBatch.Fire(player, timestamp, CHUNK_BUFFER)
 	end
 end
@@ -253,33 +204,33 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	local pathfinder = NoobPath.Humanoid(model, { WaypointSpacing = 6, AgentRadius = 1.5, AgentHeight = 5 })
 
 	local npc = {
-		ShortId        = shortId,
-		Model          = model,
-		Root           = root,
-		Humanoid       = humanoid,
-		Pathfinder     = pathfinder,
-		LastMoveTime   = 0,
-		LastSentCF     = cf,
-		IsRegiment     = spawnCF ~= nil,
-		RegimentTarget = nil,
-		MoveRetries    = 0,
-		ActiveTween    = nil,
-		Health         = 100,
-		AimAttachment  = root:WaitForChild("RootAttachment"),
-		AimAlign       = root:WaitForChild("AlignOrientation"),
-		IsFlagBearer   = false,
-		PaceDirection  = 1,
-		CompanyOwner   = nil,
-		CompanyIndex   = companyIndex,
-		Team           = ownerPlayer and ownerPlayer.Team or nil,
-		TeamName       = teamName,
-		WeaponState    = WEAPON_IDLE,
-		WeaponTimer    = 0,
-		WeaponTarget   = nil,
-		MeleeState     = MELEE_IDLE,
-		MeleeTimer     = 0,
-		MeleeTarget    = nil,
-		MeleeHasHit    = false,
+		ShortId         = shortId,
+		Model           = model,
+		Root            = root,
+		Humanoid        = humanoid,
+		Pathfinder      = pathfinder,
+		LastMoveTime    = 0,
+		LastSentCF      = cf,
+		IsRegiment      = spawnCF ~= nil,
+		RegimentTarget  = nil,
+		MoveRetries     = 0,
+		ActiveTween     = nil,
+		Health          = 100,
+		AimAttachment   = root:WaitForChild("RootAttachment"),
+		AimAlign        = root:WaitForChild("AlignOrientation"),
+		IsFlagBearer    = false,
+		PaceDirection   = 1,
+		CompanyOwner    = nil,
+		CompanyIndex    = companyIndex,
+		Team            = ownerPlayer and ownerPlayer.Team or nil,
+		TeamName        = teamName,
+		WeaponState     = WEAPON_IDLE,
+		WeaponTimer     = 0,
+		WeaponTarget    = nil,
+		MeleeState      = MELEE_IDLE,
+		MeleeTimer      = 0,
+		MeleeTarget     = nil,
+		MeleeHasHit     = false,
 		_meleePathAccum = 0,
 	}
 
@@ -348,9 +299,10 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 end
 
 -- ── Init ServerFunctions ───────────────────────────────────────────────
--- Must happen AFTER spawnNpc and syncCompanies are defined.
+-- ctx now only carries shared state and function references.
+-- All constants come from NpcConstants, which ServerFunctions requires directly.
 sf = ServerFunctions.init({
-	-- State
+	-- Shared state
 	activeNpcs      = activeNpcs,
 	companies       = companies,
 	serverCanAttack = serverCanAttack,
@@ -358,51 +310,10 @@ sf = ServerFunctions.init({
 	farLastSent     = farLastSent,
 	combatRayParams = combatRayParams,
 
-	-- Functions
+	-- Function references (defined before this call above)
 	spawnNpc        = spawnNpc,
 	syncCompanies   = syncCompanies,
 	getYaw          = getYaw,
-
-	-- Constants
-	RANK_SPACING           = RANK_SPACING,
-	RANK_DEPTH             = RANK_DEPTH,
-	FLAG_OFFSET_Z          = FLAG_OFFSET_Z,
-	BEARER_MODE_CENTER     = BEARER_MODE_CENTER,
-	BEARER_MODE_LEFT       = BEARER_MODE_LEFT,
-	BEARER_MODE_RIGHT      = BEARER_MODE_RIGHT,
-	BEARER_MODE_PACING     = BEARER_MODE_PACING,
-	BEARER_SIDE_OFFSET_X   = BEARER_SIDE_OFFSET_X,
-	BEARER_SIDE_OFFSET_Z   = BEARER_SIDE_OFFSET_Z,
-	BEARER_NEARBY_RADIUS   = BEARER_NEARBY_RADIUS,
-	BEARER_REPLACE_DELAY   = BEARER_REPLACE_DELAY,
-	MELEE_NONE             = MELEE_NONE,
-	MELEE_IDLE             = MELEE_IDLE,
-	MELEE_BOT_START        = MELEE_BOT_START,
-	MELEE_BOT_IDLE         = MELEE_BOT_IDLE,
-	MELEE_BOT_ATK          = MELEE_BOT_ATK,
-	MELEE_UP_START         = MELEE_UP_START,
-	MELEE_UP_IDLE          = MELEE_UP_IDLE,
-	MELEE_UP_ATK           = MELEE_UP_ATK,
-	MELEE_ADVANCE          = MELEE_ADVANCE,
-	MELEE_BACKPEDAL        = MELEE_BACKPEDAL,
-	MELEE_DURATIONS        = MELEE_DURATIONS,
-	WEAPON_IDLE            = WEAPON_IDLE,
-	WEAPON_MAKE_READY      = WEAPON_MAKE_READY,
-	WEAPON_MAKEREADY_IDLE  = WEAPON_MAKEREADY_IDLE,
-	WEAPON_TO_AIM          = WEAPON_TO_AIM,
-	WEAPON_AIM_IDLE        = WEAPON_AIM_IDLE,
-	WEAPON_FIRE            = WEAPON_FIRE,
-	WEAPON_RELOAD_IDLE     = WEAPON_RELOAD_IDLE,
-	WEAPON_RELOAD          = WEAPON_RELOAD,
-	WEAPON_DURATIONS       = WEAPON_DURATIONS,
-	TICKET_COST_STATIONARY = TICKET_COST_STATIONARY,
-	TICKET_COST_MOVING     = TICKET_COST_MOVING,
-	BROKEN_RECOVERY_TIME   = BROKEN_RECOVERY_TIME,
-	MAX_TICKETS            = MAX_TICKETS,
-	TICKET_REGEN_RATE      = TICKET_REGEN_RATE,
-	TICKET_REGEN_INTERVAL  = TICKET_REGEN_INTERVAL,
-	TICKET_DECAY_RATE      = TICKET_DECAY_RATE,
-	TICKET_DECAY_INTERVAL  = TICKET_DECAY_INTERVAL,
 })
 
 -- ── Spawn/Despawn ─────────────────────────────────────────────────────
@@ -509,7 +420,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 
 				pending -= 1
 				if pending == 0 then
-					local allSpawnData  = {}
+					local allSpawnData   = {}
 					local companiesSlots = {}
 					for _, res in ipairs(results) do
 						allSpawnData[#allSpawnData+1] = res.spawnData
@@ -746,24 +657,24 @@ end)
 Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	if not companies[player] or not companies[player][companyIndex] then return end
 	serverCanAttack[player] = serverCanAttack[player] or {}
-	
+
 	local current  = serverCanAttack[player][companyIndex]
 	if current == nil then current = true end
-	
+
 	local newState = not current
 	serverCanAttack[player][companyIndex] = newState
-	
+
 	for p in pairs(readyPlayers) do
 		Network.NpcCanAttackSync.Fire(p, companyIndex, newState, player.UserId)
 	end
-	
+
 	if not newState then
 		local comp = companies[player] and companies[player][companyIndex]
 		if comp then
 			for _, shortId in ipairs(comp.slots) do
 				local npc = activeNpcs[shortId]
 				if npc and npc.WeaponState ~= WEAPON_IDLE then
-					local reloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+					local reloading = npc.WeaponState == NpcConstants.WEAPON_RELOAD_IDLE or npc.WeaponState == NpcConstants.WEAPON_RELOAD
 					if not reloading then
 						sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
 						npc.WeaponTarget = nil
@@ -778,7 +689,7 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	if not companies[player] or not companies[player][companyIndex] then return end
 	local comp = companies[player][companyIndex]
 	comp.isMelee = isMelee
-	
+
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
@@ -795,7 +706,7 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 			npc.MeleeTimer  = 0
 			npc.MeleeTarget = nil
 			npc.Pathfinder:Stop()
-			
+
 			for p in pairs(readyPlayers) do
 				Network.NpcMeleeState.Fire(p, shortId, MELEE_NONE)
 				Network.NpcWeaponState.Fire(p, shortId, WEAPON_IDLE)
@@ -808,13 +719,13 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	if not companies[player] or not companies[player][companyIndex] then return end
 	local comp = companies[player][companyIndex]
 	if not comp.isMelee then return end
-	
+
 	local targetPlayer = Players:GetPlayerByUserId(targetOwnerUserId)
 	if not targetPlayer then return end
 	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
 	comp.meleeTargetPlayer  = targetPlayer
 	comp.meleeTargetCompIdx = targetCompanyIndex
-	
+
 	local targetComp = companies[targetPlayer][targetCompanyIndex]
 	if targetComp and targetComp.isMelee then
 		targetComp.meleeTargetPlayer  = player
@@ -827,7 +738,7 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 			end
 		end
 	end
-	
+
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
@@ -846,7 +757,7 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 			sf.applyDamage(victim, GameSettings.MUSKET_DAMAGE, attacker)
 		end
 	end
-	
+
 	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)
 
@@ -862,7 +773,6 @@ RunService.Heartbeat:Connect(function(dt)
 	sf.processTickets(dt)
 	sf.processMelee(dt)
 
-	-- Identify and clean up dead NPCs EVERY frame to prevent population bloat
 	table.clear(DEAD_IDS)
 	for shortId, npc in pairs(activeNpcs) do
 		if not (npc.Model and npc.Model.Parent) then
@@ -884,16 +794,15 @@ RunService.Heartbeat:Connect(function(dt)
 	if doNear then nearAccum -= NEAR_RATE end
 	if doFar  then farAccum  -= FAR_RATE  end
 
-	local timestamp = workspace:GetServerTimeNow() -- GetServerTimeNow is safe to call
+	local timestamp = workspace:GetServerTimeNow()
 	local now = os.clock()
-	
+
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
 	for shortId, npc in pairs(activeNpcs) do
-		-- Note: Dead NPCs were just cleaned up above
 		local cf = npc.Root.CFrame
-		local entry -- Shared entry for this NPC this frame
+		local entry
 
 		if doFar then
 			entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
@@ -914,8 +823,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if not farLastSent[player] then farLastSent[player] = {} end
 
 		local playerFarSent = farLastSent[player]
-		
-		-- Create or clear local buffers for this player's work
+
 		if not PLAYER_WORK_NEAR[player] then PLAYER_WORK_NEAR[player] = {} end
 		if not PLAYER_WORK_FAR[player]  then PLAYER_WORK_FAR[player]  = {} end
 		table.clear(PLAYER_WORK_NEAR[player])
@@ -924,8 +832,8 @@ RunService.Heartbeat:Connect(function(dt)
 		if doNear then
 			for _, entry in ipairs(DIRTY_ENTRIES) do
 				local dist = playerPos and (entry.pos - playerPos).Magnitude or 0
-				if dist <= CULL_RADIUS then 
-					table.insert(PLAYER_WORK_NEAR[player], entry) 
+				if dist <= CULL_RADIUS then
+					table.insert(PLAYER_WORK_NEAR[player], entry)
 				end
 			end
 		end
@@ -938,7 +846,6 @@ RunService.Heartbeat:Connect(function(dt)
 					local last = playerFarSent[sid] or 0
 					if now - last >= FAR_RATE * 0.9 then
 						table.insert(PLAYER_WORK_FAR[player], entry)
-
 						playerFarSent[sid] = now
 					end
 				end
@@ -954,6 +861,5 @@ RunService.Heartbeat:Connect(function(dt)
 		if far  and #far  > 0 then fireChunked(player, timestamp, far) end
 	end
 
-	-- Return all entry tables to the pool for reuse in the next Heartbeat step
 	releaseEntries()
 end)
