@@ -218,3 +218,10 @@ event AdminUpdateMatch {
         costOverrun:          u16,
     }
 }
+
+event TeamRegimentSelect {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: (u8, u8)   -- teamIndex (1|2), regimentIndex (1-4)
+}
