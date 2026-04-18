@@ -123,10 +123,14 @@ local function getYaw(cf)
 end
 
 local function cfChanged(cf, lastCF, npc)
-	local threshold = (npc.IsRegiment and npc.RegimentTarget
-		and (cf.Position - npc.RegimentTarget).Magnitude < 3) and 1.5 or DELTA_POS
-	if (cf.Position - lastCF.Position).Magnitude > threshold then return true end
-	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then return true end
+	local threshold = (npc.IsRegiment and npc.RegimentTarget and (cf.Position - npc.RegimentTarget).Magnitude < 3) and 1.5 or DELTA_POS
+	if (cf.Position - lastCF.Position).Magnitude > threshold then 
+		return true
+	end
+	
+	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then 
+		return true
+	end
 	return false
 end
 
@@ -134,6 +138,7 @@ local function getPlayerRootPos(player)
 	local char = player.Character
 	if not char then return nil end
 	local root = char:FindFirstChild("HumanoidRootPart")
+	
 	return root and root.Position or nil
 end
 
@@ -173,6 +178,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 
 	local model    = SERVER_MODEL:Clone()
 	model.Name     = "NPC_" .. shortId
+	
 	local root     = model.HumanoidRootPart
 	local humanoid = model.Humanoid
 	humanoid.AutoRotate = true

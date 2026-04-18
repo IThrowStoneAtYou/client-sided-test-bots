@@ -13,15 +13,17 @@ local CombatGui = ReplicatedStorage.Modules.Client.Modules.CombatGui
 local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild("NPC_Replicator_v2"))
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
-local NpcPreview        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("NpcPreview"))
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
-local AdminPanel        = require(ReplicatedStorage.Modules.Client:WaitForChild("AdminPanel"))
+local AdminPanel        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("AdminPanel"))
+
+local TeamSelectMenu = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("TeamSelectMenu"))
 
 -- Combat Gui
 local CompanyHUD        = require(CombatGui.CompanyHUD)
 local CompassHUD        = require(CombatGui.CompassHUD)
 local MatchHUD 			= require(CombatGui.MatchHUD)
 local NotificationHUD 	= require(CombatGui.NotificationHUD)
+local NpcPreview        = require(CombatGui.NpcPreview)
 
 local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
@@ -899,3 +901,4 @@ end)
 Network.NpcReady.Fire()
 
 AdminPanel.new(Network)
+TeamSelectMenu.new(Network)

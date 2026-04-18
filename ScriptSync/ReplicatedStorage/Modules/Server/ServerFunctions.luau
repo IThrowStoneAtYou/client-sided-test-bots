@@ -30,7 +30,6 @@ function ServerFunctions.init(ctx)
 
 	-- ── Constants ─────────────────────────────────────────────────────────
 	-- C aliases NpcConstants so existing C.X references throughout this
-	-- module need no renaming. ctx no longer carries constants.
 	local C = NpcConstants
 
 	-- ── Forward declarations ───────────────────────────────────────────────
