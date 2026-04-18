@@ -158,4 +158,8 @@ function NotificationHUD:push(
 	end)
 end
 
+function NotificationHUD:SetVisible(visible: boolean)
+	self._gui.Enabled = visible
+end
+
 return NotificationHUD

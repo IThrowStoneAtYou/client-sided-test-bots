@@ -638,6 +638,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				end
 			end
 			return
+		elseif key == Enum.KeyCode.M then
+			local currentTeam = localPlayer.Team
+			-- Only request reset if we are actually on a team other than "NO TEAM"
+			if currentTeam and currentTeam.Name ~= "NO TEAM" then
+				Network.RequestTeamReset.Fire()
+			end
+			return
 		end
 	end
 
@@ -901,4 +908,22 @@ end)
 Network.NpcReady.Fire()
 
 AdminPanel.new(Network)
-TeamSelectMenu.new(Network)
+
+local function toggleHUDs(menuVisible)
+	hud:SetVisible(not menuVisible)
+	matchHud:SetVisible(not menuVisible)
+	notifHud:SetVisible(not menuVisible)
+end
+local teamMenu = TeamSelectMenu.new(Network, toggleHUDs)
+
+-- ── Auto-Show Menu for No Team ──────────────────────────────────────
+local function checkTeamRequirement()
+	local currentTeam = localPlayer.Team
+	if not currentTeam or currentTeam.Name == "NO TEAM" or currentTeam.Name == "Neutral" then
+		teamMenu:show()
+	end
+end
+
+-- Run initial check and listen for team resets
+checkTeamRequirement()
+localPlayer:GetPropertyChangedSignal("Team"):Connect(checkTeamRequirement)

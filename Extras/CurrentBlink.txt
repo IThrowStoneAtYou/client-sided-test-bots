@@ -225,3 +225,9 @@ event TeamRegimentSelect {
     Call: SingleAsync,
     Data: (u8, u8)   -- teamIndex (1|2), regimentIndex (1-4)
 }
+
+event RequestTeamReset {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
