@@ -6,8 +6,8 @@ local Network = require(game.ReplicatedStorage.Blink.Server)
 
 -- Maps event teamIndex → Roblox Team name (must match MatchManager)
 local TEAM_NAMES: { [number]: string } = {
-	[1] = "TEAM 1",
-	[2] = "TEAM 2",
+	[1] = "DEFENDER",
+	[2] = "ATTACKERS",
 }
 
 -- Regiment name table (mirrors TeamSelectMenu — purely informational here;
