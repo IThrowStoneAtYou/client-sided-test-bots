@@ -17,6 +17,8 @@ local NpcPreview        = require(ReplicatedStorage.Modules.Client.Modules:WaitF
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
 local AdminPanel        = require(ReplicatedStorage.Modules.Client:WaitForChild("AdminPanel"))
 
+local TeamSelectMenu = require(ReplicatedStorage.Modules.Client:WaitForChild("TeamSelectMenu"))
+
 -- Combat Gui
 local CompanyHUD        = require(CombatGui.CompanyHUD)
 local CompassHUD        = require(CombatGui.CompassHUD)
@@ -899,3 +901,4 @@ end)
 Network.NpcReady.Fire()
 
 AdminPanel.new(Network)
+TeamSelectMenu.new(Network)
