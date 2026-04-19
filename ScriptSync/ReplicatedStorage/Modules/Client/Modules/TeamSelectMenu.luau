@@ -1100,26 +1100,20 @@ end
 function TeamSelectMenu:_onNationSelected(nd)
 	local accent = self._selectedSide and self._selectedSide.accent or C_GOLD
 
-	-- 1. Highlight the selected row in the Nation list
 	for _, rdata in ipairs(self._natRows) do
 		local sel = (rdata.data == nd)
 		TweenService:Create(rdata.row, TI_FAST, {BackgroundTransparency=sel and 0.08 or 0.38}):Play()
 		TweenService:Create(rdata.stroke, TI_FAST, {Color=sel and accent or C_SEP, Transparency=sel and 0.1 or 0.25 }):Play()
 	end
 
-	-- 2. Update the Nation Navigation Card on the left
 	self._selectedNation = nd
 	self._selectedRegiment = nil; self._selectedRegimentIdx = nil
 	self._natNavName.Text = nd.name; self._natNavName.TextColor3 = C_TEXT
 	self._natNavSub.Text  = nd.subtitle
 	self._natNavIcon.Image = nd.flag; self._natNavIcon.BackgroundTransparency = 0
-
-	-- 3. Populate the regiment data (remains hidden in the background)
+	
 	self:_populateRegiments(nd)
 	self._regNavSub.Text = "Select a regiment"
-	
-	-- Note: We explicitly DO NOT call _setRightMode("regiments") here.
-	-- The user remains on the Nations list until they click the Regiment card.
 end
 
 function TeamSelectMenu:_onRegimentSelected(rd, regIdx)

@@ -7,6 +7,7 @@
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Teams             = game:GetService("Teams")
 local PhysicsService    = game:GetService("PhysicsService")
 local TweenService      = game:GetService("TweenService")
 
@@ -69,6 +70,34 @@ PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP,    CLIENT_NPC_GROUP
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP,    false)
 
 local combatRayParams = RaycastParams.new()
+
+-- ── Admin whitelist ──────────────────────────────────────────────────
+local ADMIN_IDS: { [number]: boolean } = {
+	[5327451875] = true,
+}
+
+-- ── Team names ───────────────────────────────────────────
+local TEAM_NAMES: { [number]: string } = {
+	[1] = "ATTACKERS",   -- Attackers / France
+	[2] = "DEFENDERS",   -- Defenders / Britain
+}
+
+-- ── Regiment names ────────────────────────────────────────────────────
+local REGIMENT_NAMES: { [number]: { [number]: string } } = {
+	[1] = {   -- Attackers (France)
+		[1] = "1er Régiment d'Infanterie de Ligne",
+		[2] = "3e Regiment Étranger",
+		[3] = "13. Pułk Piechoty",
+		[4] = "16. Pułk Piechoty",
+	},
+	[2] = {   -- Defenders (Britain)
+		[1] = "23rd Regiment of Foot",
+		[2] = "35th Regiment of Foot",
+		[3] = "13. Infanterie Regiment",
+		[4] = "18. Infanterie Regiment",
+	},
+}
+
 combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- ── State ─────────────────────────────────────────────────────────────
@@ -119,6 +148,30 @@ end
 local function getYaw(cf)
 	local _, y, _ = cf:ToEulerAnglesYXZ()
 	return y
+end
+
+local function isAdmin(player: Player): boolean
+	return ADMIN_IDS[player.UserId] == true
+end
+
+local function applyWalkSpeedNow()
+	local registry = workspace:FindFirstChild("Npc_Registry_Server")
+	if not registry then return end
+	for _, model in ipairs(registry:GetChildren()) do
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.WalkSpeed = GameSettings.WALK_SPEED
+		end
+	end
+end
+
+local function isValidSide(si: number): boolean
+	return si == 1 or si == 2
+end
+
+local function isValidRegiment(si: number, ri: number): boolean
+	local side = REGIMENT_NAMES[si]
+	return side ~= nil and side[ri] ~= nil
 end
 
 local function cfChanged(cf, lastCF, npc)
@@ -348,7 +401,10 @@ local function despawnCompany(player: Player, companyIndex: number)
 	end
 	
 	playerCompanies[companyIndex] = nil
-	if serverCanAttack[player] then serverCanAttack[player][companyIndex] = nil end
+	if serverCanAttack[player] then
+		serverCanAttack[player][companyIndex] = nil
+	end
+	
 	for _, otherPlayerComps in pairs(companies) do
 		for _, comp in pairs(otherPlayerComps) do
 			if comp.meleeTargetPlayer == player and comp.meleeTargetCompIdx == companyIndex then
@@ -586,13 +642,13 @@ local function hookChat(player: Player)
 			return
 		end
 
-		if player.UserId == 5327451875 then
+		if isAdmin(player) then
 			local targetPart, pNcStr, pNStr = msg:match("^%s*/[Pp][Ss][Pp][Aa][Ww][Nn]%s+(%S+)%s+(%d+)%s+(%d+)%s*$")
 			if targetPart and pNcStr and pNStr then
 				local lowerPart  = targetPart:lower()
 				local targetPlayer
 				for _, p in ipairs(Players:GetPlayers()) do
-					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then
+					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then --pluh
 						targetPlayer = p; break
 					end
 				end
@@ -600,7 +656,9 @@ local function hookChat(player: Player)
 				if targetPlayer then
 					local nc = tonumber(pNcStr)
 					local n  = tonumber(pNStr)
-					if nc and n then spawnAllCompanies(targetPlayer, nc, n) end
+					if nc and n then 
+						spawnAllCompanies(targetPlayer, nc, n) 
+					end
 				end
 			end
 		end
@@ -616,6 +674,73 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 
 -- ── Remote Handlers ───────────────────────────────────────────────────
+
+Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regimentIndex: number)
+	sideIndex     = math.floor(sideIndex)
+	regimentIndex = math.floor(regimentIndex)
+
+	if not isValidSide(sideIndex) or not isValidRegiment(sideIndex, regimentIndex) then
+		return
+	end
+
+	local teamName = TEAM_NAMES[sideIndex]
+	local team     = Teams:FindFirstChild(teamName)
+	if team then
+		player.Team = team
+	end
+
+	local regName = REGIMENT_NAMES[sideIndex][regimentIndex]
+	player:SetAttribute("SideIndex",      sideIndex)
+	player:SetAttribute("RegimentIndex",  regimentIndex)
+	player:SetAttribute("RegimentName",   regName)
+	player:SetAttribute("TeamIndex",      sideIndex == 1 and 2 or 1)
+	player:SetAttribute("RequestDespawnAll", true)
+end)
+
+Network.RequestTeamReset.On(function(player: Player)
+	local noTeam = Teams:FindFirstChild("NO TEAM")
+	if noTeam then
+		player.Team = noTeam
+		player:SetAttribute("SideIndex",      nil)
+		player:SetAttribute("RegimentIndex",  nil)
+		player:SetAttribute("RegimentName",   nil)
+		player:SetAttribute("TeamIndex",      nil)
+		player:SetAttribute("RequestDespawnAll", true)
+	end
+end)
+
+Network.AdminUpdateBots.On(function(player, data)
+	if not isAdmin(player) then return end
+
+	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
+	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
+	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1,   4)
+	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,            10,  2000)
+	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,           1,   9999)
+	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,           0,   45)
+	GameSettings.MELEE_ENGAGE_RANGE      = math.clamp(data.meleeEngageRange,       1,   100)
+	GameSettings.MELEE_DAMAGE            = math.clamp(data.meleeDamage,            1,   9999)
+	GameSettings.MELEE_BEARER_FLEE_RANGE = math.clamp(data.meleeBearerFleeRange,   1,   500)
+	GameSettings.MELEE_BEARER_FLEE_DIST  = math.clamp(data.meleeBearerFleeDist,    1,   300)
+
+	applyWalkSpeedNow()
+	
+	print(string.format("[Admin] Bot settings updated by %s", player.Name))
+end)
+
+Network.AdminUpdateMatch.On(function(player, data)
+	if not isAdmin(player) then return end
+
+	GameSettings.STARTING_TICKETS      = math.clamp(math.floor(data.startingTickets),      0,  10_000_000)
+	GameSettings.MATCH_DURATION        = math.clamp(math.floor(data.matchDuration),         30, 86400)
+	GameSettings.INTERMISSION_DURATION = math.clamp(math.floor(data.intermissionDuration),  1,  3600)
+	GameSettings.COST_BOT_DEATH        = math.clamp(math.floor(data.costBotDeath),          0,  100_000)
+	GameSettings.COST_BROKE            = math.clamp(math.floor(data.costBroke),             0,  100_000)
+	GameSettings.COST_OVERRUN          = math.clamp(math.floor(data.costOverrun),           0,  100_000)
+
+	print(string.format("[Admin] Match settings updated by %s", player.Name))
+end)
+
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
 	readyPlayers[player] = true

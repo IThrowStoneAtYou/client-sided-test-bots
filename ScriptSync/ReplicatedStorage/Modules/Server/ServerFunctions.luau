@@ -663,7 +663,7 @@ function ServerFunctions.init(ctx)
 				local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 				for _, shortId in ipairs(comp.slots) do
 					local npc = activeNpcs[shortId]
-					if not npc or not npc.Root then continue end
+					if not (npc and npc.Root and npc.Model and npc.Model.Parent) then continue end
 					if npc.IsFlagBearer then
 						local movePos = (validSoldiers > 0) and soldierCenter or npc.Root.Position
 						npc._meleePathAccum = (npc._meleePathAccum or 0) + dt
