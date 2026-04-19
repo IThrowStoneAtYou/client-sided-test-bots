@@ -13,6 +13,9 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
 local Players          = game:GetService("Players")
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
+
 local ROMAN          = { "I", "II", "III", "IV" }
 local COMPANY_COLORS = {
 	Color3.fromRGB(65,  105, 210),
@@ -30,8 +33,6 @@ local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BAR_TWEEN   = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-
-local MAX_TICKETS = 135
 
 -- ── Ticket bar colours (matches GlobalInfoPanel) ──────────────────────
 local function ticketBarColor(ratio: number): Color3
@@ -259,8 +260,8 @@ function CompanyHUD:_refreshCard(i: number)
 
 		if not isSel then
 			local sd     = self._strengthData and self._strengthData[i]
-			local tickets = sd and sd.tickets or MAX_TICKETS
-			local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
+			local tickets = sd and sd.tickets or GameSettings.MAX_TICKETS
+			local ratio   = math.clamp(tickets / GameSettings.MAX_TICKETS, 0, 1)
 			local color   = ticketBarColor(ratio)
 
 			TweenService:Create(cd.ticketFill, BAR_TWEEN, {
@@ -659,8 +660,8 @@ function CompanyHUD:_updateGlobalPanel(index: number)
 	self._globalTitle.Text       = "COMPANY " .. ROMAN[index]
 
 	local sd      = self._strengthData and self._strengthData[index]
-	local tickets = sd and sd.tickets or MAX_TICKETS
-	local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
+	local tickets = sd and sd.tickets or GameSettings.MAX_TICKETS
+	local ratio   = math.clamp(tickets / GameSettings.MAX_TICKETS, 0, 1)
 	self._strengthValue.Text           = tostring(tickets)
 	self._strengthFill.Size            = UDim2.new(ratio, 0, 1, 0)
 	self._strengthFill.BackgroundColor3 = ticketBarColor(ratio)

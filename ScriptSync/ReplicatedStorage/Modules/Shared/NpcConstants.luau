@@ -11,18 +11,6 @@ local NpcConstants = {
 	FLAG_OFFSET_Z = 8,
 	MOVE_RETRIES  = 2,
 
-	-- ── Company Tickets ─────────────────────────────────────────────────
-	MAX_TICKETS            = 135,
-	TICKET_REGEN_RATE      = 5,
-	TICKET_REGEN_INTERVAL  = 6,
-	TICKET_DECAY_RATE      = 6,
-	TICKET_DECAY_INTERVAL  = 5,
-	TICKET_COST_STATIONARY = 2,
-	TICKET_COST_MOVING     = 4,
-	BROKEN_RECOVERY_TIME   = 20,
-	BEARER_NEARBY_RADIUS   = 120,
-	BEARER_REPLACE_DELAY   = 3,
-
 	-- ── Weapon States ───────────────────────────────────────────────────
 	WEAPON_IDLE           = 0,
 	WEAPON_MAKE_READY     = 1,

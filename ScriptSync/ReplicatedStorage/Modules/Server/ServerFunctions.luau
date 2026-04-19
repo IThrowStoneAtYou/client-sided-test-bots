@@ -78,7 +78,7 @@ function ServerFunctions.init(ctx)
 				for _, sid in ipairs(otherComp.slots) do
 					local npc = activeNpcs[sid]
 					if npc and npc.IsFlagBearer and npc.Root then
-						if (npc.Root.Position - ourBearerPos).Magnitude <= C.BEARER_NEARBY_RADIUS then
+					if (npc.Root.Position - ourBearerPos).Magnitude <= GameSettings.BEARER_NEARBY_RADIUS then
 							return true
 						end
 					end
@@ -123,6 +123,11 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
+	-->>>>>>>>>>>>
+	-- Fix: MeleeHasHit is now also reset when transitioning to MELEE_IDLE.
+	-- Previously it was only reset on BOT_START / UP_START, which meant a
+	-- survivor that was force-reset to IDLE (on a teammate's death) kept
+	-- MeleeHasHit = true and could never deal damage again in that cycle.
 	setNpcMeleeState = function(npc, state)
 		if npc.MeleeState == state then return end
 
@@ -131,6 +136,8 @@ function ServerFunctions.init(ctx)
 
 		npc.MeleeTimer = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
 
+		-- Reset hit flag on any state that begins a fresh attack sequence
+		-- (includes IDLE so survivors reset properly when their company re-engages)
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
 		end
@@ -254,6 +261,10 @@ function ServerFunctions.init(ctx)
 					end)
 				end
 			elseif comp.isMelee and soldierCount > 0 then
+				-->>>>>>>>>>>>
+				-- Fix: also reset MeleeHasHit here so survivors that were
+				-- mid-attack don't carry a stale true value into their next
+				-- attack cycle after being force-reset to IDLE.
 				for _, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
@@ -264,12 +275,12 @@ function ServerFunctions.init(ctx)
 			end
 		end
 
-		local cost = wasWalking and C.TICKET_COST_MOVING or C.TICKET_COST_STATIONARY
+		local cost = wasWalking and GameSettings.TICKET_COST_MOVING or GameSettings.TICKET_COST_STATIONARY
 		if not comp.isBroken then
 			comp.tickets = math.max(0, comp.tickets - cost)
 			if comp.tickets <= 0 then
 				comp.isBroken             = true
-				comp.brokenTimer          = C.BROKEN_RECOVERY_TIME
+				comp.brokenTimer          = GameSettings.BROKEN_RECOVERY_TIME
 				comp.brokenBroadcastAccum = 0
 				MatchManager.onCompanyBroke(owner, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
 			end
@@ -295,7 +306,7 @@ function ServerFunctions.init(ctx)
 		end
 
 		if #candidates == 0 then
-			task.delay(C.BEARER_REPLACE_DELAY, function()
+			task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
 				if companies[player] and companies[player][companyIndex] then
 					comp.bearerRespawnGate = false
 				end
@@ -306,7 +317,7 @@ function ServerFunctions.init(ctx)
 		local chosenId  = candidates[math.random(1, #candidates)]
 		local chosenNpc = activeNpcs[chosenId]
 		if not chosenNpc then
-			task.delay(C.BEARER_REPLACE_DELAY, function()
+			task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
 				if companies[player] and companies[player][companyIndex] then
 					comp.bearerRespawnGate = false
 				end
@@ -362,7 +373,7 @@ function ServerFunctions.init(ctx)
 			end
 		end
 
-		task.delay(C.BEARER_REPLACE_DELAY, function()
+		task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
 			if companies[player] and companies[player][companyIndex] then
 				comp.bearerRespawnGate = false
 			end
@@ -571,7 +582,7 @@ function ServerFunctions.init(ctx)
 						comp.brokenTimer = math.max(0, comp.brokenTimer - dt)
 						if comp.brokenTimer <= 0 then
 							comp.isBroken = false
-							comp.tickets  = math.floor(C.MAX_TICKETS / 2)
+					comp.tickets  = math.floor(GameSettings.MAX_TICKETS / 2)
 							broadcastStrength(player, compIdx)
 						end
 					end
@@ -592,7 +603,7 @@ function ServerFunctions.init(ctx)
 					end
 					if comp.brokenTimer <= 0 and not isEnemyBearerNearby(player, compIdx) then
 						comp.isBroken             = false
-						comp.tickets              = math.floor(C.MAX_TICKETS / 2)
+					comp.tickets              = math.floor(GameSettings.MAX_TICKETS / 2)
 						comp.regenAccum           = 0
 						comp.decayAccum           = 0
 						comp.brokenBroadcastAccum = 0
@@ -600,23 +611,23 @@ function ServerFunctions.init(ctx)
 					end
 				else
 					comp.regenAccum = (comp.regenAccum or 0) + dt
-					if comp.regenAccum >= C.TICKET_REGEN_INTERVAL then
-						comp.regenAccum -= C.TICKET_REGEN_INTERVAL
+				if comp.regenAccum >= GameSettings.TICKET_REGEN_INTERVAL then
+					comp.regenAccum -= GameSettings.TICKET_REGEN_INTERVAL
 						local prev = comp.tickets
-						comp.tickets = math.min(C.MAX_TICKETS, comp.tickets + C.TICKET_REGEN_RATE)
+					comp.tickets = math.min(GameSettings.MAX_TICKETS, comp.tickets + GameSettings.TICKET_REGEN_RATE)
 						if comp.tickets ~= prev then broadcastStrength(player, compIdx) end
 					end
 
 					if isEnemyBearerNearby(player, compIdx) then
 						comp.decayAccum = (comp.decayAccum or 0) + dt
-						if comp.decayAccum >= C.TICKET_DECAY_INTERVAL then
-							comp.decayAccum -= C.TICKET_DECAY_INTERVAL
+					if comp.decayAccum >= GameSettings.TICKET_DECAY_INTERVAL then
+						comp.decayAccum -= GameSettings.TICKET_DECAY_INTERVAL
 							local prev = comp.tickets
-							comp.tickets = math.max(0, comp.tickets - C.TICKET_DECAY_RATE)
+						comp.tickets = math.max(0, comp.tickets - GameSettings.TICKET_DECAY_RATE)
 							if comp.tickets ~= prev then
 								if comp.tickets <= 0 then
 									comp.isBroken             = true
-									comp.brokenTimer          = C.BROKEN_RECOVERY_TIME
+								comp.brokenTimer          = GameSettings.BROKEN_RECOVERY_TIME
 									comp.brokenBroadcastAccum = 0
 									MatchManager.onCompanyBroke(player, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
 								end

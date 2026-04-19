@@ -27,7 +27,6 @@ local RANK_SPACING         = NpcConstants.RANK_SPACING
 local RANK_DEPTH           = NpcConstants.RANK_DEPTH
 local FLAG_OFFSET_Z        = NpcConstants.FLAG_OFFSET_Z
 local MOVE_RETRIES         = NpcConstants.MOVE_RETRIES
-local MAX_TICKETS          = NpcConstants.MAX_TICKETS
 local WEAPON_IDLE          = NpcConstants.WEAPON_IDLE
 local WEAPON_DURATIONS     = NpcConstants.WEAPON_DURATIONS
 local MELEE_NONE           = NpcConstants.MELEE_NONE
@@ -470,7 +469,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							slots                = slotList,
 							ranks                = ranks,
 							files                = files,
-							tickets              = MAX_TICKETS,
+							tickets              = GameSettings.MAX_TICKETS,
 							isBroken             = false,
 							brokenTimer          = 0,
 							respawnQueue         = {},
