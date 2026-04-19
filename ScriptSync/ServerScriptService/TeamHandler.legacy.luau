@@ -95,6 +95,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	player:SetAttribute("SideIndex",      sideIndex)
 	player:SetAttribute("RegimentIndex",  regimentIndex)
 	player:SetAttribute("RegimentName",   regName)
+	
 	-- Legacy attribute kept for any existing code that reads TeamIndex
 	player:SetAttribute("TeamIndex",      sideIndex == 1 and 2 or 1)
 
@@ -103,8 +104,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 
 	print(string.format(
 		"[TeamHandler] %s %s / %s",
-		player.Name, teamName, regName
-		))
+		player.Name, teamName, regName ))
 end)
 
 Network.RequestTeamReset.On(function(player: Player)
