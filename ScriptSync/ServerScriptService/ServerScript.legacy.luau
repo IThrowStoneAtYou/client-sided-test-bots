@@ -330,17 +330,23 @@ local function despawnCompany(player: Player, companyIndex: number)
 	if not playerCompanies then return end
 	local company = playerCompanies[companyIndex]
 	if not company then return end
+	
 	for _, shortId in ipairs(company.slots) do
 		if activeNpcs[shortId] then
 			for p in pairs(readyPlayers) do
 				Network.NpcDespawn.Fire(p, shortId)
 				if farLastSent[p] then farLastSent[p][shortId] = nil end
 			end
-			if activeNpcs[shortId].Pathfinder then activeNpcs[shortId].Pathfinder:Destroy() end
+			
+			if activeNpcs[shortId].Pathfinder then 
+				activeNpcs[shortId].Pathfinder:Destroy() 
+			end
+			
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
 		end
 	end
+	
 	playerCompanies[companyIndex] = nil
 	if serverCanAttack[player] then serverCanAttack[player][companyIndex] = nil end
 	for _, otherPlayerComps in pairs(companies) do
@@ -356,7 +362,10 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
+	for idx in pairs(playerCompanies) do 
+		despawnCompany(player, idx)
+	end
+	
 	companies[player] = nil
 end
 
@@ -538,7 +547,11 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			sf.setNpcMeleeState(npc, MELEE_ADVANCE)
 		else
 			task.spawn(function()
-				if npc.ActiveTween then npc.ActiveTween:Cancel() npc.ActiveTween = nil end
+				if npc.ActiveTween then 
+					npc.ActiveTween:Cancel()
+					npc.ActiveTween = nil
+				end
+				
 				npc.Pathfinder:Stop()
 				npc.Pathfinder:Run(targetCF.Position)
 				npc.LastMoveTime = os.clock()
@@ -596,6 +609,7 @@ end
 
 Players.PlayerAdded:Connect(hookChat)
 Players.PlayerAdded:Connect(watchDespawnRequest)
+
 for _, p in ipairs(Players:GetPlayers()) do 
 	hookChat(p)
 	watchDespawnRequest(p)
