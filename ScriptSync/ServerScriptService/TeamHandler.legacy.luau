@@ -22,7 +22,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Network = require(game.ReplicatedStorage.Blink.Server)
 
--- ── Side → Roblox Team Name ───────────────────────────────────────────
+-- ── Team names ───────────────────────────────────────────
 -- Key: sideIndex sent by TeamSelectMenu (1 = Attackers/France, 2 = Defenders/Britain)
 -- Value: exact name of the Roblox Team object in the Teams service
 local TEAM_NAMES: { [number]: string } = {
@@ -66,18 +66,12 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	regimentIndex = math.floor(regimentIndex)
 
 	if not isValidSide(sideIndex) then
-		warn(string.format(
-			"[TeamHandler] Invalid sideIndex from %s: %s",
-			player.Name, tostring(sideIndex)
-			))
+		warn(string.format("[TeamHandler] Invalid sideIndex from %s: %s", player.Name, tostring(sideIndex)))
 		return
 	end
 
 	if not isValidRegiment(sideIndex, regimentIndex) then
-		warn(string.format(
-			"[TeamHandler] Invalid regimentIndex from %s: side=%d reg=%d",
-			player.Name, sideIndex, regimentIndex
-			))
+		warn(string.format("[TeamHandler] Invalid regimentIndex from %s: side=%d reg=%d", player.Name, sideIndex, regimentIndex))
 		return
 	end
 
@@ -102,9 +96,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	-- Signal NPC_SYSTEM to despawn this player's current companies
 	player:SetAttribute("RequestDespawnAll", true)
 
-	print(string.format(
-		"[TeamHandler] %s %s / %s",
-		player.Name, teamName, regName ))
+	print(string.format("[TeamHandler] %s %s / %s", player.Name, teamName, regName ))
 end)
 
 Network.RequestTeamReset.On(function(player: Player)

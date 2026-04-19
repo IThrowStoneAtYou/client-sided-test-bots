@@ -532,9 +532,9 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	panel.ZIndex = 31
 	panel.Parent = overlay
 	
-	local panelCorner = Instance.new("UICorner")
-	panelCorner.CornerRadius = UDim.new(0, 12)
-	panelCorner.Parent = panel
+--	local panelCorner = Instance.new("UICorner")
+--	panelCorner.CornerRadius = UDim.new(0, 12)
+--	panelCorner.Parent = panel
 
 	self._loadoutPanel  = panel
 	
@@ -932,9 +932,9 @@ function TeamSelectMenu:_populateNations(sd)
 		row.ZIndex = 34
 		row.Parent = self._natScroll
 		
-		local rowCorner = Instance.new("UICorner")
-		rowCorner.CornerRadius = UDim.new(0, 7)
-		rowCorner.Parent = row
+--		local rowCorner = Instance.new("UICorner")
+--		rowCorner.CornerRadius = UDim.new(0, 7)
+--		rowCorner.Parent = row
 
 		local rStroke = Instance.new("UIStroke")
 		rStroke.Color = C_SEP; rStroke.Thickness = 1; rStroke.Transparency = 0.25; rStroke.Parent = row
@@ -1006,9 +1006,9 @@ function TeamSelectMenu:_populateRegiments(nd)
 		row.ZIndex = 34
 		row.Parent = self._regScroll
 		
-		local rowCorner = Instance.new("UICorner")
-		rowCorner.CornerRadius = UDim.new(0, 7)
-		rowCorner.Parent = row
+--		local rowCorner = Instance.new("UICorner")
+--		rowCorner.CornerRadius = UDim.new(0, 7)
+--		rowCorner.Parent = row
 
 		local rStroke = Instance.new("UIStroke")
 		rStroke.Color = C_SEP; rStroke.Thickness = 1; rStroke.Transparency = 0.25; rStroke.Parent = row
@@ -1078,7 +1078,7 @@ function TeamSelectMenu:_onSideSelected(sd, sideIdx)
 	self._loadoutStroke.Transparency       = 0.4
 	self._deployBtn.BackgroundColor3       = sd.accent
 	self._deployBtn.BackgroundTransparency = 0.45
-	self._deployBtn.Text                   = "⚑  DEPLOY"
+	self._deployBtn.Text                   = "DEPLOY"
 
 	-- 3. Reset Navigation Cards
 	self._natNavName.Text = "—"; self._natNavName.TextColor3 = C_DIM

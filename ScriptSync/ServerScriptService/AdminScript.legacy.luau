@@ -32,8 +32,7 @@ end
 -- ── Bot / combat settings ─────────────────────────────────────────────
 Network.AdminUpdateBots.On(function(player, data)
 	if not isAdmin(player) then
-		warn(string.format("[AdminHandler] Rejected AdminUpdateBots from non-admin: %s (%d)",
-			player.Name, player.UserId))
+		warn(string.format("[AdminHandler] Rejected AdminUpdateBots from non-admin: %s (%d)", player.Name, player.UserId))
 		return
 	end
 

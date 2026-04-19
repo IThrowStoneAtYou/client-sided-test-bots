@@ -1,18 +1,12 @@
 -->>>>>>>>>>>>
 -- COMPANY_HUD
--- Version 3.0.0
+-- Version 3.1.0
 --
--- Company Colors:
---   I (Blue):   RGB(65, 105, 210)
---   II (Red):   RGB(200, 55, 55)
---   III (Green): RGB(55, 170, 90)
---   IV (Gold):  RGB(210, 160, 35)
---
--- Selection Modes:
---   - Click: Exclusive select (deselects all others)
---   - Shift+Click: Toggle inclusion
---   - Right+Click: Deselect all
---
+-- Changes from 3.0.0:
+--   • Each card now has a thin ticket-strength bar at the bottom.
+--     The bar is visible when the card is NOT selected and hidden
+--     (replaced by the GlobalInfoPanel) when the card IS selected.
+--   • Bar colour follows the same blue → orange → red scale as GlobalInfoPanel.
 -->>>>>>>>>>>>
 
 local UserInputService = game:GetService("UserInputService")
@@ -35,42 +29,45 @@ local RAISED_OFF  = -18
 local RESTING_OFF = RAISED_OFF + (CARD_H - PEEK_H)   -- 74
 
 local SLIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local BAR_TWEEN   = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-local MAX_TICKETS = 135   -- maximum strength tickets
+local MAX_TICKETS = 135
+
+-- ── Ticket bar colours (matches GlobalInfoPanel) ──────────────────────
+local function ticketBarColor(ratio: number): Color3
+	if ratio > 0.66 then
+		return Color3.fromRGB(0, 120, 220)
+	elseif ratio > 0.33 then
+		return Color3.fromRGB(255, 140, 0)
+	else
+		return Color3.fromRGB(200, 50, 50)
+	end
+end
 
 local CompanyHUD = {}
 CompanyHUD.__index = CompanyHUD
 
--->>>>>>>>>>>>
--- Constructor. onSelectionChanged(selectedList: {number}) fires on every change.
 function CompanyHUD.new(onSelectionChanged)
-	local self        = setmetatable({}, CompanyHUD)
-	self._selected    = {}   -- { [index] = true }  (set)
-	self._companies   = {}   -- { [index] = { count } }
-	self._cards       = {}
-	self._canAttackState = {}   -- [index] = boolean (true by default)
-	self._meleeState  = {}   -- [index] = boolean (false by default)
-	self._strengthData = {}     -- [index] = { tickets, isBroken, brokenTimer, enemyNearby }
-	self._onChanged   = onSelectionChanged or function() end
+	local self            = setmetatable({}, CompanyHUD)
+	self._selected        = {}
+	self._companies       = {}
+	self._cards           = {}
+	self._canAttackState  = {}
+	self._meleeState      = {}
+	self._strengthData    = {}
+	self._onChanged       = onSelectionChanged or function() end
 
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local gui = Instance.new("ScreenGui")
-	gui.Name            = "CompanyHUD"
-	gui.ResetOnSpawn    = false
-	gui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-	gui.IgnoreGuiInset  = true
-	gui.Parent          = playerGui
+	gui.Name           = "CompanyHUD"
+	gui.ResetOnSpawn   = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.IgnoreGuiInset = true
+	gui.Parent         = playerGui
 	self._gui = gui
 
-	-- Create company cards
-	for i = 1, 4 do
-		self:_createCard(i)
-	end
-
-	-- Create the global info panel
+	for i = 1, 4 do self:_createCard(i) end
 	self:_createGlobalInfoPanel()
-
-	-- Create the broken company prompt
 	self:_createBrokenPrompt()
 
 	return self
@@ -78,98 +75,59 @@ end
 
 -- ── Public API ────────────────────────────────────────────────────────
 
--->>>>>>>>>>>>
--- Returns the accent Color3 for a given company index.
--- Used to tint UI elements and Highlight instances to company colors.
 function CompanyHUD.getColor(index: number): Color3
 	return COMPANY_COLORS[index]
 end
 
--->>>>>>>>>>>>
--- Returns a sorted array of currently selected company indices.
 function CompanyHUD:getSelectedList(): {number}
 	local list = {}
-	for idx in pairs(self._selected) do
-		list[#list + 1] = idx
-	end
-
+	for idx in pairs(self._selected) do list[#list+1] = idx end
 	table.sort(list)
-
 	return list
 end
 
--->>>>>>>>>>>>
--- Updates the can‑attack state for a given company and updates both its card icon
--- and the global info panel if that company is currently the only selected one.
 function CompanyHUD:setCanAttack(index: number, enabled: boolean)
 	self._canAttackState[index] = enabled
 	self:_refreshCard(index)
-
-	local selected = self:getSelectedList()
-	if #selected == 1 and selected[1] == index then
-		self:_updateGlobalPanel(index)
-	end
+	local sel = self:getSelectedList()
+	if #sel == 1 and sel[1] == index then self:_updateGlobalPanel(index) end
 end
 
--->>>>>>>>>>>>
--- Updates the melee state for a given company and updates its card icon.
 function CompanyHUD:setMeleeState(index: number, enabled: boolean)
 	self._meleeState[index] = enabled
 	self:_refreshCard(index)
-
-	local selected = self:getSelectedList()
-	if #selected == 1 and selected[1] == index then
-		self:_updateGlobalPanel(index) -- Re-evaluate global panel if this company is selected
-	end
+	local sel = self:getSelectedList()
+	if #sel == 1 and sel[1] == index then self:_updateGlobalPanel(index) end
 end
--->>>>>>>>>>>>
--- Returns true if at least one company is selected.
+
 function CompanyHUD:hasSelection(): boolean
 	return next(self._selected) ~= nil
 end
 
--->>>>>>>>>>>>
--- Returns true if the given index is currently selected.
 function CompanyHUD:isSelected(index: number): boolean
 	return self._selected[index] == true
 end
 
--->>>>>>>>>>>>
--- Exclusive select: clears all others and selects only this index.
--- Pass nil to deselect everything.
 function CompanyHUD:setSelected(index: number?)
 	local prev = self._selected
 	self._selected = index and { [index] = true } or {}
 	self._onChanged(self:getSelectedList())
 
 	local dirty = {}
-	for idx in pairs(prev) do
-		dirty[idx] = true
-	end
+	for idx in pairs(prev) do dirty[idx] = true end
+	if index then dirty[index] = true end
+	for idx in pairs(dirty) do self:_refreshCard(idx) end
 
-	if index then
-		dirty[index] = true
-	end
-
-	for idx in pairs(dirty) do
-		self:_refreshCard(idx)
-	end
-
-	-- Update global panel visibility/content based on new selection
-	local selected = self:getSelectedList()
-	if #selected == 1 then
-		self:_updateGlobalPanel(selected[1])
+	local sel = self:getSelectedList()
+	if #sel == 1 then
+		self:_updateGlobalPanel(sel[1])
 		self._globalPanel.Visible = true
 	else
 		self._globalPanel.Visible = false
 	end
-
-	-- Update broken prompt
 	self:_updateBrokenPrompt()
 end
 
--->>>>>>>>>>>>
--- Toggles one company in/out of the selection (for shift+click).
 function CompanyHUD:toggleSelected(index: number)
 	if not self._companies[index] then return end
 	if self._selected[index] then
@@ -177,25 +135,19 @@ function CompanyHUD:toggleSelected(index: number)
 	else
 		self._selected[index] = true
 	end
-
 	self._onChanged(self:getSelectedList())
 	self:_refreshCard(index)
 
-	-- Update global panel visibility/content
-	local selected = self:getSelectedList()
-	if #selected == 1 then
-		self:_updateGlobalPanel(selected[1])
+	local sel = self:getSelectedList()
+	if #sel == 1 then
+		self:_updateGlobalPanel(sel[1])
 		self._globalPanel.Visible = true
 	else
 		self._globalPanel.Visible = false
 	end
-
-	-- Update broken prompt
 	self:_updateBrokenPrompt()
 end
 
--->>>>>>>>>>>>
--- Called when NpcCompanySync arrives. Updates counts and removes stale selections.
 function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
 	self._companies = {}
 	for _, entry in ipairs(data) do
@@ -211,46 +163,31 @@ function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
 	end
 
 	self:_updateLayout()
+	if selChanged then self._onChanged(self:getSelectedList()) end
 
-	if selChanged then
-		self._onChanged(self:getSelectedList())
-	end
+	for i = 1, 4 do self:_refreshCard(i) end
 
-	for i = 1, 4 do
-		self:_refreshCard(i)
-	end
-
-	-- Refresh global panel if a company is still selected alone
-	local selected = self:getSelectedList()
-	if #selected == 1 then
-		self:_updateGlobalPanel(selected[1])
+	local sel = self:getSelectedList()
+	if #sel == 1 then
+		self:_updateGlobalPanel(sel[1])
 		self._globalPanel.Visible = true
 	else
 		self._globalPanel.Visible = false
 	end
-
-	-- Refresh broken prompt
 	self:_updateBrokenPrompt()
 end
 
--->>>>>>>>>>>>
--- Recalculates horizontal positions for all active cards to keep them centered.
 function CompanyHUD:_updateLayout()
 	local activeIndices = {}
 	for i = 1, 4 do
-		if self._companies[i] then
-			table.insert(activeIndices, i)
-		end
+		if self._companies[i] then activeIndices[#activeIndices+1] = i end
 	end
-
 	local n = #activeIndices
 	if n == 0 then return end
-
 	local totalWidth = n * CARD_W + (n - 1) * CARD_GAP
 	local startX     = -totalWidth / 2
-
 	for slot, index in ipairs(activeIndices) do
-		local xOff = startX + (slot - 1) * (CARD_W + CARD_GAP) + CARD_W / 2
+		local xOff = startX + (slot-1)*(CARD_W+CARD_GAP) + CARD_W/2
 		local cd   = self._cards[index]
 		if cd then
 			cd.raisedPos  = UDim2.new(0.5, xOff, 1, RAISED_OFF)
@@ -267,15 +204,10 @@ function CompanyHUD:setStrength(index: number, tickets: number, isBroken: boolea
 		brokenTimer = brokenTimer,
 		enemyNearby = enemyNearby,
 	}
-
 	self:_refreshCard(index)
 	self:_updateCardFlashing(index, isBroken)
-
-	local selected = self:getSelectedList()
-	if #selected == 1 and selected[1] == index then
-		self:_updateGlobalPanel(index)
-	end
-
+	local sel = self:getSelectedList()
+	if #sel == 1 and sel[1] == index then self:_updateGlobalPanel(index) end
 	self:_updateBrokenPrompt()
 end
 
@@ -291,24 +223,22 @@ function CompanyHUD:_refreshCard(i: number)
 
 	local company = self._companies[i]
 	local isSel   = self._selected[i] == true
-	local canFire = self._canAttackState[i] ~= false  -- nil treated as true (default on)
+	local canFire = self._canAttackState[i] ~= false
 	local inMelee = self._meleeState[i] == true
 
 	local hasCount = company ~= nil and company.count > 0
 	cd.frame.Visible = hasCount
 	if not hasCount then return end
 
-	cd.countLabel.Text        = tostring(company.count)
-	cd.stroke.Thickness       = isSel and 3 or 1.5
+	cd.countLabel.Text   = tostring(company.count)
+	cd.stroke.Thickness  = isSel and 3 or 1.5
 
 	if inMelee then
-		-- Special styling for melee mode
-		cd.stroke.Color           = Color3.fromRGB(255, 100, 100) -- Reddish for melee
+		cd.stroke.Color           = Color3.fromRGB(255, 100, 100)
 		cd.stroke.Transparency    = isSel and 0 or 0.3
 		cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(40, 20, 20) or Color3.fromRGB(25, 10, 10)
 	else
-		-- Normal styling
-		cd.stroke.Color           = COMPANY_COLORS[i] -- Revert to company color
+		cd.stroke.Color = COMPANY_COLORS[i]
 		if canFire then
 			cd.stroke.Transparency    = isSel and 0 or 0.6
 			cd.frame.BackgroundColor3 = isSel and Color3.fromRGB(26, 30, 50) or Color3.fromRGB(14, 14, 22)
@@ -318,59 +248,56 @@ function CompanyHUD:_refreshCard(i: number)
 		end
 	end
 
-
 	local target = (isSel or cd.hovered) and cd.raisedPos or cd.restingPos
 	TweenService:Create(cd.frame, SLIDE_TWEEN, { Position = target }):Play()
+
+	-- ── Ticket bar ────────────────────────────────────────────────────
+	-- Hidden when card is selected (GlobalInfoPanel shows the detail).
+	-- Positioned at top so it is visible in the "peek" area when resting.
+	if cd.ticketBarBg then
+		cd.ticketBarBg.Visible = not isSel
+
+		if not isSel then
+			local sd     = self._strengthData and self._strengthData[i]
+			local tickets = sd and sd.tickets or MAX_TICKETS
+			local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
+			local color   = ticketBarColor(ratio)
+
+			TweenService:Create(cd.ticketFill, BAR_TWEEN, {
+				Size                = UDim2.new(ratio, 0, 1, 0),
+				BackgroundColor3    = color,
+			}):Play()
+		end
+	end
 end
 
--- Updates card flashing when company becomes broken
 function CompanyHUD:_updateCardFlashing(index: number, isBroken: boolean)
 	local cd = self._cards[index]
 	if not cd then return end
-
-	-- Cancel any existing flash tween
-	if cd.flashTween then
-		cd.flashTween:Cancel()
-		cd.flashTween = nil
-	end
+	if cd.flashTween then cd.flashTween:Cancel(); cd.flashTween = nil end
 
 	if isBroken then
-		-- Start flashing animation: alternate between normal and darker red
 		local function startFlash()
-			if not cd.flashTween then  -- Check if still supposed to be flashing
-				local flashTween = TweenService:Create(
-					cd.stroke,
-					TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-					{ Transparency = 0.2 }
-				)
-				flashTween:Play()
-				flashTween.Completed:Connect(function()
-					if cd.flashTween then  -- Still flashing
-						local flashTween2 = TweenService:Create(
-							cd.stroke,
-							TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-							{ Transparency = 0.6 }
-						)
-						flashTween2:Play()
-						flashTween2.Completed:Connect(startFlash)
-						cd.flashTween = flashTween2
-					end
-				end)
-
-				cd.flashTween = flashTween
-			end
+			if cd.flashTween then return end
+			local t1 = TweenService:Create(cd.stroke,
+				TweenInfo.new(0.5, Enum.EasingStyle.Linear), { Transparency = 0.2 })
+			t1:Play()
+			t1.Completed:Connect(function()
+				if not cd.flashTween then return end
+				local t2 = TweenService:Create(cd.stroke,
+					TweenInfo.new(0.5, Enum.EasingStyle.Linear), { Transparency = 0.6 })
+				t2:Play()
+				t2.Completed:Connect(startFlash)
+				cd.flashTween = t2
+			end)
+			cd.flashTween = t1
 		end
-
 		startFlash()
 	else
-		-- Company recovered - reset stroke to normal
-		if cd.stroke then
-			cd.stroke.Transparency = 0.6
-		end
+		if cd.stroke then cd.stroke.Transparency = 0.6 end
 	end
 end
 
--- Creates a single company card (no info panel inside)
 function CompanyHUD:_createCard(index: number)
 	local accent     = COMPANY_COLORS[index]
 	local raisedPos  = UDim2.new(0.5, 0, 1, RAISED_OFF)
@@ -431,12 +358,12 @@ function CompanyHUD:_createCard(index: number)
 
 	local countLabel = Instance.new("TextLabel")
 	countLabel.Name              = "Count"
-	countLabel.Size              = UDim2.new(1, 0, 0, 40)
+	countLabel.Size              = UDim2.new(1, 0, 0, 36)
 	countLabel.Position          = UDim2.new(0, 0, 0, 58)
 	countLabel.BackgroundTransparency = 1
 	countLabel.Text              = "0"
 	countLabel.TextColor3        = Color3.fromRGB(230, 230, 230)
-	countLabel.TextSize          = 36
+	countLabel.TextSize          = 34
 	countLabel.Font              = Enum.Font.GothamBold
 	countLabel.TextXAlignment    = Enum.TextXAlignment.Center
 	countLabel.ZIndex            = 2
@@ -444,8 +371,8 @@ function CompanyHUD:_createCard(index: number)
 
 	local menLabel = Instance.new("TextLabel")
 	menLabel.Name               = "MenLabel"
-	menLabel.Size               = UDim2.new(1, 0, 0, 14)
-	menLabel.Position           = UDim2.new(0, 0, 0, 98)
+	menLabel.Size               = UDim2.new(1, 0, 0, 12)
+	menLabel.Position           = UDim2.new(0, 0, 0, 94)
 	menLabel.BackgroundTransparency = 1
 	menLabel.Text               = "MEN"
 	menLabel.TextColor3         = Color3.fromRGB(110, 110, 125)
@@ -455,6 +382,40 @@ function CompanyHUD:_createCard(index: number)
 	menLabel.ZIndex             = 2
 	menLabel.Parent             = card
 
+	-- ── Ticket bar (bottom of card) ───────────────────────────────────
+	-- 6px tall, 6px horizontal padding each side, 4px from bottom.
+	-- Background is dark; fill represents tickets / MAX_TICKETS.
+	local BAR_H   = 6
+	local BAR_PAD = 6
+	local barBg = Instance.new("Frame")
+	barBg.Name                   = "TicketBarBg"
+	barBg.Size                   = UDim2.new(1, -BAR_PAD*2, 0, BAR_H)
+	barBg.Position               = UDim2.new(0, BAR_PAD, 0, 4)
+	barBg.BackgroundColor3       = Color3.fromRGB(8, 8, 14)
+	barBg.BackgroundTransparency = 0.2
+	barBg.BorderSizePixel        = 0
+	barBg.ClipsDescendants       = true
+	barBg.ZIndex                 = 3
+	barBg.Parent                 = card
+
+	local barCorner = Instance.new("UICorner")
+	barCorner.CornerRadius = UDim.new(0, 3)
+	barCorner.Parent       = barBg
+
+	local barFill = Instance.new("Frame")
+	barFill.Name                   = "TicketFill"
+	barFill.Size                   = UDim2.new(1, 0, 1, 0)  -- full until first setStrength
+	barFill.BackgroundColor3       = Color3.fromRGB(0, 120, 220)
+	barFill.BackgroundTransparency = 0.25
+	barFill.BorderSizePixel        = 0
+	barFill.ZIndex                 = 4
+	barFill.Parent                 = barBg
+
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 3)
+	fillCorner.Parent       = barFill
+
+	-- ── Click surface ─────────────────────────────────────────────────
 	local btn = Instance.new("TextButton")
 	btn.Name               = "Button"
 	btn.Size               = UDim2.new(1, 0, 1, 0)
@@ -464,13 +425,16 @@ function CompanyHUD:_createCard(index: number)
 	btn.Parent             = card
 
 	local cd = {
-		frame      = card,
-		countLabel = countLabel,
-		stroke     = stroke,
-		hovered    = false,
-		raisedPos  = raisedPos,
-		restingPos = restingPos,
-		flashTween = nil,
+		frame        = card,
+		countLabel   = countLabel,
+		stroke       = stroke,
+		hovered      = false,
+		raisedPos    = raisedPos,
+		restingPos   = restingPos,
+		flashTween   = nil,
+		-- ticket bar references
+		ticketBarBg  = barBg,
+		ticketFill   = barFill,
 	}
 	self._cards[index] = cd
 
@@ -480,18 +444,16 @@ function CompanyHUD:_createCard(index: number)
 			TweenService:Create(card, SLIDE_TWEEN, { Position = cd.raisedPos }):Play()
 		end
 	end)
-
 	btn.MouseLeave:Connect(function()
 		cd.hovered = false
 		if not self._selected[index] and self._companies[index] then
 			TweenService:Create(card, SLIDE_TWEEN, { Position = cd.restingPos }):Play()
 		end
 	end)
-
 	btn.MouseButton1Click:Connect(function()
 		if not self._companies[index] then return end
-		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-
+		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 		if shift then
 			self:toggleSelected(index)
 		else
@@ -505,11 +467,12 @@ function CompanyHUD:_createCard(index: number)
 	end)
 end
 
--- Creates the global info panel at bottom left
+-- ── Global info panel ─────────────────────────────────────────────────
+
 function CompanyHUD:_createGlobalInfoPanel()
 	local panel = Instance.new("Frame")
 	panel.Name = "GlobalInfoPanel"
-	panel.Size = UDim2.new(0, 340, 0, 200)   -- large panel
+	panel.Size = UDim2.new(0, 340, 0, 200)
 	panel.Position = UDim2.new(0, 10, 1, -10)
 	panel.AnchorPoint = Vector2.new(0, 1)
 	panel.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
@@ -519,14 +482,12 @@ function CompanyHUD:_createGlobalInfoPanel()
 	panel.Parent = self._gui
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Name         = "Stroke"
 	stroke.Color = Color3.fromRGB(255, 255, 255)
 	stroke.Thickness = 2.2
 	stroke.Transparency = 0
 	stroke.Parent = panel
 	self._globalStroke = stroke
 
-	-- Company name (dynamic)
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.Size = UDim2.new(1, -20, 0, 28)
@@ -540,9 +501,7 @@ function CompanyHUD:_createGlobalInfoPanel()
 	title.ZIndex = 11
 	title.Parent = panel
 
-	-- Strength bar
 	local strLabel = Instance.new("TextLabel")
-	strLabel.Name = "StrengthLabel"
 	strLabel.Size = UDim2.new(1, -20, 0, 12)
 	strLabel.Position = UDim2.new(0, 10, 0, 44)
 	strLabel.BackgroundTransparency = 1
@@ -555,18 +514,13 @@ function CompanyHUD:_createGlobalInfoPanel()
 	strLabel.Parent = panel
 
 	local strBg = Instance.new("Frame")
-	strBg.Name = "StrengthBar"
 	strBg.Size = UDim2.new(1, -20, 0, 16)
 	strBg.Position = UDim2.new(0, 10, 0, 56)
 	strBg.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 	strBg.BorderSizePixel = 0
 	strBg.ZIndex = 11
 	strBg.Parent = panel
-
-	local strBgCorner = Instance.new("UICorner")
-	strBgCorner.Name         = "Corner"
-	strBgCorner.CornerRadius = UDim.new(0, 4)
-	strBgCorner.Parent = strBg
+	local strBgCorner = Instance.new("UICorner"); strBgCorner.CornerRadius = UDim.new(0,4); strBgCorner.Parent = strBg
 
 	local strFill = Instance.new("Frame")
 	strFill.Name = "Fill"
@@ -576,14 +530,9 @@ function CompanyHUD:_createGlobalInfoPanel()
 	strFill.BorderSizePixel = 0
 	strFill.ZIndex = 12
 	strFill.Parent = strBg
-
-	local strFillCorner = Instance.new("UICorner")
-	strFillCorner.Name         = "Corner"
-	strFillCorner.CornerRadius = UDim.new(0, 4)
-	strFillCorner.Parent = strFill
+	local strFillCorner = Instance.new("UICorner"); strFillCorner.CornerRadius = UDim.new(0,4); strFillCorner.Parent = strFill
 
 	local strVal = Instance.new("TextLabel")
-	strVal.Name = "Value"
 	strVal.Size = UDim2.new(1, 0, 1, 0)
 	strVal.BackgroundTransparency = 1
 	strVal.Text = "100"
@@ -594,9 +543,7 @@ function CompanyHUD:_createGlobalInfoPanel()
 	strVal.ZIndex = 13
 	strVal.Parent = strBg
 
-	-- Morale bar
 	local morLabel = Instance.new("TextLabel")
-	morLabel.Name = "MoraleLabel"
 	morLabel.Size = UDim2.new(1, -20, 0, 12)
 	morLabel.Position = UDim2.new(0, 10, 0, 84)
 	morLabel.BackgroundTransparency = 1
@@ -609,18 +556,13 @@ function CompanyHUD:_createGlobalInfoPanel()
 	morLabel.Parent = panel
 
 	local morBg = Instance.new("Frame")
-	morBg.Name = "MoraleBar"
 	morBg.Size = UDim2.new(1, -20, 0, 16)
 	morBg.Position = UDim2.new(0, 10, 0, 96)
 	morBg.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 	morBg.BorderSizePixel = 0
 	morBg.ZIndex = 11
 	morBg.Parent = panel
-
-	local morBgCorner = Instance.new("UICorner")
-	morBgCorner.Name         = "Corner"
-	morBgCorner.CornerRadius = UDim.new(0, 4)
-	morBgCorner.Parent = morBg
+	local morBgCorner = Instance.new("UICorner"); morBgCorner.CornerRadius = UDim.new(0,4); morBgCorner.Parent = morBg
 
 	local morFill = Instance.new("Frame")
 	morFill.Name = "Fill"
@@ -630,14 +572,9 @@ function CompanyHUD:_createGlobalInfoPanel()
 	morFill.BorderSizePixel = 0
 	morFill.ZIndex = 12
 	morFill.Parent = morBg
-
-	local morFillCorner = Instance.new("UICorner")
-	morFillCorner.Name         = "Corner"
-	morFillCorner.CornerRadius = UDim.new(0, 4)
-	morFillCorner.Parent = morFill
+	local morFillCorner = Instance.new("UICorner"); morFillCorner.CornerRadius = UDim.new(0,4); morFillCorner.Parent = morFill
 
 	local morVal = Instance.new("TextLabel")
-	morVal.Name = "Value"
 	morVal.Size = UDim2.new(1, 0, 1, 0)
 	morVal.BackgroundTransparency = 1
 	morVal.Text = "85"
@@ -648,9 +585,7 @@ function CompanyHUD:_createGlobalInfoPanel()
 	morVal.ZIndex = 13
 	morVal.Parent = morBg
 
-	-- Icons row
 	local iconDivider = Instance.new("Frame")
-	iconDivider.Name = "Divider"
 	iconDivider.Size = UDim2.new(0.8, 0, 0, 1)
 	iconDivider.Position = UDim2.new(0.1, 0, 0, 130)
 	iconDivider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
@@ -662,11 +597,9 @@ function CompanyHUD:_createGlobalInfoPanel()
 	local ICON_SIZE = 28
 	local ICON_IMG = "http://www.roblox.com/asset/?id=13488010851"
 
-	-- Weapon type icon (static)
 	local typeIcon = Instance.new("ImageLabel")
-	typeIcon.Name = "TypeIcon"
 	typeIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-	typeIcon.Position = UDim2.new(0.5, -ICON_SIZE - 12, 0, 140)
+	typeIcon.Position = UDim2.new(0.5, -ICON_SIZE-12, 0, 140)
 	typeIcon.BackgroundTransparency = 1
 	typeIcon.Image = ICON_IMG
 	typeIcon.ImageColor3 = Color3.fromRGB(255, 255, 255)
@@ -674,9 +607,8 @@ function CompanyHUD:_createGlobalInfoPanel()
 	typeIcon.Parent = panel
 
 	local typeTip = Instance.new("TextLabel")
-	typeTip.Name = "TypeTip"
-	typeTip.Size = UDim2.new(0, ICON_SIZE + 20, 0, 12)
-	typeTip.Position = UDim2.new(0.5, -ICON_SIZE - 12, 0, 170)
+	typeTip.Size = UDim2.new(0, ICON_SIZE+20, 0, 12)
+	typeTip.Position = UDim2.new(0.5, -ICON_SIZE-12, 0, 170)
 	typeTip.BackgroundTransparency = 1
 	typeTip.Text = "TYPE"
 	typeTip.TextColor3 = Color3.fromRGB(110, 110, 125)
@@ -686,9 +618,7 @@ function CompanyHUD:_createGlobalInfoPanel()
 	typeTip.ZIndex = 12
 	typeTip.Parent = panel
 
-	-- Fire toggle icon (dynamic)
 	local fireIcon = Instance.new("ImageLabel")
-	fireIcon.Name = "FireIcon"
 	fireIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
 	fireIcon.Position = UDim2.new(0.5, 12, 0, 140)
 	fireIcon.BackgroundTransparency = 1
@@ -698,8 +628,7 @@ function CompanyHUD:_createGlobalInfoPanel()
 	fireIcon.Parent = panel
 
 	local fireTip = Instance.new("TextLabel")
-	fireTip.Name = "FireTip"
-	fireTip.Size = UDim2.new(0, ICON_SIZE + 20, 0, 12)
+	fireTip.Size = UDim2.new(0, ICON_SIZE+20, 0, 12)
 	fireTip.Position = UDim2.new(0.5, 12, 0, 170)
 	fireTip.BackgroundTransparency = 1
 	fireTip.Text = "[E] FIRE"
@@ -710,73 +639,51 @@ function CompanyHUD:_createGlobalInfoPanel()
 	fireTip.ZIndex = 12
 	fireTip.Parent = panel
 
-	-- Store references for later updates
-	self._globalPanel = panel
-	self._globalTitle = title
-	self._strengthFill = strFill
-	self._strengthValue = strVal
-	self._moraleFill = morFill
-	self._moraleValue = morVal
+	self._globalPanel    = panel
+	self._globalTitle    = title
+	self._strengthFill   = strFill
+	self._strengthValue  = strVal
+	self._moraleFill     = morFill
+	self._moraleValue    = morVal
 	self._globalFireIcon = fireIcon
-
-	-- Also keep a per‑company icon reference for setCanAttack to update both card and global
-	self._canAttackIcons = {}   -- will store card icons; global icon handled separately
+	self._canAttackIcons = {}
 end
 
--- Updates the global panel with data from the given company index
 function CompanyHUD:_updateGlobalPanel(index: number)
 	local company = self._companies[index]
-	if not company then
-		self._globalPanel.Visible = false
-		return
-	end
+	if not company then self._globalPanel.Visible = false; return end
 
-	local companyColor = COMPANY_COLORS[index]   -- <-- get the color
+	local companyColor = COMPANY_COLORS[index]
 	self._globalTitle.TextColor3 = companyColor
-	self._globalStroke.Color = companyColor      -- <-- apply to stroke
+	self._globalStroke.Color     = companyColor
+	self._globalTitle.Text       = "COMPANY " .. ROMAN[index]
 
-	self._globalTitle.Text = "COMPANY " .. ROMAN[index]
-
-	-- Strength bar (updated as requested)
-	local sd = self._strengthData and self._strengthData[index]
+	local sd      = self._strengthData and self._strengthData[index]
 	local tickets = sd and sd.tickets or MAX_TICKETS
 	local ratio   = math.clamp(tickets / MAX_TICKETS, 0, 1)
-	self._strengthValue.Text = tostring(tickets)
-	self._strengthFill.Size  = UDim2.new(ratio, 0, 1, 0)
-	
-	-- Simple solid color: Blue (full) → Orange (half) → Red (low)
-	local color
-	if ratio > 0.66 then
-		-- Blue (full strength)
-		color = Color3.fromRGB(0, 120, 220)
-	elseif ratio > 0.33 then
-		-- Orange (medium strength)
-		color = Color3.fromRGB(255, 140, 0)
-	else
-		-- Red (low strength)
-		color = Color3.fromRGB(200, 50, 50)
-	end
-	
-	self._strengthFill.BackgroundColor3 = color
+	self._strengthValue.Text           = tostring(tickets)
+	self._strengthFill.Size            = UDim2.new(ratio, 0, 1, 0)
+	self._strengthFill.BackgroundColor3 = ticketBarColor(ratio)
 
-	-- Morale bar (placeholder)
 	self._moraleValue.Text = "no worky"
-	self._moraleFill.Size = UDim2.new(1, 0, 1, 0)
+	self._moraleFill.Size  = UDim2.new(1, 0, 1, 0)
 
-	-- Update fire icon state
-	local canAttack = self._canAttackState[index] ~= false   -- default true
+	local canAttack = self._canAttackState[index] ~= false
 	self._globalFireIcon.ImageTransparency = canAttack and 0 or 0.65
-	self._globalFireIcon.ImageColor3 = canAttack and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(120, 120, 120)
+	self._globalFireIcon.ImageColor3 = canAttack
+		and Color3.fromRGB(255, 255, 255)
+		or  Color3.fromRGB(120, 120, 120)
 
 	self._globalPanel.Visible = true
 end
 
--- Creates the broken company prompt at top center
+-- ── Broken prompt ─────────────────────────────────────────────────────
+
 function CompanyHUD:_createBrokenPrompt()
 	local panel = Instance.new("Frame")
 	panel.Name              = "BrokenPrompt"
 	panel.Size              = UDim2.new(0, 320, 0, 90)
-	panel.Position 			= UDim2.new(0.5, 0, 0, 66)
+	panel.Position          = UDim2.new(0.5, 0, 0, 66)
 	panel.AnchorPoint       = Vector2.new(0.5, 0)
 	panel.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
 	panel.BackgroundTransparency = 0.15
@@ -784,15 +691,13 @@ function CompanyHUD:_createBrokenPrompt()
 	panel.ZIndex            = 20
 	panel.Parent            = self._gui
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 9)
-	corner.Parent = panel
+	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,9); corner.Parent = panel
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color       = Color3.fromRGB(200, 55, 55)
 	stroke.Thickness   = 2.5
 	stroke.Transparency = 0
-	stroke.Parent = panel
+	stroke.Parent      = panel
 	self._brokenStroke = stroke
 
 	local title = Instance.new("TextLabel")
@@ -809,9 +714,7 @@ function CompanyHUD:_createBrokenPrompt()
 	title.Parent             = panel
 	self._brokenTitle = title
 
-	-- Timer row
 	local timerLabel = Instance.new("TextLabel")
-	timerLabel.Name              = "TimerLabel"
 	timerLabel.Size              = UDim2.new(0.5, -10, 0, 14)
 	timerLabel.Position          = UDim2.new(0, 10, 0, 38)
 	timerLabel.BackgroundTransparency = 1
@@ -824,7 +727,6 @@ function CompanyHUD:_createBrokenPrompt()
 	timerLabel.Parent            = panel
 
 	local timerVal = Instance.new("TextLabel")
-	timerVal.Name              = "TimerValue"
 	timerVal.Size              = UDim2.new(0.5, -10, 0, 14)
 	timerVal.Position          = UDim2.new(0.5, 0, 0, 38)
 	timerVal.BackgroundTransparency = 1
@@ -837,9 +739,7 @@ function CompanyHUD:_createBrokenPrompt()
 	timerVal.Parent            = panel
 	self._brokenTimerVal = timerVal
 
-	-- Enemy nearby row
 	local enemyLabel = Instance.new("TextLabel")
-	enemyLabel.Name              = "EnemyLabel"
 	enemyLabel.Size              = UDim2.new(0.5, -10, 0, 14)
 	enemyLabel.Position          = UDim2.new(0, 10, 0, 58)
 	enemyLabel.BackgroundTransparency = 1
@@ -852,7 +752,6 @@ function CompanyHUD:_createBrokenPrompt()
 	enemyLabel.Parent            = panel
 
 	local enemyVal = Instance.new("TextLabel")
-	enemyVal.Name              = "EnemyValue"
 	enemyVal.Size              = UDim2.new(0.5, -10, 0, 14)
 	enemyVal.Position          = UDim2.new(0.5, 0, 0, 58)
 	enemyVal.BackgroundTransparency = 1
@@ -868,22 +767,14 @@ function CompanyHUD:_createBrokenPrompt()
 	self._brokenPrompt = panel
 end
 
--- Updates the broken prompt visibility and content based on selected company
 function CompanyHUD:_updateBrokenPrompt()
 	if not self._brokenPrompt then return end
-
 	local selected = self:getSelectedList()
-	if #selected ~= 1 then
-		self._brokenPrompt.Visible = false
-		return
-	end
+	if #selected ~= 1 then self._brokenPrompt.Visible = false; return end
 
 	local idx = selected[1]
 	local sd  = self._strengthData and self._strengthData[idx]
-	if not sd or not sd.isBroken then
-		self._brokenPrompt.Visible = false
-		return
-	end
+	if not sd or not sd.isBroken then self._brokenPrompt.Visible = false; return end
 
 	self._brokenPrompt.Visible   = true
 	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " BROKEN"
