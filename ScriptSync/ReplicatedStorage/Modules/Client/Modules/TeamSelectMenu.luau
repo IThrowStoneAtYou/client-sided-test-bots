@@ -331,9 +331,9 @@ function TeamSelectMenu:_buildSideScreen()
 		card.ZIndex = 13
 		card.Parent = holder
 		
-		local cardCorner = Instance.new("UICorner")
-		cardCorner.CornerRadius = UDim.new(0, 10)
-		cardCorner.Parent = card
+--		local cardCorner = Instance.new("UICorner")
+--		cardCorner.CornerRadius = UDim.new(0, 10)
+--		cardCorner.Parent = card
 
 		local cardStroke = Instance.new("UIStroke")
 		cardStroke.Color = sd.accent
@@ -350,9 +350,9 @@ function TeamSelectMenu:_buildSideScreen()
 		gradOver.ZIndex = 13
 		gradOver.Parent = card
 		
-		local gradCorner = Instance.new("UICorner")
-		gradCorner.CornerRadius = UDim.new(0, 10)
-		gradCorner.Parent = gradOver
+--		local gradCorner = Instance.new("UICorner")
+--		gradCorner.CornerRadius = UDim.new(0, 10)
+--		gradCorner.Parent = gradOver
 
 		local g = Instance.new("UIGradient")
 		g.Rotation = isLeft and 130 or 50
