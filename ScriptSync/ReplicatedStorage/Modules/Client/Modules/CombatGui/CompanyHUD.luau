@@ -279,6 +279,10 @@ function CompanyHUD:setStrength(index: number, tickets: number, isBroken: boolea
 	self:_updateBrokenPrompt()
 end
 
+function CompanyHUD:SetVisible(visible: boolean)
+	self._gui.Enabled = visible
+end
+
 -- ── Internal ──────────────────────────────────────────────────────────
 
 function CompanyHUD:_refreshCard(i: number)

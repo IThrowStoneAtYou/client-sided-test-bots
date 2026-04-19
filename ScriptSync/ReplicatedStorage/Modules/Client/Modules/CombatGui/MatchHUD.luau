@@ -278,4 +278,8 @@ function MatchHUD:setIntermissionTimer(secs: number)
 	self._timer.TextColor3 = Color3.fromRGB(200, 200, 100)
 end
 
+function MatchHUD:SetVisible(visible: boolean)
+	self._gui.Enabled = visible
+end
+
 return MatchHUD
