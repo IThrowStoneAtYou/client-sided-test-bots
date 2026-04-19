@@ -160,7 +160,10 @@ local function syncCompanies(player: Player)
 		for idx, company in pairs(playerCompanies) do
 			table.insert(data, { index = idx, count = #company.slots, slots = company.slots })
 		end
-		table.sort(data, function(a, b) return a.index < b.index end)
+		
+		table.sort(data, function(a, b) 
+			return a.index < b.index
+		end)
 	end
 	Network.NpcCompanySync.Fire(player, data)
 end
@@ -356,6 +359,16 @@ local function despawnAllCompanies(player: Player)
 	if not playerCompanies then return end
 	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
 	companies[player] = nil
+end
+
+local function watchDespawnRequest(player: Player)
+	player:GetAttributeChangedSignal("RequestDespawnAll"):Connect(function()
+		if player:GetAttribute("RequestDespawnAll") == true then
+			despawnAllCompanies(player)
+			syncCompanies(player)
+			player:SetAttribute("RequestDespawnAll", nil)
+		end
+	end)
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
@@ -583,7 +596,11 @@ local function hookChat(player: Player)
 end
 
 Players.PlayerAdded:Connect(hookChat)
-for _, p in ipairs(Players:GetPlayers()) do hookChat(p) end
+Players.PlayerAdded:Connect(watchDespawnRequest)
+for _, p in ipairs(Players:GetPlayers()) do 
+	hookChat(p)
+	watchDespawnRequest(p)
+end
 
 -- ── Remote Handlers ───────────────────────────────────────────────────
 Network.NpcReady.On(function(player)

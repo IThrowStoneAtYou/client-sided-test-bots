@@ -919,7 +919,7 @@ local teamMenu = TeamSelectMenu.new(Network, toggleHUDs)
 -- ── Auto-Show Menu for No Team ──────────────────────────────────────
 local function checkTeamRequirement()
 	local currentTeam = localPlayer.Team
-	if not currentTeam or currentTeam.Name == "NO TEAM" or currentTeam.Name == "Neutral" then
+	if not currentTeam or currentTeam.Name == "NO TEAM" then
 		teamMenu:show()
 	end
 end

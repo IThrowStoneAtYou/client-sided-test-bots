@@ -1056,12 +1056,14 @@ end
 -- ─────────────────────────────────────────────────────────────────────
 
 function TeamSelectMenu:_onSideSelected(sd, sideIdx)
+	-- 1. Update State
 	self._selectedSide        = sd
 	self._selectedSideIdx     = sideIdx
 	self._selectedNation      = nil
 	self._selectedRegiment    = nil
 	self._selectedRegimentIdx = nil
 
+	-- 2. Update Visuals
 	self._headerLabel.Text                 = sd.role .. "  ·  " .. sd.name
 	self._loadoutStroke.Color              = sd.accent
 	self._loadoutStroke.Transparency       = 0.4
@@ -1069,7 +1071,7 @@ function TeamSelectMenu:_onSideSelected(sd, sideIdx)
 	self._deployBtn.BackgroundTransparency = 0.45
 	self._deployBtn.Text                   = "⚑  DEPLOY"
 
-	-- Reset nav cards
+	-- 3. Reset Navigation Cards
 	self._natNavName.Text = "—"; self._natNavName.TextColor3 = C_DIM
 	self._natNavSub.Text  = "Select a nation"
 	self._natNavIcon.Image = ""; self._natNavIcon.BackgroundColor3 = C_SEP
@@ -1080,69 +1082,35 @@ function TeamSelectMenu:_onSideSelected(sd, sideIdx)
 	self._regNavSwatch.BackgroundColor3 = C_SEP
 	self._regNavSwatch.BackgroundTransparency = 0.5
 
+	-- 4. Prepare List and Transition
 	self:_populateNations(sd)
-
-	if #sd.nations == 1 then
-		-- Auto-select single nation → jump straight to regiments
-		self:_onNationSelectedSilent(sd.nations[1])
-	else
-		self:_setRightMode("nations")
-	end
-
+	self:_setRightMode("nations") -- Ensure we always start on the Nations list
 	self:_transitionToLoadoutScreen()
-end
-
--- Selects a nation and updates the nav card without switching right mode first
-function TeamSelectMenu:_onNationSelectedSilent(nd)
-	self._selectedNation      = nd
-	self._selectedRegiment    = nil
-	self._selectedRegimentIdx = nil
-
-	self._natNavName.Text = nd.name; self._natNavName.TextColor3 = C_TEXT
-	self._natNavSub.Text  = nd.subtitle
-	self._natNavIcon.Image = nd.flag; self._natNavIcon.BackgroundTransparency = 0
-
-	-- Highlight row if it exists
-	local accent = self._selectedSide and self._selectedSide.accent or C_GOLD
-	for _, rdata in ipairs(self._natRows) do
-		local sel = (rdata.data == nd)
-		TweenService:Create(rdata.row, TI_FAST, {BackgroundTransparency=sel and 0.08 or 0.38}):Play()
-		TweenService:Create(rdata.stroke, TI_FAST, {
-			Color=sel and accent or C_SEP, Transparency=sel and 0.1 or 0.25 }):Play()
-	end
-
-	self:_populateRegiments(nd)
-
-	if #nd.regiments == 1 then
-		self:_onRegimentSelected(nd.regiments[1], 1)
-	end
-
-	self:_setRightMode("regiments")
 end
 
 function TeamSelectMenu:_onNationSelected(nd)
 	local accent = self._selectedSide and self._selectedSide.accent or C_GOLD
 
-	-- Highlight rows
+	-- 1. Highlight the selected row in the Nation list
 	for _, rdata in ipairs(self._natRows) do
 		local sel = (rdata.data == nd)
 		TweenService:Create(rdata.row, TI_FAST, {BackgroundTransparency=sel and 0.08 or 0.38}):Play()
 		TweenService:Create(rdata.stroke, TI_FAST, {Color=sel and accent or C_SEP, Transparency=sel and 0.1 or 0.25 }):Play()
 	end
 
-	-- Update nav card
+	-- 2. Update the Nation Navigation Card on the left
 	self._selectedNation = nd
 	self._selectedRegiment = nil; self._selectedRegimentIdx = nil
 	self._natNavName.Text = nd.name; self._natNavName.TextColor3 = C_TEXT
 	self._natNavSub.Text  = nd.subtitle
 	self._natNavIcon.Image = nd.flag; self._natNavIcon.BackgroundTransparency = 0
 
+	-- 3. Populate the regiment data (remains hidden in the background)
 	self:_populateRegiments(nd)
-	self:_setRightMode("regiments")
-
-	if #nd.regiments == 1 then
-		self:_onRegimentSelected(nd.regiments[1], 1)
-	end
+	self._regNavSub.Text = "Select a regiment"
+	
+	-- Note: We explicitly DO NOT call _setRightMode("regiments") here.
+	-- The user remains on the Nations list until they click the Regiment card.
 end
 
 function TeamSelectMenu:_onRegimentSelected(rd, regIdx)
