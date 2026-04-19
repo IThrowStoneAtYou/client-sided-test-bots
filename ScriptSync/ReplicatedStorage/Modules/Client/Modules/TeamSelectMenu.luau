@@ -331,10 +331,6 @@ function TeamSelectMenu:_buildSideScreen()
 		card.ZIndex = 13
 		card.Parent = holder
 		
---		local cardCorner = Instance.new("UICorner")
---		cardCorner.CornerRadius = UDim.new(0, 10)
---		cardCorner.Parent = card
-
 		local cardStroke = Instance.new("UIStroke")
 		cardStroke.Color = sd.accent
 		cardStroke.Thickness = 1.5
@@ -349,10 +345,6 @@ function TeamSelectMenu:_buildSideScreen()
 		gradOver.BorderSizePixel = 0
 		gradOver.ZIndex = 13
 		gradOver.Parent = card
-		
---		local gradCorner = Instance.new("UICorner")
---		gradCorner.CornerRadius = UDim.new(0, 10)
---		gradCorner.Parent = gradOver
 
 		local g = Instance.new("UIGradient")
 		g.Rotation = isLeft and 130 or 50
@@ -482,7 +474,10 @@ function TeamSelectMenu:_buildSideScreen()
 			TweenService:Create(selBtn, TI_FAST, {BackgroundTransparency=0.28}):Play()
 		end)
 
-		local function onSelect() self:_onSideSelected(sd, sideIdx) end
+		local function onSelect()
+			self:_onSideSelected(sd, sideIdx)
+		end
+		
 		selBtn.MouseButton1Click:Connect(onSelect)
 		
 		local hitSurface = Instance.new("TextButton")
@@ -576,6 +571,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
 	titleLabel.ZIndex = 33
 	titleLabel.Parent = header
+	
 	self._headerLabel = titleLabel
 
 	local backBtn = Instance.new("TextButton")
@@ -593,10 +589,14 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	backBtn.MouseEnter:Connect(function()
 		TweenService:Create(backBtn, TI_FAST, {TextColor3=C_TEXT}):Play()
 	end)
+	
 	backBtn.MouseLeave:Connect(function()
 		TweenService:Create(backBtn, TI_FAST, {TextColor3=C_DIM}):Play()
 	end)
-	backBtn.MouseButton1Click:Connect(function() self:_transitionToSideScreen() end)
+	
+	backBtn.MouseButton1Click:Connect(function() 
+		self:_transitionToSideScreen()
+	end)
 
 	-- ── Two-column content area ───────────────────────────────────────
 	local CONTENT_H = PANEL_H - HEADER_H   -- 346px
@@ -647,6 +647,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	self._natNavSub    = natSub
 	self._natNavIcon   = natIcon
 	self._natNavStroke = natStroke
+	
 	natCard.MouseButton1Click:Connect(function()
 		self:_setRightMode("nations")
 	end)
@@ -660,6 +661,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	self._regNavSub    = regSub
 	self._regNavSwatch = regSwatch
 	self._regNavStroke = regStroke
+	
 	-- Regiment swatch starts as solid box, not flag image
 	regSwatch.Image = ""; regSwatch.BackgroundColor3 = C_SEP
 	regSwatch.BackgroundTransparency = 0.4
@@ -669,7 +671,9 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	regSwatchCorner.Parent = regSwatch
 
 	regCard.MouseButton1Click:Connect(function()
-		if self._selectedNation then self:_setRightMode("regiments") end
+		if self._selectedNation then
+			self:_setRightMode("regiments")
+		end
 	end)
 
 	-- ── Deploy button ─────────────────────────────────────────────────
@@ -690,6 +694,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	local deployCorner = Instance.new("UICorner")
 	deployCorner.CornerRadius = UDim.new(0, 8)
 	deployCorner.Parent = deployBtn
+	
 	self._deployBtn = deployBtn
 
 	deployBtn.MouseEnter:Connect(function()
@@ -697,12 +702,15 @@ function TeamSelectMenu:_buildLoadoutScreen()
 			TweenService:Create(deployBtn, TI_FAST, {BackgroundTransparency=0}):Play()
 		end
 	end)
+	
 	deployBtn.MouseLeave:Connect(function()
-		TweenService:Create(deployBtn, TI_FAST, {BackgroundTransparency=
-			self._selectedRegiment and 0.18 or 0.45}):Play()
+		TweenService:Create(deployBtn, TI_FAST, {BackgroundTransparency = self._selectedRegiment and 0.18 or 0.45}):Play()
 	end)
+	
 	deployBtn.MouseButton1Click:Connect(function()
-		if self._selectedRegiment then self:_deploy() end
+		if self._selectedRegiment then 
+			self:_deploy() 
+		end
 	end)
 
 	-- ── Right area ────────────────────────────────────────────────────
@@ -879,6 +887,7 @@ function TeamSelectMenu:_makeNavCard(parent, yPos, cardH)
 	frame.MouseEnter:Connect(function()
 		TweenService:Create(frame, TI_FAST, {BackgroundTransparency=0.30}):Play()
 	end)
+	
 	frame.MouseLeave:Connect(function()
 		TweenService:Create(frame, TI_FAST, {BackgroundTransparency=0.50}):Play()
 	end)
@@ -898,12 +907,8 @@ function TeamSelectMenu:_setRightMode(mode)
 
 	local accent = self._selectedSide and self._selectedSide.accent or C_GOLD
 	local natSel = (mode == "nations")
-	TweenService:Create(self._natNavStroke, TI_FAST, {
-		Color = natSel and accent or C_SEP, Transparency = natSel and 0.1 or 0.3,
-	}):Play()
-	TweenService:Create(self._regNavStroke, TI_FAST, {
-		Color = (not natSel) and accent or C_SEP, Transparency = (not natSel) and 0.1 or 0.3,
-	}):Play()
+	TweenService:Create(self._natNavStroke, TI_FAST, {Color = natSel and accent or C_SEP, Transparency = natSel and 0.1 or 0.3,}):Play()
+	TweenService:Create(self._regNavStroke, TI_FAST, {Color = (not natSel) and accent or C_SEP, Transparency = (not natSel) and 0.1 or 0.3,}):Play()
 end
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -965,11 +970,13 @@ function TeamSelectMenu:_populateNations(sd)
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.18}):Play()
 			end
 		end)
+		
 		clickBtn.MouseLeave:Connect(function()
 			if self._selectedNation ~= nd then
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.38}):Play()
 			end
 		end)
+		
 		clickBtn.MouseButton1Click:Connect(function()
 			self:_onNationSelected(nd)
 		end)
@@ -1038,11 +1045,13 @@ function TeamSelectMenu:_populateRegiments(nd)
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.18}):Play()
 			end
 		end)
+		
 		clickBtn.MouseLeave:Connect(function()
 			if self._selectedRegiment ~= rd then
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.38}):Play()
 			end
 		end)
+		
 		clickBtn.MouseButton1Click:Connect(function()
 			self:_onRegimentSelected(rd, i)
 		end)
@@ -1132,8 +1141,7 @@ function TeamSelectMenu:_onRegimentSelected(rd, regIdx)
 	for _, rdata in ipairs(self._regRows) do
 		local sel = (rdata.data == rd)
 		TweenService:Create(rdata.row, TI_FAST, {BackgroundTransparency=sel and 0.08 or 0.38}):Play()
-		TweenService:Create(rdata.stroke, TI_FAST, {
-			Color=sel and accent or C_SEP, Transparency=sel and 0.1 or 0.25 }):Play()
+		TweenService:Create(rdata.stroke, TI_FAST, {Color=sel and accent or C_SEP, Transparency=sel and 0.1 or 0.25 }):Play()
 	end
 
 	-- Update regiment nav card
@@ -1203,8 +1211,7 @@ function TeamSelectMenu:hide()
 	self:_unlockCamera()
 	if self._onVisibilityChanged then self._onVisibilityChanged(false) end
 	if self._loadoutScreen.Visible then
-		local t = TweenService:Create(self._loadoutPanel, TI_OUT, {
-			Position=UDim2.new(0.5,0,1.5,0) })
+		local t = TweenService:Create(self._loadoutPanel, TI_OUT, {Position=UDim2.new(0.5,0,1.5,0) })
 		t.Completed:Connect(function()
 			if self._gui then self._gui.Enabled = false end
 		end)

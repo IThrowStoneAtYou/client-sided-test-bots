@@ -13,8 +13,8 @@ local NpcConstants = {
 
 	-- ── Company Tickets ─────────────────────────────────────────────────
 	MAX_TICKETS            = 135,
-	TICKET_REGEN_RATE      = 8,
-	TICKET_REGEN_INTERVAL  = 5,
+	TICKET_REGEN_RATE      = 5,
+	TICKET_REGEN_INTERVAL  = 6,
 	TICKET_DECAY_RATE      = 6,
 	TICKET_DECAY_INTERVAL  = 5,
 	TICKET_COST_STATIONARY = 2,
