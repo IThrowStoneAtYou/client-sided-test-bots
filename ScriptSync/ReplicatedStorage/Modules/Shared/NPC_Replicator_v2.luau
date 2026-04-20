@@ -212,8 +212,9 @@ function NpcReplicator:ComputeCFrame(dt, serverTime)
 	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
 	self.LastPos      = currentPos
 
-	if self.Animator and (not self._lastAnimCheck or os.clock() - self._lastAnimCheck > 0.5) then
-		self._lastAnimCheck = os.clock()
+	local now = os.clock()
+	if self.Animator and (not self._lastAnimCheck or now - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = now
 		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
 		self._isNear = dist < 150
 		if not self._isNear then

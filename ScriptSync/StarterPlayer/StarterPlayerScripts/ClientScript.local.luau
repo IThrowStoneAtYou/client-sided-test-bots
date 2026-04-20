@@ -567,17 +567,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		end
 		
 		-- Number keys 1-4 for company selection
-		if key == Enum.KeyCode.One then
-			handleCompanyKeySelect(1)
-			return
-		elseif key == Enum.KeyCode.Two then
-			handleCompanyKeySelect(2)
-			return
-		elseif key == Enum.KeyCode.Three then
-			handleCompanyKeySelect(3)
-			return
-		elseif key == Enum.KeyCode.Four then
-			handleCompanyKeySelect(4)
+		local numKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four}
+		local foundIndex = table.find(numKeys, key)
+		if foundIndex then
+			handleCompanyKeySelect(foundIndex)
 			return
 		end
 	end

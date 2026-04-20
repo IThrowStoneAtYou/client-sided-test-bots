@@ -276,27 +276,24 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = { self._model }
 
-	task.spawn(function()
-		while traveled < totalDist do
-			local dt    = task.wait()
-			local step  = BULLET_SPEED * dt
+	local connection
+	connection = game:GetService("RunService").Heartbeat:Connect(function(dt)
+		local step = BULLET_SPEED * dt
+		local result = workspace:Raycast(origin + unitDir * traveled, unitDir * step, rayParams)
 
-			local result = workspace:Raycast(origin + unitDir * traveled, unitDir * step, rayParams)
+		traveled += step
 
-			traveled += step
-
+		if result or traveled >= totalDist then
 			if result then
 				bullet.CFrame = CFrame.lookAt(result.Position, result.Position + unitDir)
-			--	print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
-				bullet:Destroy()
-				return
 			end
-
-			local newPos = origin + unitDir * traveled
-			bullet.CFrame = CFrame.lookAt(newPos, newPos + unitDir)
+			connection:Disconnect()
+			bullet:Destroy()
+			return
 		end
 
-		bullet:Destroy()
+		local newPos = origin + unitDir * traveled
+		bullet.CFrame = CFrame.lookAt(newPos, newPos + unitDir)
 	end)
 end
 
