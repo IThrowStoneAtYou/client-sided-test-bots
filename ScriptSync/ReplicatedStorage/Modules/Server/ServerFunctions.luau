@@ -102,6 +102,7 @@ function ServerFunctions.init(ctx)
 	end
 
 	-- ── Core functions ─────────────────────────────────────────────────────
+	-- not gonna bother to explain things here
 
 	applyDamage = function(targetNpc, damage, attackerNpc)
 		if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end

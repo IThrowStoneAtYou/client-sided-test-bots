@@ -19,108 +19,11 @@
 local Players      = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local RunService   = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- ── Data ──────────────────────────────────────────────────────────────
-local SIDES = {
-	[1] = {
-		key    = "attacker",
-		role   = "ATTACKERS",
-		name   = "FRANCE & ALLIES",
-		accent = Color3.fromRGB(55,  100, 220),
-		dim    = Color3.fromRGB(10,  18,  70),
-		nations = {
-			{
-				key      = "france",
-				name     = "France",
-				subtitle = "République Française",
-				flag     = "rbxassetid://139065210013036",
-				regiments = {
-					{
-						key   = "1er_ligne",
-						name  = "1er Régiment d'Infanterie de Ligne",
-						desc  = "Premier regiment of Napoleon's Grande Armée",
-						color = Color3.fromRGB(55, 100, 220),
-					},
-					{
-						key   = "3e_etranger",
-						name  = "3e Regiment Étranger",
-						desc  = "Foreign regiment of the Grande Armée",
-						color = Color3.fromRGB(40, 140, 80),
-					},
-				},
-			},
-			{
-				key      = "warsaw",
-				name     = "Duchy of Warsaw",
-				subtitle = "Księstwo Warszawskie",
-				flag     = "rbxassetid://13110413028",
-				regiments = {
-					{
-						key   = "13_pulk",
-						name  = "13. Pułk Piechoty",
-						desc  = "Line infantry regiment of the Duchy of Warsaw",
-						color = Color3.fromRGB(200, 200, 200),
-					},
-					{
-						key   = "16_pulk",
-						name  = "16. Pułk Piechoty",
-						desc  = "line infantry regiment of the Duchy of Warsaw",
-						color = Color3.fromRGB(180, 40, 40),
-					},
-				},
-			},
-		},
-	},
-	[2] = {
-		key    = "defender",
-		role   = "DEFENDERS",
-		name   = "COALITIONS FORCES",
-		accent = Color3.fromRGB(210, 50,  50),
-		dim    = Color3.fromRGB(70,  8,   8),
-		nations = {
-			{
-				key      = "britain",
-				name     = "Great Britain",
-				subtitle = "United Kingdom of Great Britain",
-				flag     = "rbxassetid://88813497029040",
-				regiments = {
-					{
-						key   = "23rd_foot",
-						name  = "23rd Regiment of Foot",
-						desc  = "The Royal Welch Fusiliers steadfast redcoat infantry",
-						color = Color3.fromRGB(210, 50, 50),
-					},
-					{
-						key   = "35th_foot",
-						name  = "35th Regiment of Foot",
-						desc  = "foot pluh",
-						color = Color3.fromRGB(200, 100, 30),
-					},
-				},
-			},
-			{
-				key      = "prussia",
-				name     = "Kingdom of Prussia",
-				subtitle = "Königreich Preußen",
-				flag     = "rbxassetid://13110404432",
-				regiments = {
-					{
-						key   = "13_inf",
-						name  = "13. Infanterie Regiment",
-						desc  = "13th Infantry Regiment Prussian line infantry",
-						color = Color3.fromRGB(40, 40, 40),
-					},
-					{
-						key   = "18_inf",
-						name  = "18. Infanterie Regiment",
-						desc  = "18th Infantry Regiment Prussian line infantry",
-						color = Color3.fromRGB(50, 60, 100),
-					},
-				},
-			},
-		},
-	},
-}
+local RegimentData = require(ReplicatedStorage.Modules.Shared.RegimentData)
+local SIDES = RegimentData.Sides
 
 -- ── Palette ───────────────────────────────────────────────────────────
 local C_BG    = Color3.fromRGB(6,   6,   10)
@@ -932,10 +835,6 @@ function TeamSelectMenu:_populateNations(sd)
 		row.LayoutOrder = i
 		row.ZIndex = 34
 		row.Parent = self._natScroll
-		
---		local rowCorner = Instance.new("UICorner")
---		rowCorner.CornerRadius = UDim.new(0, 7)
---		rowCorner.Parent = row
 
 		local rStroke = Instance.new("UIStroke")
 		rStroke.Color = C_SEP; rStroke.Thickness = 1; rStroke.Transparency = 0.25; rStroke.Parent = row
@@ -992,8 +891,11 @@ end
 
 function TeamSelectMenu:_populateRegiments(nd)
 	for _, ch in ipairs(self._regScroll:GetChildren()) do
-		if ch:IsA("GuiObject") then ch:Destroy() end
+		if ch:IsA("GuiObject") then 
+			ch:Destroy()
+		end
 	end
+	
 	self._regRows = {}
 
 	for i, rd in ipairs(nd.regiments) do
@@ -1006,10 +908,6 @@ function TeamSelectMenu:_populateRegiments(nd)
 		row.LayoutOrder = i
 		row.ZIndex = 34
 		row.Parent = self._regScroll
-		
---		local rowCorner = Instance.new("UICorner")
---		rowCorner.CornerRadius = UDim.new(0, 7)
---		rowCorner.Parent = row
 
 		local rStroke = Instance.new("UIStroke")
 		rStroke.Color = C_SEP; rStroke.Thickness = 1; rStroke.Transparency = 0.25; rStroke.Parent = row
@@ -1160,6 +1058,7 @@ function TeamSelectMenu:_deploy()
 
 	local prev = self._selectedSide and self._selectedSide.accent or C_GOLD
 	self._deployBtn.BackgroundColor3 = Color3.fromRGB(50, 170, 80)
+	
 	task.delay(0.4, function()
 		if self._deployBtn and self._deployBtn.Parent then
 			self._deployBtn.BackgroundColor3 = prev
@@ -1168,7 +1067,9 @@ function TeamSelectMenu:_deploy()
 
 	-- (u8, u8) — matches Blink TeamRegimentSelect definition
 	self._network.TeamRegimentSelect.Fire(si, ri)
-	task.delay(0.45, function() self:hide() end)
+	task.delay(0.45, function()
+		self:hide() 
+	end)
 end
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -1185,8 +1086,11 @@ end
 function TeamSelectMenu:_transitionToSideScreen()
 	self._sideScreen.Visible = true
 	TweenService:Create(self._loadoutPanel, TI_OUT, {Position=UDim2.new(0.5,0,1.5,0)}):Play()
+	
 	task.delay(0.20, function()
-		if self._loadoutScreen then self._loadoutScreen.Visible = false end
+		if self._loadoutScreen then
+			self._loadoutScreen.Visible = false 
+		end
 	end)
 end
 
@@ -1199,7 +1103,10 @@ function TeamSelectMenu:show()
 	self:_lockCamera()
 	self._sideScreen.Visible = true
 	self._loadoutScreen.Visible = false
-	if self._onVisibilityChanged then self._onVisibilityChanged(true) end
+	
+	if self._onVisibilityChanged then 
+		self._onVisibilityChanged(true)
+	end
 end
 
 function TeamSelectMenu:hide()
@@ -1208,12 +1115,16 @@ function TeamSelectMenu:hide()
 	if self._loadoutScreen.Visible then
 		local t = TweenService:Create(self._loadoutPanel, TI_OUT, {Position=UDim2.new(0.5,0,1.5,0) })
 		t.Completed:Connect(function()
-			if self._gui then self._gui.Enabled = false end
+			if self._gui then 
+				self._gui.Enabled = false 
+			end
 		end)
 		t:Play()
 	else
 		task.delay(0.20, function()
-			if self._gui then self._gui.Enabled = false end
+			if self._gui then
+				self._gui.Enabled = false 
+			end
 		end)
 	end
 end

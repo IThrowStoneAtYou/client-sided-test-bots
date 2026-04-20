@@ -18,6 +18,7 @@ local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.Match
 local ServerFunctions   = require(ReplicatedStorage.Modules.Server.ServerFunctions)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
+local RegimentData      = require(ReplicatedStorage.Modules.Shared.RegimentData)
 
 -- ── Destructure NpcConstants for local use ────────────────────────────
 -- Pure-networking / performance constants stay as locals below;
@@ -74,28 +75,6 @@ local combatRayParams = RaycastParams.new()
 -- ── Admin whitelist ──────────────────────────────────────────────────
 local ADMIN_IDS: { [number]: boolean } = {
 	[5327451875] = true,
-}
-
--- ── Team names ───────────────────────────────────────────
-local TEAM_NAMES: { [number]: string } = {
-	[1] = "ATTACKERS",   -- Attackers / France
-	[2] = "DEFENDERS",   -- Defenders / Britain
-}
-
--- ── Regiment names ────────────────────────────────────────────────────
-local REGIMENT_NAMES: { [number]: { [number]: string } } = {
-	[1] = {   -- Attackers (France)
-		[1] = "1er Régiment d'Infanterie de Ligne",
-		[2] = "3e Regiment Étranger",
-		[3] = "13. Pułk Piechoty",
-		[4] = "16. Pułk Piechoty",
-	},
-	[2] = {   -- Defenders (Britain)
-		[1] = "23rd Regiment of Foot",
-		[2] = "35th Regiment of Foot",
-		[3] = "13. Infanterie Regiment",
-		[4] = "18. Infanterie Regiment",
-	},
 }
 
 combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -163,15 +142,6 @@ local function applyWalkSpeedNow()
 			hum.WalkSpeed = GameSettings.WALK_SPEED
 		end
 	end
-end
-
-local function isValidSide(si: number): boolean
-	return si == 1 or si == 2
-end
-
-local function isValidRegiment(si: number, ri: number): boolean
-	local side = REGIMENT_NAMES[si]
-	return side ~= nil and side[ri] ~= nil
 end
 
 local function cfChanged(cf, lastCF, npc)
@@ -679,20 +649,20 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	sideIndex     = math.floor(sideIndex)
 	regimentIndex = math.floor(regimentIndex)
 
-	if not isValidSide(sideIndex) or not isValidRegiment(sideIndex, regimentIndex) then
+	local side = RegimentData.Sides[sideIndex]
+	local regInfo = RegimentData.GetRegimentInfo(sideIndex, regimentIndex)
+	if not side or not regInfo then
 		return
 	end
 
-	local teamName = TEAM_NAMES[sideIndex]
-	local team     = Teams:FindFirstChild(teamName)
+	local team     = Teams:FindFirstChild(side.role)
 	if team then
 		player.Team = team
 	end
 
-	local regName = REGIMENT_NAMES[sideIndex][regimentIndex]
 	player:SetAttribute("SideIndex",      sideIndex)
 	player:SetAttribute("RegimentIndex",  regimentIndex)
-	player:SetAttribute("RegimentName",   regName)
+	player:SetAttribute("RegimentName",   regInfo.name)
 	player:SetAttribute("TeamIndex",      sideIndex == 1 and 2 or 1)
 	player:SetAttribute("RequestDespawnAll", true)
 end)

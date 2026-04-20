@@ -21,43 +21,8 @@ local Teams             = game:GetService("Teams")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Network = require(game.ReplicatedStorage.Blink.Server)
+local RegimentData = require(ReplicatedStorage.Modules.Shared.RegimentData)
 
--- ── Team names ───────────────────────────────────────────
--- Key: sideIndex sent by TeamSelectMenu (1 = Attackers/France, 2 = Defenders/Britain)
--- Value: exact name of the Roblox Team object in the Teams service
-local TEAM_NAMES: { [number]: string } = {
-	[1] = "ATTACKERS",   -- Attackers / France
-	[2] = "DEFENDERS",   -- Defenders / Britain
-}
-
--- ── Regiment names ────────────────────────────────────────────────────
--- [sideIndex][regimentIndex] = display name
--- Extend this table as new nations / regiments are added to the client data.
-local REGIMENT_NAMES: { [number]: { [number]: string } } = {
-	[1] = {   -- Attackers (France)
-		[1] = "1er Régiment d'Infanterie de Ligne",
-		[2] = "3e Regiment Étranger",
-		[3] = "13. Pułk Piechoty",
-		[4] = "16. Pułk Piechoty",
-	},
-	[2] = {   -- Defenders (Britain)
-		[1] = "23rd Regiment of Foot",
-		[2] = "35th Regiment of Foot",
-		[3] = "13. Infanterie Regiment",
-		[4] = "18. Infanterie Regiment",
-	},
-}
-
--- ── Validation ────────────────────────────────────────────────────────
-
-local function isValidSide(si: number): boolean
-	return si == 1 or si == 2
-end
-
-local function isValidRegiment(si: number, ri: number): boolean
-	local side = REGIMENT_NAMES[si]
-	return side ~= nil and side[ri] ~= nil
-end
 
 -- ── Handler ───────────────────────────────────────────────────────────
 
@@ -65,19 +30,20 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	sideIndex     = math.floor(sideIndex)
 	regimentIndex = math.floor(regimentIndex)
 
-	if not isValidSide(sideIndex) then
+	local side = RegimentData.Sides[sideIndex]
+	if not side then
 		warn(string.format("[TeamHandler] Invalid sideIndex from %s: %s", player.Name, tostring(sideIndex)))
 		return
 	end
 
-	if not isValidRegiment(sideIndex, regimentIndex) then
+	local regInfo = RegimentData.GetRegimentInfo(sideIndex, regimentIndex)
+	if not regInfo then
 		warn(string.format("[TeamHandler] Invalid regimentIndex from %s: side=%d reg=%d", player.Name, sideIndex, regimentIndex))
 		return
 	end
 
 	-- Assign Roblox team
-	local teamName = TEAM_NAMES[sideIndex]
-	local team     = Teams:FindFirstChild(teamName)
+	local team     = Teams:FindFirstChild(side.role)
 	if team then
 		player.Team = team
 	else
@@ -85,7 +51,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	end
 
 	-- Store on player for NPC_SYSTEM / outfit lookup
-	local regName = REGIMENT_NAMES[sideIndex][regimentIndex]
+	local regName = regInfo.name
 	player:SetAttribute("SideIndex",      sideIndex)
 	player:SetAttribute("RegimentIndex",  regimentIndex)
 	player:SetAttribute("RegimentName",   regName)
