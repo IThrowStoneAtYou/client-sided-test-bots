@@ -24,8 +24,8 @@ local BROADCAST_INTERVAL  = 10   -- seconds between MatchUpdate fires during mat
 
 -- Map your actual Roblox Team names here
 local TEAM_NAME_TO_INDEX: { [string]: number } = {
-	["TEAM 1"] = 1,
-	["TEAM 2"] = 2,
+	["DEFENDERS"] = 1,
+	["ATTACKERS"] = 2,
 }
 
 -- ── Stage enum ────────────────────────────────────────────────────────
