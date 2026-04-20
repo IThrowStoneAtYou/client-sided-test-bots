@@ -930,41 +930,32 @@ RunService.Heartbeat:Connect(function(dt)
 	nearAccum += dt
 	farAccum  += dt
 
-	sf.processCombat(dt)
+	sf.prepareCompanyMetadata()
 	sf.processTickets(dt)
-	sf.processMelee(dt)
 
 	table.clear(DEAD_IDS)
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			table.insert(DEAD_IDS, shortId)
-		end
-	end
-
-	for _, shortId in ipairs(DEAD_IDS) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
-		activeNpcs[shortId] = nil
-	end
-
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
-	if not doNear and not doFar then return end
-	if doNear then nearAccum -= NEAR_RATE end
-	if doFar  then farAccum  -= FAR_RATE  end
-
 	local timestamp = workspace:GetServerTimeNow()
-	local now = os.clock()
+	local now       = os.clock()
 
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
 	for shortId, npc in pairs(activeNpcs) do
-		local cf = npc.Root.CFrame
-		local entry
+		-- 1. Dead check
+		if not (npc.Model and npc.Model.Parent) then
+			table.insert(DEAD_IDS, shortId)
+			continue
+		end
 
+		-- 2. Logic (Combat & Melee)
+		sf.updateNpcCombat(npc, dt)
+		sf.updateNpcMelee(npc, dt)
+
+		-- 3. Networking Prep
+		local cf    = npc.Root.CFrame
+		local entry
 		if doFar then
 			entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
 			table.insert(FAR_ENTRIES, entry)
@@ -978,6 +969,18 @@ RunService.Heartbeat:Connect(function(dt)
 			npc.LastSentCF = cf
 		end
 	end
+
+	-- Cleanup dead NPCs after the main loop
+	for _, shortId in ipairs(DEAD_IDS) do
+		for player in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(player, shortId)
+			if farLastSent[player] then farLastSent[player][shortId] = nil end
+		end
+		activeNpcs[shortId] = nil
+	end
+
+	if doNear then nearAccum -= NEAR_RATE end
+	if doFar  then farAccum  -= FAR_RATE  end
 
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
