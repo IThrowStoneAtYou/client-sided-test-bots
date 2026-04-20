@@ -197,7 +197,7 @@ local function broadcastCanAttackState(player, companyIndex, state)
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
-local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?, companyIndex: number?)
+local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?, companyIndex: number?, role: string?)
 	local shortId  = nextShortId
 	nextShortId   += 1
 
@@ -262,6 +262,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		MeleeTimer      = 0,
 		MeleeTarget     = nil,
 		MeleeHasHit     = false,
+		Role            = role or NpcConstants.ROLE_RANKER,
 		_meleePathAccum = 0,
 	}
 
@@ -301,7 +302,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	end)
 
 	activeNpcs[shortId] = npc
-	print(string.format("[Server] Spawned NPC %d | Owner: %s | Company: %s", shortId, ownerPlayer and ownerPlayer.Name or "None", tostring(companyIndex)))
+--	print(string.format("[Server] Spawned NPC %d | Owner: %s | Company: %s", shortId, ownerPlayer and ownerPlayer.Name or "None", tostring(companyIndex)))
 
 	if not suppressNotify then
 		for player in pairs(readyPlayers) do
@@ -314,6 +315,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 				isBearer     = npc.IsFlagBearer,
 				companyIndex = companyIndex,
 				ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
+				role         = npc.Role,
 			})
 			Network.NpcWeaponState.Fire(player, shortId, WEAPON_IDLE)
 		end
@@ -327,6 +329,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		isBearer     = npc.IsFlagBearer,
 		companyIndex = companyIndex,
 		ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
+		role         = npc.Role,
 	}
 end
 
@@ -406,6 +409,17 @@ local function watchDespawnRequest(player: Player)
 	end)
 end
 
+local function getRoleForSlot(slotIndex: number)
+	local C = NpcConstants
+	if slotIndex == 1 then return C.ROLE_OFFICER -- Bearer
+	elseif slotIndex == 2 then return C.ROLE_OFFICER -- Line Officer
+	elseif slotIndex == 3 or slotIndex == 4 then return C.ROLE_SAPPER
+	elseif slotIndex == 5 then return C.ROLE_MUSIC_NORMAL
+	elseif slotIndex == 6 then return C.ROLE_MUSIC_DRUM
+	else return C.ROLE_RANKER
+	end
+end
+
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, GameSettings.MAX_COMPANIES)
 	botCount     = math.clamp(botCount, 1, GameSettings.MAX_BOTS)
@@ -445,6 +459,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		for j = 1, botCount do
 			task.spawn(function()
 				local isBearer = (j == 1)
+				local role = getRoleForSlot(j)
 				local targetCF
 				if isBearer then
 					local totalDepth = (ranks-1)*RANK_DEPTH
@@ -453,7 +468,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					targetCF = slots[j-1]
 				end
 
-				local npc, data = spawnNpc(targetCF + Vector3.new(0,4,0), true, player, i)
+				local npc, data = spawnNpc(targetCF + Vector3.new(0,4,0), true, player, i, role)
 				if npc then
 					npc.IsRegiment     = true
 					npc.RegimentFacing = flatLook

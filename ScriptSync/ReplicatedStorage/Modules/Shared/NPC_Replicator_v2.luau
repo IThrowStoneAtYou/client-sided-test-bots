@@ -78,8 +78,9 @@ end
 
 -->>>>>>>>>>>>
 -- Clones and welds head/body rigs from Shared.Npc.Nation based on keys.
-function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string)
-	print(string.format("[Replicator] Attempting rig apply: %s/%s", nationKey, regimentKey))
+function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, roleKey: string)
+	roleKey = roleKey or "ranker"
+	print(string.format("[Replicator] Attempting rig apply: %s/%s/%s", tostring(nationKey), tostring(regimentKey), tostring(roleKey)))
 	
 	local sharedFolder = replicatestorage.Shared
 	local npcFolder    = sharedFolder and sharedFolder:FindFirstChild("Npc")
@@ -91,23 +92,39 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string)
 	
 	local nationPath   = nationFolder and nationFolder:FindFirstChild(nationKey)
 	local regFolder    = nationPath and nationPath:FindFirstChild(regimentKey)
+	local roleFolder   = regFolder and regFolder:FindFirstChild(roleKey)
 
-	if not regFolder then 
-		warn(string.format("[Replicator] FAILED to find regFolder at Shared.Npc.Outfit.Nation.%s.%s", nationKey, regimentKey))
+	if not roleFolder then 
+		warn(string.format("[Replicator] FAILED to find roleFolder at Shared.Npc.Outfit.Nation.%s.%s.%s", nationKey, regimentKey, roleKey))
 		if not outfitFolder then warn("   -> Outfit folder missing")
 		elseif not nationFolder then warn("   -> Nation base folder missing")
 		elseif not nationPath then warn("   -> Specific nation folder missing:", nationKey) end
 		return 
 	end
 	
-	print(string.format("[Replicator] Found regFolder: %s", regFolder:GetFullName()))
+	print(string.format("[Replicator] Found roleFolder: %s", roleFolder:GetFullName()))
 	
 	-- Prevent duplicate rigs
 	if self.Client:GetAttribute("HasRegimentRig") then return end
 	self.Client:SetAttribute("HasRegimentRig", true)
 
+	-- Apply Shirt/Pants
+	local shirt = roleFolder:FindFirstChildOfClass("Shirt") or roleFolder:FindFirstChild("Shirt")
+	if shirt then
+		local existing = self.Client:FindFirstChildOfClass("Shirt")
+		if existing then existing:Destroy() end
+		shirt:Clone().Parent = self.Client
+	end
+
+	local pants = roleFolder:FindFirstChildOfClass("Pants") or roleFolder:FindFirstChild("Pants")
+	if pants then
+		local existing = self.Client:FindFirstChildOfClass("Pants")
+		if existing then existing:Destroy() end
+		pants:Clone().Parent = self.Client
+	end
+
 	local function attach(rigName, targetPartName)
-		local rigTemplate = regFolder:FindFirstChild(rigName)
+		local rigTemplate = roleFolder:FindFirstChild(rigName)
 		local targetPart   = self.Client:FindFirstChild(targetPartName)
 		
 		if rigTemplate and targetPart then
@@ -146,8 +163,12 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string)
 		end
 	end
 
-	attach("head_rig", "Head")
-	attach("body_rig", "Torso")
+	attach("head_rig",     "Head")
+	attach("body_rig",     "Torso")
+	attach("leftArm_rig",  "Left Arm")
+	attach("rightArm_rig", "Right Arm")
+	attach("leftLeg_rig",  "Left Leg")
+	attach("rightLeg_rig", "Right Leg")
 end
 
 -->>>>>>>>>>>>

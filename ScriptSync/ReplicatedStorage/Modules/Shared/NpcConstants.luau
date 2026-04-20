@@ -40,6 +40,13 @@ local NpcConstants = {
 	BEARER_MODE_PACING   = 3,
 	BEARER_SIDE_OFFSET_X = 5,
 	BEARER_SIDE_OFFSET_Z = 0,
+
+	-- ── Roles ───────────────────────────────────────────────────────────
+	ROLE_RANKER       = "ranker",
+	ROLE_OFFICER      = "officer",
+	ROLE_SAPPER       = "sapper",
+	ROLE_MUSIC_NORMAL = "music_normal",
+	ROLE_MUSIC_DRUM   = "music_drum",
 }
 
 -- Duration tables reference the numeric values defined above so they

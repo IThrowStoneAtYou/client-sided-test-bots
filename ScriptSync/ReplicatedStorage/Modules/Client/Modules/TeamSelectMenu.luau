@@ -674,6 +674,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 
 	local rl = Instance.new("UIListLayout")
 	rl.Padding = UDim.new(0,5); rl.SortOrder = Enum.SortOrder.LayoutOrder
+	rl.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	rl.Parent = regScroll
 end
 

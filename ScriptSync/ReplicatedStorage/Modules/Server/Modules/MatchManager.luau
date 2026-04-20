@@ -47,6 +47,7 @@ local teamTickets: { [number]: number } = {
 local stage                    = STAGE.WAITING
 local stageTimer               = 0
 local broadcastAccum           = 0
+local needsBroadcast           = false
 local intermissionBroadcastAccum = 0
 
 -- ── Borders ───────────────────────────────────────────────────────────
@@ -157,6 +158,11 @@ RunService.Heartbeat:Connect(function(dt)
 		return
 	end
 
+	if needsBroadcast then
+		needsBroadcast = false
+		broadcastUpdate()
+	end
+
 	stageTimer = math.max(0, stageTimer - dt)
 
 	if stage == STAGE.INTERMISSION then
@@ -228,8 +234,7 @@ local function deduct(teamIndex: number?, amount: number)
 	if not teamIndex then return end
 	local prev = teamTickets[teamIndex]
 	teamTickets[teamIndex] = math.max(0, prev - amount)
-	-- Always broadcast immediately on a deduction so clients see it right away
-	broadcastUpdate()
+	needsBroadcast = true
 end
 
 function MatchManager.onBotDied(teamName: string?)

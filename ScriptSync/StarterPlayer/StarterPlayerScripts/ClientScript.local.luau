@@ -97,7 +97,10 @@ local notifHud = NotificationHUD.new()
 -- ── NPC Registration ──────────────────────────────────────────────────
 -- Creates client-side NPC instances when server announces new NPC
 
-local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId)
+local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId, role)
+	
+	role = role or "ranker"
+	
 	-- Abort if already registered
 	if replicators[shortId] then return end
 	
@@ -142,7 +145,7 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 				local rInfo, nKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
 				if rInfo and nKey then
 					print(string.format("[OutfitGiver] Applying: %s from %s", rInfo.key, nKey))
-					rep:ApplyRegimentRig(nKey, rInfo.key)
+					rep:ApplyRegimentRig(nKey, rInfo.key, role)
 				else
 					warn("[OutfitGiver] RegimentData lookup failed for indices provided")
 				end
@@ -335,7 +338,8 @@ Network.NpcSpawn.On(function(data)
 			data.teamName,
 			data.isBearer,
 			data.companyIndex,
-			data.ownerUserId
+			data.ownerUserId,
+			data.role
 		)
 	elseif data.Type == "Batch" then
 		print(string.format("[Client] Registering Batch: %d NPCs", #data.list))
@@ -347,7 +351,8 @@ Network.NpcSpawn.On(function(data)
 				entry.teamName,
 				entry.isBearer,
 				entry.companyIndex,
-				entry.ownerUserId
+				entry.ownerUserId,
+				entry.role
 			)
 		end
 	end

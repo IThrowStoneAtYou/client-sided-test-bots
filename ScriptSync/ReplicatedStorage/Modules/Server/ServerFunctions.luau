@@ -215,6 +215,7 @@ function ServerFunctions.init(ctx)
 		local wasWalking = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
 		local owner      = npc.CompanyOwner
 		local compIdx    = npc.CompanyIndex
+		local role       = npc.Role
 
 		print(string.format("[Server] NPC %d Died", shortId))
 		if npc.Pathfinder then npc.Pathfinder:Destroy() end
@@ -283,7 +284,7 @@ function ServerFunctions.init(ctx)
 		end
 
 		if not comp.respawnQueue then comp.respawnQueue = {} end
-		table.insert(comp.respawnQueue, os.clock())
+		table.insert(comp.respawnQueue, { time = os.clock(), role = role })
 		syncCompanies(owner)
 	end
 
@@ -393,25 +394,28 @@ function ServerFunctions.init(ctx)
 		if not bearerPos then return end
 		local currentTime = os.clock()
 		local RESPAWN_DELAY = 3
-		local readyIndex
+		local readyEntry, readyIndex
 
-		for i, deathTime in ipairs(comp.respawnQueue) do
-			if currentTime - deathTime >= RESPAWN_DELAY then readyIndex = i; break end
+		for i, entry in ipairs(comp.respawnQueue) do
+			if currentTime - entry.time >= RESPAWN_DELAY then
+				readyEntry = entry; readyIndex = i; break 
+			end
 		end
 
-		if not readyIndex then return end
+		if not readyIndex or not readyEntry then return end
 		table.remove(comp.respawnQueue, readyIndex)
 		comp.isRespawning = true
 
 		task.spawn(function()
 			local offset  = Vector3.new(math.random(-3,3), 4, math.random(-3,3))
 			local spawnCF = CFrame.new(bearerPos + offset)
-			local npc, data = spawnNpc(spawnCF, true, player, companyIndex)
+			local npc, data = spawnNpc(spawnCF, true, player, companyIndex, readyEntry.role)
 			if npc and companies[player] and companies[player][companyIndex] then
 				local c = companies[player][companyIndex]
 				local isNewBearer = (#c.slots == 0)
 				npc.IsRegiment     = true
 				npc.CompanyOwner   = player
+				npc.Role           = readyEntry.role
 				npc.RegimentFacing = c.anchorCF and c.anchorCF.LookVector or Vector3.new(0,0,-1)
 				npc.CompanyIndex   = companyIndex
 

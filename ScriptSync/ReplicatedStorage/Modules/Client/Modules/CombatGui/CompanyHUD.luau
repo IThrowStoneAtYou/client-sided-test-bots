@@ -783,15 +783,11 @@ function CompanyHUD:_updateBrokenPrompt()
 	self._brokenTimerVal.Text    = math.ceil(sd.brokenTimer) .. "s"
 
 	local timerDone = sd.brokenTimer <= 0
-	self._brokenTimerVal.TextColor3 = timerDone
-		and Color3.fromRGB(55, 200, 90)
-		or  Color3.fromRGB(230, 230, 230)
+	self._brokenTimerVal.TextColor3 = timerDone and Color3.fromRGB(55, 200, 90) or  Color3.fromRGB(230, 230, 230)
 
 	local clear = not sd.enemyNearby
 	self._brokenEnemyVal.Text       = clear and "YES" or "NO"
-	self._brokenEnemyVal.TextColor3 = clear
-		and Color3.fromRGB(55, 200, 90)
-		or  Color3.fromRGB(200, 55, 55)
+	self._brokenEnemyVal.TextColor3 = clear and Color3.fromRGB(55, 200, 90) or  Color3.fromRGB(200, 55, 55)
 end
 
 return CompanyHUD
