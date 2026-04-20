@@ -991,8 +991,13 @@ RunService.Heartbeat:Connect(function(dt)
 		local near = PLAYER_WORK_NEAR[player]
 		local far  = PLAYER_WORK_FAR[player]
 
-		if near and #near > 0 then fireChunked(player, timestamp, near) end
-		if far  and #far  > 0 then fireChunked(player, timestamp, far) end
+		if near and #near > 0 then 
+			fireChunked(player, timestamp, near) 
+		end
+
+		if far  and #far  > 0 then 
+			fireChunked(player, timestamp, far)
+		end
 	end
 
 	releaseEntries()

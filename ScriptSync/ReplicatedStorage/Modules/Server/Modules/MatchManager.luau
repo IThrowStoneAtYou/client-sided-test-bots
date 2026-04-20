@@ -251,7 +251,8 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 	end
 	
 	print("vc:", vc, "ac:", ac)
-
+	
+	--yea no
 	local vColorInt = math.floor(vc.R * 255) * 65536 + math.floor(vc.G * 255) * 256 + math.floor(vc.B * 255)
 	local aColorInt = math.floor(ac.R * 255) * 65536 + math.floor(ac.G * 255) * 256 + math.floor(ac.B * 255)
 
