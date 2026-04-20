@@ -103,16 +103,16 @@ RegimentData.Sides = {
 
 function RegimentData.GetRegimentInfo(sideIdx: number, globalRegIdx: number)
 	local side = RegimentData.Sides[sideIdx]
-	if not side then return nil end
-
+	if not side then return nil, nil end
+	
 	local count = 0
 	for _, nation in ipairs(side.nations) do
 		for _, reg in ipairs(nation.regiments) do
 			count += 1
-			if count == globalRegIdx then return reg end
+			if count == globalRegIdx then return reg, nation.key end
 		end
 	end
-	return nil
+	return nil, nil
 end
 
 return RegimentData

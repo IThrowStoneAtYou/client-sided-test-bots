@@ -149,12 +149,18 @@ end
 function MusketUtils:Destroy()
 	self._destroyed = true
 	for _, track in pairs(self._meleeTracks or {}) do
-		if track then track:Stop() end
+		if track then 
+			track:Stop() 
+		end
 	end
+	
 	self._meleeTracks = {}
 	for _, track in pairs(self._tracks) do
-		if track then track:Stop() end
+		if track then 
+			track:Stop() 
+		end
 	end
+	
 	self._tracks = {}
 	if self._musket then
 		self._musket:Destroy()
@@ -211,6 +217,7 @@ function MusketUtils:CalculateHit(targetPos: Vector3, ignoreList: {Instance}?): 
 			victimId = tonumber(hitModel.Name:sub(5)) or 0
 		end
 	end
+	print(string.format("[Combat] Raycast Result - Victim: %d | Pos: %s", victimId, tostring(hitPos)))
 
 	return victimId, hitPos
 end	

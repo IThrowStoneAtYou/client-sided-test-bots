@@ -5,6 +5,7 @@
 -->>>>>>>>>>>>
 
 local RunService = game:GetService("RunService")
+local replicatestorage = game:GetService("ReplicatedStorage")
 
 local NPC_COLLISION_GROUP = "NpcGroup"
 local CLIENT_NPC_GROUP = "ClientNpcGroup"
@@ -73,6 +74,80 @@ end
 -- This is somewhat unecassary because you can get the entitys model from the constructor (ex: replicator.Client)
 function NpcReplicator:GetModel()
 	return self.Client
+end
+
+-->>>>>>>>>>>>
+-- Clones and welds head/body rigs from Shared.Npc.Nation based on keys.
+function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string)
+	print(string.format("[Replicator] Attempting rig apply: %s/%s", nationKey, regimentKey))
+	
+	local sharedFolder = replicatestorage.Shared
+	local npcFolder    = sharedFolder and sharedFolder:FindFirstChild("Npc")
+	local outfitFolder = npcFolder and npcFolder:FindFirstChild("Outfit")
+	local nationFolder = outfitFolder and outfitFolder:FindFirstChild("Nation")
+
+	if outfitFolder then print("[Replicator] Found Outfit folder") end
+	if nationFolder then print("[Replicator] Found Nation base folder") end
+	
+	local nationPath   = nationFolder and nationFolder:FindFirstChild(nationKey)
+	local regFolder    = nationPath and nationPath:FindFirstChild(regimentKey)
+
+	if not regFolder then 
+		warn(string.format("[Replicator] FAILED to find regFolder at Shared.Npc.Outfit.Nation.%s.%s", nationKey, regimentKey))
+		if not outfitFolder then warn("   -> Outfit folder missing")
+		elseif not nationFolder then warn("   -> Nation base folder missing")
+		elseif not nationPath then warn("   -> Specific nation folder missing:", nationKey) end
+		return 
+	end
+	
+	print(string.format("[Replicator] Found regFolder: %s", regFolder:GetFullName()))
+	
+	-- Prevent duplicate rigs
+	if self.Client:GetAttribute("HasRegimentRig") then return end
+	self.Client:SetAttribute("HasRegimentRig", true)
+
+	local function attach(rigName, targetPartName)
+		local rigTemplate = regFolder:FindFirstChild(rigName)
+		local targetPart   = self.Client:FindFirstChild(targetPartName)
+		
+		if rigTemplate and targetPart then
+			print(string.format("[Replicator] Cloning %s for %s", rigName, targetPartName))
+			local rig = rigTemplate:Clone()
+			rig.Name = "Rig_" .. rigName
+			
+			-- 1. Position the part exactly at the target's CFrame BEFORE welding
+			if rig:IsA("Model") then
+				rig:PivotTo(targetPart.CFrame)
+			elseif rig:IsA("BasePart") then
+				rig.CFrame = targetPart.CFrame
+			end
+			
+		--	print(string.format("  -> %s position set to: %s", rigName, tostring(rig.Position)))
+			
+			rig.Parent = self.Client
+			
+			local primary = (rig:IsA("Model") and rig.PrimaryPart) or (rig:IsA("BasePart") and rig)
+			if primary then
+				-- 2. Create the weld to maintain the current CFrame offset
+				local weld = Instance.new("Weld")
+				weld.Part0 = targetPart
+				weld.Part1 = primary
+				weld.Parent = primary
+			end
+			
+		--	print(string.format("[Visuals] Attached %s to NPC %s", rigName, self.Client.Name))
+			for _, p in ipairs(rig:GetDescendants()) do
+				if p:IsA("BasePart") then
+					p.CanCollide = false
+					p.CanTouch   = false
+					p.CanQuery   = false
+				end
+			end
+		end
+	end
+
+	attach("head_rig", "Head")
+	attach("body_rig", "Torso")
 end
 
 -->>>>>>>>>>>>

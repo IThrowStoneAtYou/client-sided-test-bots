@@ -68,6 +68,7 @@ end)
 Network.RequestTeamReset.On(function(player: Player)
 	local noTeam = Teams:FindFirstChild("NO TEAM")
 	if noTeam then
+		print(string.format("[TeamHandler] Resetting team for %s", player.Name))
 		player.Team = noTeam
 		player:SetAttribute("SideIndex",      nil)
 		player:SetAttribute("RegimentIndex",  nil)

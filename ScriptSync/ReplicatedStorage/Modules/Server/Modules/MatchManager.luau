@@ -92,6 +92,7 @@ end
 -- ── Stage transitions ─────────────────────────────────────────────────
 
 local function startIntermission()
+	print("[MatchManager] Entering INTERMISSION")
 	stage      = STAGE.INTERMISSION
 	stageTimer = GameSettings.INTERMISSION_DURATION
 	broadcastIntermission()
@@ -99,6 +100,7 @@ local function startIntermission()
 end
 
 local function startMatch()
+	print("[MatchManager] Entering MATCH")
 	stage        = STAGE.MATCH
 	stageTimer   = GameSettings.MATCH_DURATION
 	broadcastAccum = 0

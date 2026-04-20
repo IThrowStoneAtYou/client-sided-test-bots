@@ -301,6 +301,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	end)
 
 	activeNpcs[shortId] = npc
+	print(string.format("[Server] Spawned NPC %d | Owner: %s | Company: %s", shortId, ownerPlayer and ownerPlayer.Name or "None", tostring(companyIndex)))
 
 	if not suppressNotify then
 		for player in pairs(readyPlayers) do
@@ -713,6 +714,7 @@ end)
 
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
+	print(string.format("[Server] Player %s is Ready", player.Name))
 	readyPlayers[player] = true
 	MatchManager.syncPlayer(player)
 
@@ -745,6 +747,7 @@ Network.NpcReady.On(function(player)
 end)
 
 Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, companyIndex)
+	print(string.format("[Server] Order Received from %s for Company %d", player.Name, companyIndex))
 	if not companies[player] then return end
 	if typeof(anchorPos) ~= "Vector3" then return end
 	if typeof(facingDir) ~= "Vector3" then return end

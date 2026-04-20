@@ -118,6 +118,7 @@ function ServerFunctions.init(ctx)
 		end
 
 		targetNpc.Health -= damage
+		print(string.format("[Combat] NPC %d damaged: %d remaining", targetNpc.ShortId, targetNpc.Health))
 
 		if targetNpc.Health <= 0 then
 			targetNpc._dying = true
@@ -215,6 +216,7 @@ function ServerFunctions.init(ctx)
 		local owner      = npc.CompanyOwner
 		local compIdx    = npc.CompanyIndex
 
+		print(string.format("[Server] NPC %d Died", shortId))
 		if npc.Pathfinder then npc.Pathfinder:Destroy() end
 		if npc.Model      then npc.Model:Destroy() end
 
