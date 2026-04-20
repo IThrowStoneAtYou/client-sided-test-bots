@@ -123,11 +123,6 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	-->>>>>>>>>>>>
-	-- Fix: MeleeHasHit is now also reset when transitioning to MELEE_IDLE.
-	-- Previously it was only reset on BOT_START / UP_START, which meant a
-	-- survivor that was force-reset to IDLE (on a teammate's death) kept
-	-- MeleeHasHit = true and could never deal damage again in that cycle.
 	setNpcMeleeState = function(npc, state)
 		if npc.MeleeState == state then return end
 
@@ -261,10 +256,6 @@ function ServerFunctions.init(ctx)
 					end)
 				end
 			elseif comp.isMelee and soldierCount > 0 then
-				-->>>>>>>>>>>>
-				-- Fix: also reset MeleeHasHit here so survivors that were
-				-- mid-attack don't carry a stale true value into their next
-				-- attack cycle after being force-reset to IDLE.
 				for _, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
 					if not s then continue end
