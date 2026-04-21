@@ -14,6 +14,7 @@ local NpcReplicator     = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local NpcAnimator       = require(ReplicatedStorage.Modules.Shared:WaitForChild("NpcAnimator"))
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
+local RegimentData      = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentData"))
 local AdminPanel        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("AdminPanel"))
 
 local TeamSelectMenu = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("TeamSelectMenu"))
@@ -96,7 +97,10 @@ local notifHud = NotificationHUD.new()
 -- ── NPC Registration ──────────────────────────────────────────────────
 -- Creates client-side NPC instances when server announces new NPC
 
-local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId)
+local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId, role)
+	
+	role = role or "ranker"
+	
 	-- Abort if already registered
 	if replicators[shortId] then return end
 	
@@ -127,6 +131,37 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 	ownerUserId = ownerUserId or 0
 	clientModel:SetAttribute("OwnerUserId", ownerUserId)
 	npcOwners[shortId] = ownerUserId
+
+	-- Apply Regiment Rigs (Visuals)
+	local ownerPlayer = Players:GetPlayerByUserId(ownerUserId)
+	if ownerPlayer then
+		local function tryApply()
+			print(string.format("[OutfitGiver] Checking attributes for NPC %d (Owner: %s)", shortId, ownerPlayer.Name))
+			local sideIdx = ownerPlayer:GetAttribute("SideIndex")
+			local regIdx  = ownerPlayer:GetAttribute("RegimentIndex")
+			
+			if sideIdx and regIdx then
+				print(string.format("[OutfitGiver] Found Side: %d, Reg: %d", sideIdx, regIdx))
+				local rInfo, nKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
+				if rInfo and nKey then
+					print(string.format("[OutfitGiver] Applying: %s from %s", rInfo.key, nKey))
+					rep:ApplyRegimentRig(nKey, rInfo.key, role)
+				else
+					warn("[OutfitGiver] RegimentData lookup failed for indices provided")
+				end
+				return true
+			end
+			print("[OutfitGiver] Attributes not ready yet...")
+			return false
+		end
+
+		if not tryApply() then
+			local conn
+			conn = ownerPlayer.AttributeChanged:Connect(function()
+				if tryApply() then conn:Disconnect() end
+			end)
+		end
+	end
 
 	if not isBearer then
 		local mu = MusketUtils.new(clientModel, teamName)
@@ -295,6 +330,7 @@ end
 -- Single NPC spawn event (sent when an individual NPC is created)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
+		print(string.format("[Client] Registering Single NPC: %d", data.id))
 		registerNpc(
 			data.id, 
 			data.pos,
@@ -302,9 +338,11 @@ Network.NpcSpawn.On(function(data)
 			data.teamName,
 			data.isBearer,
 			data.companyIndex,
-			data.ownerUserId
+			data.ownerUserId,
+			data.role
 		)
 	elseif data.Type == "Batch" then
+		print(string.format("[Client] Registering Batch: %d NPCs", #data.list))
 		for _, entry in ipairs(data.list) do
 			registerNpc(
 				entry.id,
@@ -313,7 +351,8 @@ Network.NpcSpawn.On(function(data)
 				entry.teamName,
 				entry.isBearer,
 				entry.companyIndex,
-				entry.ownerUserId
+				entry.ownerUserId,
+				entry.role
 			)
 		end
 	end
@@ -364,6 +403,7 @@ end)
 -- data = array of {index, count, slots{...}, bearers[...]} for each company
 -- Updates HUD counts and resets company membership tracking
 Network.NpcCompanySync.On(function(data)
+	print("[Client] Received Company Sync. Total Companies:", #data)
 	-- Only clear owner entries for the local player's previous NPCs.
 	-- Wiping the whole table also removes other players' NPC owner mappings,
 	-- which breaks NpcCanAttackSync for those players.
@@ -474,6 +514,7 @@ end)
 Network.NpcFire.On(function(shortId, targetPos)
 	local mu = musketUtils[shortId]
 	if not mu then return end
+	print(string.format("[Client] NPC %d Firing", shortId))
 
 	-- If we own this NPC, we are responsible for hit detection
 	if npcOwners[shortId] == localPlayer.UserId then
@@ -567,17 +608,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		end
 		
 		-- Number keys 1-4 for company selection
-		if key == Enum.KeyCode.One then
-			handleCompanyKeySelect(1)
-			return
-		elseif key == Enum.KeyCode.Two then
-			handleCompanyKeySelect(2)
-			return
-		elseif key == Enum.KeyCode.Three then
-			handleCompanyKeySelect(3)
-			return
-		elseif key == Enum.KeyCode.Four then
-			handleCompanyKeySelect(4)
+		local numKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four}
+		local foundIndex = table.find(numKeys, key)
+		if foundIndex then
+			handleCompanyKeySelect(foundIndex)
 			return
 		end
 	end
@@ -905,6 +939,7 @@ end)
 
 -- to avoid server firing at client BEFORE client got a time to load it self.
 -- also work as late-join
+print("[Client] Sending NpcReady signal to server...")
 Network.NpcReady.Fire()
 
 AdminPanel.new(Network)

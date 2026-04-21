@@ -24,8 +24,8 @@ local BROADCAST_INTERVAL  = 10   -- seconds between MatchUpdate fires during mat
 
 -- Map your actual Roblox Team names here
 local TEAM_NAME_TO_INDEX: { [string]: number } = {
-	["TEAM 1"] = 1,
-	["TEAM 2"] = 2,
+	["ATTACKERS"] = 1,
+	["DEFENDERS"] = 2,
 }
 
 -- ── Stage enum ────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ local teamTickets: { [number]: number } = {
 local stage                    = STAGE.WAITING
 local stageTimer               = 0
 local broadcastAccum           = 0
+local needsBroadcast           = false
 local intermissionBroadcastAccum = 0
 
 -- ── Borders ───────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ end
 -- ── Stage transitions ─────────────────────────────────────────────────
 
 local function startIntermission()
+	print("[MatchManager] Entering INTERMISSION")
 	stage      = STAGE.INTERMISSION
 	stageTimer = GameSettings.INTERMISSION_DURATION
 	broadcastIntermission()
@@ -99,6 +101,7 @@ local function startIntermission()
 end
 
 local function startMatch()
+	print("[MatchManager] Entering MATCH")
 	stage        = STAGE.MATCH
 	stageTimer   = GameSettings.MATCH_DURATION
 	broadcastAccum = 0
@@ -153,6 +156,11 @@ RunService.Heartbeat:Connect(function(dt)
 			startIntermission()
 		end
 		return
+	end
+
+	if needsBroadcast then
+		needsBroadcast = false
+		broadcastUpdate()
 	end
 
 	stageTimer = math.max(0, stageTimer - dt)
@@ -226,8 +234,7 @@ local function deduct(teamIndex: number?, amount: number)
 	if not teamIndex then return end
 	local prev = teamTickets[teamIndex]
 	teamTickets[teamIndex] = math.max(0, prev - amount)
-	-- Always broadcast immediately on a deduction so clients see it right away
-	broadcastUpdate()
+	needsBroadcast = true
 end
 
 function MatchManager.onBotDied(teamName: string?)
@@ -239,7 +246,7 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 	local attackerName = attackerPlayer and attackerPlayer.Name or "Unknown"
 	local aCompIdx     = attackerCompIdx or 0
 	
-	print("fireNotification called:", victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
+--	print("fireNotification called:", victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
 
 	local vc = Color3.fromRGB(200, 200, 200)
 	local ac = Color3.fromRGB(200, 200, 200)
@@ -250,8 +257,9 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 		ac = attackerPlayer.Team.TeamColor.Color
 	end
 	
-	print("vc:", vc, "ac:", ac)
-
+--	print("vc:", vc, "ac:", ac)
+	
+	--yea no
 	local vColorInt = math.floor(vc.R * 255) * 65536 + math.floor(vc.G * 255) * 256 + math.floor(vc.B * 255)
 	local aColorInt = math.floor(ac.R * 255) * 65536 + math.floor(ac.G * 255) * 256 + math.floor(ac.B * 255)
 

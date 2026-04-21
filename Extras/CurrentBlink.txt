@@ -14,6 +14,7 @@ enum NpcSpawnData = "Type" {
         isBearer: boolean,
         companyIndex: u8?,
 		ownerUserId: f64,
+		role: string,
     },
     Batch {
         list: struct {
@@ -24,6 +25,7 @@ enum NpcSpawnData = "Type" {
             isBearer: boolean,
             companyIndex: u8?,
 			ownerUserId: f64,
+			role: string,
         }[]
     }
 }

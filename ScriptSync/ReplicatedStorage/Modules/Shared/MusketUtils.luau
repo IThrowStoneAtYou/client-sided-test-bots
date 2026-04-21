@@ -149,12 +149,18 @@ end
 function MusketUtils:Destroy()
 	self._destroyed = true
 	for _, track in pairs(self._meleeTracks or {}) do
-		if track then track:Stop() end
+		if track then 
+			track:Stop() 
+		end
 	end
+	
 	self._meleeTracks = {}
 	for _, track in pairs(self._tracks) do
-		if track then track:Stop() end
+		if track then 
+			track:Stop() 
+		end
 	end
+	
 	self._tracks = {}
 	if self._musket then
 		self._musket:Destroy()
@@ -211,6 +217,7 @@ function MusketUtils:CalculateHit(targetPos: Vector3, ignoreList: {Instance}?): 
 			victimId = tonumber(hitModel.Name:sub(5)) or 0
 		end
 	end
+	print(string.format("[Combat] Raycast Result - Victim: %d | Pos: %s", victimId, tostring(hitPos)))
 
 	return victimId, hitPos
 end	
@@ -276,27 +283,24 @@ function MusketUtils:_fireBullet(targetPos: Vector3)
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = { self._model }
 
-	task.spawn(function()
-		while traveled < totalDist do
-			local dt    = task.wait()
-			local step  = BULLET_SPEED * dt
+	local connection
+	connection = game:GetService("RunService").Heartbeat:Connect(function(dt)
+		local step = BULLET_SPEED * dt
+		local result = workspace:Raycast(origin + unitDir * traveled, unitDir * step, rayParams)
 
-			local result = workspace:Raycast(origin + unitDir * traveled, unitDir * step, rayParams)
+		traveled += step
 
-			traveled += step
-
+		if result or traveled >= totalDist then
 			if result then
 				bullet.CFrame = CFrame.lookAt(result.Position, result.Position + unitDir)
-			--	print("[Bullet] Hit:", result.Instance:GetFullName(), "| Normal:", result.Normal)
-				bullet:Destroy()
-				return
 			end
-
-			local newPos = origin + unitDir * traveled
-			bullet.CFrame = CFrame.lookAt(newPos, newPos + unitDir)
+			connection:Disconnect()
+			bullet:Destroy()
+			return
 		end
 
-		bullet:Destroy()
+		local newPos = origin + unitDir * traveled
+		bullet.CFrame = CFrame.lookAt(newPos, newPos + unitDir)
 	end)
 end
 

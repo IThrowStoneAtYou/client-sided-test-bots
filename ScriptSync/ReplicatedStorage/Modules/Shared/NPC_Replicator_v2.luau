@@ -5,6 +5,7 @@
 -->>>>>>>>>>>>
 
 local RunService = game:GetService("RunService")
+local replicatestorage = game:GetService("ReplicatedStorage")
 
 local NPC_COLLISION_GROUP = "NpcGroup"
 local CLIENT_NPC_GROUP = "ClientNpcGroup"
@@ -73,6 +74,99 @@ end
 -- This is somewhat unecassary because you can get the entitys model from the constructor (ex: replicator.Client)
 function NpcReplicator:GetModel()
 	return self.Client
+end
+
+-->>>>>>>>>>>>
+-- Clones and welds head/body rigs from Shared.Npc.Nation based on keys.
+function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, roleKey: string)
+	roleKey = roleKey or "ranker"
+	print(string.format("[Replicator] Attempting rig apply: %s/%s/%s", tostring(nationKey), tostring(regimentKey), tostring(roleKey)))
+	
+	local sharedFolder = replicatestorage.Shared
+	local npcFolder    = sharedFolder and sharedFolder:FindFirstChild("Npc")
+	local outfitFolder = npcFolder and npcFolder:FindFirstChild("Outfit")
+	local nationFolder = outfitFolder and outfitFolder:FindFirstChild("Nation")
+
+	if outfitFolder then print("[Replicator] Found Outfit folder") end
+	if nationFolder then print("[Replicator] Found Nation base folder") end
+	
+	local nationPath   = nationFolder and nationFolder:FindFirstChild(nationKey)
+	local regFolder    = nationPath and nationPath:FindFirstChild(regimentKey)
+	local roleFolder   = regFolder and regFolder:FindFirstChild(roleKey)
+
+	if not roleFolder then 
+		warn(string.format("[Replicator] FAILED to find roleFolder at Shared.Npc.Outfit.Nation.%s.%s.%s", nationKey, regimentKey, roleKey))
+		if not outfitFolder then warn("   -> Outfit folder missing")
+		elseif not nationFolder then warn("   -> Nation base folder missing")
+		elseif not nationPath then warn("   -> Specific nation folder missing:", nationKey) end
+		return 
+	end
+	
+	print(string.format("[Replicator] Found roleFolder: %s", roleFolder:GetFullName()))
+	
+	-- Prevent duplicate rigs
+	if self.Client:GetAttribute("HasRegimentRig") then return end
+	self.Client:SetAttribute("HasRegimentRig", true)
+
+	-- Apply Shirt/Pants
+	local shirt = roleFolder:FindFirstChildOfClass("Shirt") or roleFolder:FindFirstChild("Shirt")
+	if shirt then
+		local existing = self.Client:FindFirstChildOfClass("Shirt")
+		if existing then existing:Destroy() end
+		shirt:Clone().Parent = self.Client
+	end
+
+	local pants = roleFolder:FindFirstChildOfClass("Pants") or roleFolder:FindFirstChild("Pants")
+	if pants then
+		local existing = self.Client:FindFirstChildOfClass("Pants")
+		if existing then existing:Destroy() end
+		pants:Clone().Parent = self.Client
+	end
+
+	local function attach(rigName, targetPartName)
+		local rigTemplate = roleFolder:FindFirstChild(rigName)
+		local targetPart   = self.Client:FindFirstChild(targetPartName)
+		
+		if rigTemplate and targetPart then
+			print(string.format("[Replicator] Cloning %s for %s", rigName, targetPartName))
+			local rig = rigTemplate:Clone()
+			rig.Name = "Rig_" .. rigName
+			
+			if rig:IsA("Model") then
+				rig:PivotTo(targetPart.CFrame)
+			elseif rig:IsA("BasePart") then
+				rig.CFrame = targetPart.CFrame
+			end
+			
+		--	print(string.format("  -> %s position set to: %s", rigName, tostring(rig.Position)))
+			
+			rig.Parent = self.Client
+			
+			local primary = (rig:IsA("Model") and rig.PrimaryPart) or (rig:IsA("BasePart") and rig)
+			if primary then
+				local weld = Instance.new("Weld")
+				weld.Part0 = targetPart
+				weld.Part1 = primary
+				weld.Parent = primary
+			end
+			
+		--	print(string.format("[Visuals] Attached %s to NPC %s", rigName, self.Client.Name))
+			for _, p in ipairs(rig:GetDescendants()) do
+				if p:IsA("BasePart") then
+					p.CanCollide = false
+					p.CanTouch   = false
+					p.CanQuery   = false
+				end
+			end
+		end
+	end
+
+	attach("head_rig",     "Head")
+	attach("body_rig",     "Torso")
+	attach("leftArm_rig",  "Left Arm")
+	attach("rightArm_rig", "Right Arm")
+	attach("leftLeg_rig",  "Left Leg")
+	attach("rightLeg_rig", "Right Leg")
 end
 
 -->>>>>>>>>>>>
@@ -212,8 +306,9 @@ function NpcReplicator:ComputeCFrame(dt, serverTime)
 	local visualSpeed = actualDelta / (dt > 0 and dt or 0.01)
 	self.LastPos      = currentPos
 
-	if self.Animator and (not self._lastAnimCheck or os.clock() - self._lastAnimCheck > 0.5) then
-		self._lastAnimCheck = os.clock()
+	local now = os.clock()
+	if self.Animator and (not self._lastAnimCheck or now - self._lastAnimCheck > 0.5) then
+		self._lastAnimCheck = now
 		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
 		self._isNear = dist < 150
 		if not self._isNear then

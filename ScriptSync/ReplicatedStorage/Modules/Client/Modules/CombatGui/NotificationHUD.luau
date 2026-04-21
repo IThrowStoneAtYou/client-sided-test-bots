@@ -148,10 +148,12 @@ function NotificationHUD:push(
 		for _, t in ipairs(tweenables) do
 			goals[t.prop] = t.gone
 		end
+		
 		-- Tween each instance individually
 		for _, t in ipairs(tweenables) do
 			TweenService:Create(t.obj, FADE_OUT, { [t.prop] = t.gone }):Play()
 		end
+		
 		task.delay(NOTIF_FADE, function()
 			self:_remove(entry)
 		end)

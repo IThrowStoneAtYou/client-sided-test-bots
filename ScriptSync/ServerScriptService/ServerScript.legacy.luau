@@ -7,6 +7,7 @@
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Teams             = game:GetService("Teams")
 local PhysicsService    = game:GetService("PhysicsService")
 local TweenService      = game:GetService("TweenService")
 
@@ -17,6 +18,7 @@ local MatchManager      = require(ReplicatedStorage.Modules.Server.Modules.Match
 local ServerFunctions   = require(ReplicatedStorage.Modules.Server.ServerFunctions)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
+local RegimentData      = require(ReplicatedStorage.Modules.Shared.RegimentData)
 
 -- ── Destructure NpcConstants for local use ────────────────────────────
 -- Pure-networking / performance constants stay as locals below;
@@ -27,7 +29,6 @@ local RANK_SPACING         = NpcConstants.RANK_SPACING
 local RANK_DEPTH           = NpcConstants.RANK_DEPTH
 local FLAG_OFFSET_Z        = NpcConstants.FLAG_OFFSET_Z
 local MOVE_RETRIES         = NpcConstants.MOVE_RETRIES
-local MAX_TICKETS          = NpcConstants.MAX_TICKETS
 local WEAPON_IDLE          = NpcConstants.WEAPON_IDLE
 local WEAPON_DURATIONS     = NpcConstants.WEAPON_DURATIONS
 local MELEE_NONE           = NpcConstants.MELEE_NONE
@@ -70,6 +71,12 @@ PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP,    CLIENT_NPC_GROUP
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP,    false)
 
 local combatRayParams = RaycastParams.new()
+
+-- ── Admin whitelist ──────────────────────────────────────────────────
+local ADMIN_IDS: { [number]: boolean } = {
+	[5327451875] = true,
+}
+
 combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- ── State ─────────────────────────────────────────────────────────────
@@ -120,6 +127,21 @@ end
 local function getYaw(cf)
 	local _, y, _ = cf:ToEulerAnglesYXZ()
 	return y
+end
+
+local function isAdmin(player: Player): boolean
+	return ADMIN_IDS[player.UserId] == true
+end
+
+local function applyWalkSpeedNow()
+	local registry = workspace:FindFirstChild("Npc_Registry_Server")
+	if not registry then return end
+	for _, model in ipairs(registry:GetChildren()) do
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.WalkSpeed = GameSettings.WALK_SPEED
+		end
+	end
 end
 
 local function cfChanged(cf, lastCF, npc)
@@ -175,7 +197,7 @@ local function broadcastCanAttackState(player, companyIndex, state)
 end
 
 -- ── NPC Spawn ─────────────────────────────────────────────────────────
-local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?, companyIndex: number?)
+local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?, companyIndex: number?, role: string?)
 	local shortId  = nextShortId
 	nextShortId   += 1
 
@@ -240,6 +262,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		MeleeTimer      = 0,
 		MeleeTarget     = nil,
 		MeleeHasHit     = false,
+		Role            = role or NpcConstants.ROLE_RANKER,
 		_meleePathAccum = 0,
 	}
 
@@ -247,6 +270,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		if npc.IsFlagBearer and npc.IsPacing then
 			npc.MoveRetries   = 0
 			npc.PaceDirection = -(npc.PaceDirection or 1)
+			
 			local pComps = companies[npc.CompanyOwner]
 			if pComps and pComps[npc.CompanyIndex] then
 				local comp     = pComps[npc.CompanyIndex]
@@ -257,7 +281,10 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		elseif npc.IsRegiment then
 			npc.MoveRetries = 0
 			if npc.RegimentFacing then
-				if npc.ActiveTween then npc.ActiveTween:Cancel() end
+				if npc.ActiveTween then
+					npc.ActiveTween:Cancel() 
+				end
+				
 				local pos      = npc.Root.Position
 				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
 				npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
@@ -279,6 +306,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	end)
 
 	activeNpcs[shortId] = npc
+--	print(string.format("[Server] Spawned NPC %d | Owner: %s | Company: %s", shortId, ownerPlayer and ownerPlayer.Name or "None", tostring(companyIndex)))
 
 	if not suppressNotify then
 		for player in pairs(readyPlayers) do
@@ -291,6 +319,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 				isBearer     = npc.IsFlagBearer,
 				companyIndex = companyIndex,
 				ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
+				role         = npc.Role,
 			})
 			Network.NpcWeaponState.Fire(player, shortId, WEAPON_IDLE)
 		end
@@ -304,6 +333,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		isBearer     = npc.IsFlagBearer,
 		companyIndex = companyIndex,
 		ownerUserId  = ownerPlayer and ownerPlayer.UserId or 0,
+		role         = npc.Role,
 	}
 end
 
@@ -331,19 +361,30 @@ local function despawnCompany(player: Player, companyIndex: number)
 	if not playerCompanies then return end
 	local company = playerCompanies[companyIndex]
 	if not company then return end
+	
 	for _, shortId in ipairs(company.slots) do
 		if activeNpcs[shortId] then
 			for p in pairs(readyPlayers) do
 				Network.NpcDespawn.Fire(p, shortId)
-				if farLastSent[p] then farLastSent[p][shortId] = nil end
+				if farLastSent[p] then 
+					farLastSent[p][shortId] = nil 
+				end
 			end
-			if activeNpcs[shortId].Pathfinder then activeNpcs[shortId].Pathfinder:Destroy() end
+			
+			if activeNpcs[shortId].Pathfinder then 
+				activeNpcs[shortId].Pathfinder:Destroy() 
+			end
+			
 			activeNpcs[shortId].Model:Destroy()
 			activeNpcs[shortId] = nil
 		end
 	end
+	
 	playerCompanies[companyIndex] = nil
-	if serverCanAttack[player] then serverCanAttack[player][companyIndex] = nil end
+	if serverCanAttack[player] then
+		serverCanAttack[player][companyIndex] = nil
+	end
+	
 	for _, otherPlayerComps in pairs(companies) do
 		for _, comp in pairs(otherPlayerComps) do
 			if comp.meleeTargetPlayer == player and comp.meleeTargetCompIdx == companyIndex then
@@ -357,7 +398,10 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	for idx in pairs(playerCompanies) do despawnCompany(player, idx) end
+	for idx in pairs(playerCompanies) do 
+		despawnCompany(player, idx)
+	end
+	
 	companies[player] = nil
 end
 
@@ -369,6 +413,22 @@ local function watchDespawnRequest(player: Player)
 			player:SetAttribute("RequestDespawnAll", nil)
 		end
 	end)
+end
+
+local function getRoleForSlot(slotIndex: number)
+	local C = NpcConstants
+	if slotIndex == 1 then 
+		return C.ROLE_OFFICER -- Bearer
+	elseif slotIndex == 2 then 
+		return C.ROLE_OFFICER -- Line Officer
+	elseif slotIndex == 3 or slotIndex == 4 then 
+		return C.ROLE_SAPPER
+	elseif slotIndex == 5 then 
+		return C.ROLE_MUSIC_NORMAL
+	elseif slotIndex == 6 then 
+		return C.ROLE_MUSIC_DRUM
+	else return C.ROLE_RANKER
+	end
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
@@ -410,6 +470,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 		for j = 1, botCount do
 			task.spawn(function()
 				local isBearer = (j == 1)
+				local role = getRoleForSlot(j)
 				local targetCF
 				if isBearer then
 					local totalDepth = (ranks-1)*RANK_DEPTH
@@ -418,7 +479,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					targetCF = slots[j-1]
 				end
 
-				local npc, data = spawnNpc(targetCF + Vector3.new(0,4,0), true, player, i)
+				local npc, data = spawnNpc(targetCF + Vector3.new(0,4,0), true, player, i, role)
 				if npc then
 					npc.IsRegiment     = true
 					npc.RegimentFacing = flatLook
@@ -470,7 +531,7 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							slots                = slotList,
 							ranks                = ranks,
 							files                = files,
-							tickets              = MAX_TICKETS,
+							tickets              = GameSettings.MAX_TICKETS,
 							isBroken             = false,
 							brokenTimer          = 0,
 							respawnQueue         = {},
@@ -539,7 +600,11 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			sf.setNpcMeleeState(npc, MELEE_ADVANCE)
 		else
 			task.spawn(function()
-				if npc.ActiveTween then npc.ActiveTween:Cancel() npc.ActiveTween = nil end
+				if npc.ActiveTween then 
+					npc.ActiveTween:Cancel()
+					npc.ActiveTween = nil
+				end
+				
 				npc.Pathfinder:Stop()
 				npc.Pathfinder:Run(targetCF.Position)
 				npc.LastMoveTime = os.clock()
@@ -574,13 +639,13 @@ local function hookChat(player: Player)
 			return
 		end
 
-		if player.UserId == 5327451875 then
+		if isAdmin(player) then
 			local targetPart, pNcStr, pNStr = msg:match("^%s*/[Pp][Ss][Pp][Aa][Ww][Nn]%s+(%S+)%s+(%d+)%s+(%d+)%s*$")
 			if targetPart and pNcStr and pNStr then
 				local lowerPart  = targetPart:lower()
 				local targetPlayer
 				for _, p in ipairs(Players:GetPlayers()) do
-					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then
+					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then --pluh
 						targetPlayer = p; break
 					end
 				end
@@ -588,7 +653,9 @@ local function hookChat(player: Player)
 				if targetPlayer then
 					local nc = tonumber(pNcStr)
 					local n  = tonumber(pNStr)
-					if nc and n then spawnAllCompanies(targetPlayer, nc, n) end
+					if nc and n then 
+						spawnAllCompanies(targetPlayer, nc, n) 
+					end
 				end
 			end
 		end
@@ -597,14 +664,83 @@ end
 
 Players.PlayerAdded:Connect(hookChat)
 Players.PlayerAdded:Connect(watchDespawnRequest)
+
 for _, p in ipairs(Players:GetPlayers()) do 
 	hookChat(p)
 	watchDespawnRequest(p)
 end
 
 -- ── Remote Handlers ───────────────────────────────────────────────────
+
+Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regimentIndex: number)
+	sideIndex     = math.floor(sideIndex)
+	regimentIndex = math.floor(regimentIndex)
+
+	local side = RegimentData.Sides[sideIndex]
+	local regInfo = RegimentData.GetRegimentInfo(sideIndex, regimentIndex)
+	if not side or not regInfo then
+		return
+	end
+
+	local team     = Teams:FindFirstChild(side.role)
+	if team then
+		player.Team = team
+	end
+
+	player:SetAttribute("SideIndex",      sideIndex)
+	player:SetAttribute("RegimentIndex",  regimentIndex)
+	player:SetAttribute("RegimentName",   regInfo.name)
+	player:SetAttribute("TeamIndex",      sideIndex == 1 and 2 or 1)
+	player:SetAttribute("RequestDespawnAll", true)
+end)
+
+Network.RequestTeamReset.On(function(player: Player)
+	local noTeam = Teams:FindFirstChild("NO TEAM")
+	if noTeam then
+		player.Team = noTeam
+		player:SetAttribute("SideIndex",      nil)
+		player:SetAttribute("RegimentIndex",  nil)
+		player:SetAttribute("RegimentName",   nil)
+		player:SetAttribute("TeamIndex",      nil)
+		player:SetAttribute("RequestDespawnAll", true)
+	end
+end)
+
+Network.AdminUpdateBots.On(function(player, data)
+	if not isAdmin(player) then return end
+
+	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
+	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
+	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1,   4)
+	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,            10,  2000)
+	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,           1,   9999)
+	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,           0,   45)
+	GameSettings.MELEE_ENGAGE_RANGE      = math.clamp(data.meleeEngageRange,       1,   100)
+	GameSettings.MELEE_DAMAGE            = math.clamp(data.meleeDamage,            1,   9999)
+	GameSettings.MELEE_BEARER_FLEE_RANGE = math.clamp(data.meleeBearerFleeRange,   1,   500)
+	GameSettings.MELEE_BEARER_FLEE_DIST  = math.clamp(data.meleeBearerFleeDist,    1,   300)
+
+	applyWalkSpeedNow()
+	
+	print(string.format("[Admin] Bot settings updated by %s", player.Name))
+end)
+
+Network.AdminUpdateMatch.On(function(player, data)
+	if not isAdmin(player) then return end
+
+	GameSettings.STARTING_TICKETS      = math.clamp(math.floor(data.startingTickets),      0,  10_000_000)
+	GameSettings.MATCH_DURATION        = math.clamp(math.floor(data.matchDuration),         30, 86400)
+	GameSettings.INTERMISSION_DURATION = math.clamp(math.floor(data.intermissionDuration),  1,  3600)
+	GameSettings.COST_BOT_DEATH        = math.clamp(math.floor(data.costBotDeath),          0,  100_000)
+	GameSettings.COST_BROKE            = math.clamp(math.floor(data.costBroke),             0,  100_000)
+	GameSettings.COST_OVERRUN          = math.clamp(math.floor(data.costOverrun),           0,  100_000)
+
+	print(string.format("[Admin] Match settings updated by %s", player.Name))
+end)
+
 Network.NpcReady.On(function(player)
 	if readyPlayers[player] then return end
+	print(string.format("[Server] Player %s is Ready", player.Name))
 	readyPlayers[player] = true
 	MatchManager.syncPlayer(player)
 
@@ -637,6 +773,7 @@ Network.NpcReady.On(function(player)
 end)
 
 Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, companyIndex)
+	print(string.format("[Server] Order Received from %s for Company %d", player.Name, companyIndex))
 	if not companies[player] then return end
 	if typeof(anchorPos) ~= "Vector3" then return end
 	if typeof(facingDir) ~= "Vector3" then return end
@@ -792,41 +929,32 @@ RunService.Heartbeat:Connect(function(dt)
 	nearAccum += dt
 	farAccum  += dt
 
-	sf.processCombat(dt)
+	sf.prepareCompanyMetadata()
 	sf.processTickets(dt)
-	sf.processMelee(dt)
 
 	table.clear(DEAD_IDS)
-	for shortId, npc in pairs(activeNpcs) do
-		if not (npc.Model and npc.Model.Parent) then
-			table.insert(DEAD_IDS, shortId)
-		end
-	end
-
-	for _, shortId in ipairs(DEAD_IDS) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
-		activeNpcs[shortId] = nil
-	end
-
 	local doNear = nearAccum >= NEAR_RATE
 	local doFar  = farAccum  >= FAR_RATE
-	if not doNear and not doFar then return end
-	if doNear then nearAccum -= NEAR_RATE end
-	if doFar  then farAccum  -= FAR_RATE  end
-
 	local timestamp = workspace:GetServerTimeNow()
-	local now = os.clock()
+	local now       = os.clock()
 
 	table.clear(DIRTY_ENTRIES)
 	table.clear(FAR_ENTRIES)
 
 	for shortId, npc in pairs(activeNpcs) do
-		local cf = npc.Root.CFrame
-		local entry
+		-- 1. Dead check
+		if not (npc.Model and npc.Model.Parent) then
+			table.insert(DEAD_IDS, shortId)
+			continue
+		end
 
+		-- 2. Logic (Combat & Melee)
+		sf.updateNpcCombat(npc, dt)
+		sf.updateNpcMelee(npc, dt)
+
+		-- 3. Networking Prep
+		local cf    = npc.Root.CFrame
+		local entry
 		if doFar then
 			entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
 			table.insert(FAR_ENTRIES, entry)
@@ -840,6 +968,18 @@ RunService.Heartbeat:Connect(function(dt)
 			npc.LastSentCF = cf
 		end
 	end
+
+	-- Cleanup dead NPCs after the main loop
+	for _, shortId in ipairs(DEAD_IDS) do
+		for player in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(player, shortId)
+			if farLastSent[player] then farLastSent[player][shortId] = nil end
+		end
+		activeNpcs[shortId] = nil
+	end
+
+	if doNear then nearAccum -= NEAR_RATE end
+	if doFar  then farAccum  -= FAR_RATE  end
 
 	for player in pairs(readyPlayers) do
 		local playerPos = getPlayerRootPos(player)
@@ -880,8 +1020,13 @@ RunService.Heartbeat:Connect(function(dt)
 		local near = PLAYER_WORK_NEAR[player]
 		local far  = PLAYER_WORK_FAR[player]
 
-		if near and #near > 0 then fireChunked(player, timestamp, near) end
-		if far  and #far  > 0 then fireChunked(player, timestamp, far) end
+		if near and #near > 0 then 
+			fireChunked(player, timestamp, near) 
+		end
+
+		if far  and #far  > 0 then 
+			fireChunked(player, timestamp, far)
+		end
 	end
 
 	releaseEntries()
