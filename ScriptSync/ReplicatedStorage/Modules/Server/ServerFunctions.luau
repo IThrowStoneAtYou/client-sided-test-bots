@@ -71,6 +71,7 @@ function ServerFunctions.init(ctx)
 				break
 			end
 		end
+		
 		if not ourBearerPos then return false end
 		for otherPlayer, otherComps in pairs(companies) do
 			if otherPlayer == player then continue end

@@ -270,6 +270,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		if npc.IsFlagBearer and npc.IsPacing then
 			npc.MoveRetries   = 0
 			npc.PaceDirection = -(npc.PaceDirection or 1)
+			
 			local pComps = companies[npc.CompanyOwner]
 			if pComps and pComps[npc.CompanyIndex] then
 				local comp     = pComps[npc.CompanyIndex]
@@ -280,7 +281,10 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		elseif npc.IsRegiment then
 			npc.MoveRetries = 0
 			if npc.RegimentFacing then
-				if npc.ActiveTween then npc.ActiveTween:Cancel() end
+				if npc.ActiveTween then
+					npc.ActiveTween:Cancel() 
+				end
+				
 				local pos      = npc.Root.Position
 				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
 				npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
@@ -362,7 +366,9 @@ local function despawnCompany(player: Player, companyIndex: number)
 		if activeNpcs[shortId] then
 			for p in pairs(readyPlayers) do
 				Network.NpcDespawn.Fire(p, shortId)
-				if farLastSent[p] then farLastSent[p][shortId] = nil end
+				if farLastSent[p] then 
+					farLastSent[p][shortId] = nil 
+				end
 			end
 			
 			if activeNpcs[shortId].Pathfinder then 
@@ -411,11 +417,16 @@ end
 
 local function getRoleForSlot(slotIndex: number)
 	local C = NpcConstants
-	if slotIndex == 1 then return C.ROLE_OFFICER -- Bearer
-	elseif slotIndex == 2 then return C.ROLE_OFFICER -- Line Officer
-	elseif slotIndex == 3 or slotIndex == 4 then return C.ROLE_SAPPER
-	elseif slotIndex == 5 then return C.ROLE_MUSIC_NORMAL
-	elseif slotIndex == 6 then return C.ROLE_MUSIC_DRUM
+	if slotIndex == 1 then 
+		return C.ROLE_OFFICER -- Bearer
+	elseif slotIndex == 2 then 
+		return C.ROLE_OFFICER -- Line Officer
+	elseif slotIndex == 3 or slotIndex == 4 then 
+		return C.ROLE_SAPPER
+	elseif slotIndex == 5 then 
+		return C.ROLE_MUSIC_NORMAL
+	elseif slotIndex == 6 then 
+		return C.ROLE_MUSIC_DRUM
 	else return C.ROLE_RANKER
 	end
 end
