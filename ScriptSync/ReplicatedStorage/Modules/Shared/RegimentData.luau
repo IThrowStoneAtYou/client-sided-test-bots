@@ -32,7 +32,7 @@ RegimentData.Sides = {
 				key      = "warsaw",
 				name     = "Duchy of Warsaw",
 				subtitle = "Księstwo Warszawskie",
-				flag     = "rbxassetid://13110413028",
+				flag     = "rbxassetid://83061096134014",
 				regiments = {
 					{
 						key   = "13_pulk",
@@ -66,7 +66,7 @@ RegimentData.Sides = {
 					{
 						key   = "87th_foot",
 						name  = "87th Regiment of Foot",
-						desc  = "no idea.",
+						desc  = "The Prince of Wales's Irish",
 						color = Color3.fromRGB(210, 50, 50),
 					},
 					{
@@ -81,7 +81,7 @@ RegimentData.Sides = {
 				key      = "prussia",
 				name     = "Kingdom of Prussia",
 				subtitle = "Königreich Preußen",
-				flag     = "rbxassetid://13110404432",
+				flag     = "rbxassetid://101812407823597",
 				regiments = {
 					{
 						key   = "13_inf",
@@ -109,7 +109,9 @@ function RegimentData.GetRegimentInfo(sideIdx: number, globalRegIdx: number)
 	for _, nation in ipairs(side.nations) do
 		for _, reg in ipairs(nation.regiments) do
 			count += 1
-			if count == globalRegIdx then return reg, nation.key end
+			if count == globalRegIdx then 
+				return reg, nation.key 
+			end
 		end
 	end
 	return nil, nil

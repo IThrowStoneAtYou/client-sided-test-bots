@@ -1,11 +1,6 @@
 -->>>>>>>>>>>>
 -- MATCH_HUD
 -- Version 2.0.0
---
--- Layout (matches screenshot):
---   - Timer centered ABOVE the bar
---   - Flag icon (left) | gold bar [tickets] | navy bar [tickets] | Flag icon (right)
---   - Both flag icons use asset id: 13488010851
 -->>>>>>>>>>>>
 
 local TweenService = game:GetService("TweenService")

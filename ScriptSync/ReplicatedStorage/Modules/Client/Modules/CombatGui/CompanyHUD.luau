@@ -1,12 +1,6 @@
 -->>>>>>>>>>>>
 -- COMPANY_HUD
 -- Version 3.1.0
---
--- Changes from 3.0.0:
---   • Each card now has a thin ticket-strength bar at the bottom.
---     The bar is visible when the card is NOT selected and hidden
---     (replaced by the GlobalInfoPanel) when the card IS selected.
---   • Bar colour follows the same blue → orange → red scale as GlobalInfoPanel.
 -->>>>>>>>>>>>
 
 local UserInputService = game:GetService("UserInputService")

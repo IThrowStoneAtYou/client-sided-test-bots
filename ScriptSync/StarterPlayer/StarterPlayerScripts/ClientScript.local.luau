@@ -949,6 +949,7 @@ local function toggleHUDs(menuVisible)
 	matchHud:SetVisible(not menuVisible)
 	notifHud:SetVisible(not menuVisible)
 end
+
 local teamMenu = TeamSelectMenu.new(Network, toggleHUDs)
 
 -- ── Auto-Show Menu for No Team ──────────────────────────────────────

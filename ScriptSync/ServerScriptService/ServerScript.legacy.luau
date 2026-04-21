@@ -902,7 +902,10 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
-		if npc.WeaponState ~= WEAPON_IDLE then sf.setNpcWeaponState(npc, WEAPON_IDLE, nil) end
+		if npc.WeaponState ~= WEAPON_IDLE then
+			sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
+		end
+		
 		npc.MeleeTarget = nil
 		sf.setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 	end
