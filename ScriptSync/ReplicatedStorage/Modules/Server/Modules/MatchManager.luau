@@ -246,7 +246,7 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 	local attackerName = attackerPlayer and attackerPlayer.Name or "Unknown"
 	local aCompIdx     = attackerCompIdx or 0
 	
-	print("fireNotification called:", victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
+--	print("fireNotification called:", victimPlayer, victimCompIdx, attackerPlayer, attackerCompIdx)
 
 	local vc = Color3.fromRGB(200, 200, 200)
 	local ac = Color3.fromRGB(200, 200, 200)
@@ -257,7 +257,7 @@ local function fireNotification(victimPlayer, victimCompIdx, attackerPlayer, att
 		ac = attackerPlayer.Team.TeamColor.Color
 	end
 	
-	print("vc:", vc, "ac:", ac)
+--	print("vc:", vc, "ac:", ac)
 	
 	--yea no
 	local vColorInt = math.floor(vc.R * 255) * 65536 + math.floor(vc.G * 255) * 256 + math.floor(vc.B * 255)

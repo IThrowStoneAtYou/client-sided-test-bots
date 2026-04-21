@@ -132,7 +132,6 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 			local rig = rigTemplate:Clone()
 			rig.Name = "Rig_" .. rigName
 			
-			-- 1. Position the part exactly at the target's CFrame BEFORE welding
 			if rig:IsA("Model") then
 				rig:PivotTo(targetPart.CFrame)
 			elseif rig:IsA("BasePart") then
@@ -145,7 +144,6 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 			
 			local primary = (rig:IsA("Model") and rig.PrimaryPart) or (rig:IsA("BasePart") and rig)
 			if primary then
-				-- 2. Create the weld to maintain the current CFrame offset
 				local weld = Instance.new("Weld")
 				weld.Part0 = targetPart
 				weld.Part1 = primary

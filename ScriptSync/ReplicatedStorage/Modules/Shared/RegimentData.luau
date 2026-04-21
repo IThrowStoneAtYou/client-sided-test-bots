@@ -64,9 +64,9 @@ RegimentData.Sides = {
 				flag     = "rbxassetid://88813497029040",
 				regiments = {
 					{
-						key   = "23rd_foot",
-						name  = "23rd Regiment of Foot",
-						desc  = "The Royal Welch Fusiliers steadfast redcoat infantry",
+						key   = "87th_foot",
+						name  = "87th Regiment of Foot",
+						desc  = "no idea.",
 						color = Color3.fromRGB(210, 50, 50),
 					},
 					{

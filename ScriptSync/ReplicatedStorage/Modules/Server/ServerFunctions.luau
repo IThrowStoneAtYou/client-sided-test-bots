@@ -118,7 +118,7 @@ function ServerFunctions.init(ctx)
 		end
 
 		targetNpc.Health -= damage
-		print(string.format("[Combat] NPC %d damaged: %d remaining", targetNpc.ShortId, targetNpc.Health))
+	--	print(string.format("[Combat] NPC %d damaged: %d remaining", targetNpc.ShortId, targetNpc.Health))
 
 		if targetNpc.Health <= 0 then
 			targetNpc._dying = true
