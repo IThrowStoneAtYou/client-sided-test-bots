@@ -2,6 +2,7 @@
 -- TeamSelectMenu
 -- Version 3.0.0
 --
+-- Firing convention (unchanged from Blink definition):
 --   Network.TeamRegimentSelect.Fire(sideIndex: u8, regimentIndex: u8)
 --   sideIndex     1 = Attackers (France)   2 = Defenders (Britain)
 --   regimentIndex 1-based position in nation.regiments[]
@@ -123,7 +124,7 @@ function TeamSelectMenu:_unlockCamera()
 			char = localPlayer.CharacterAdded:Wait()
 		end
 		local hum = char:WaitForChild("Humanoid", 5)
-		
+
 		-- Ensure we haven't locked the camera again (e.g. re-opened the menu) while waiting
 		if hum and not self._cameraLockActive then
 			workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
@@ -224,7 +225,7 @@ function TeamSelectMenu:_buildSideScreen()
 		card.BackgroundTransparency = 0.15
 		card.ZIndex = 13
 		card.Parent = holder
-		
+
 		local cardStroke = Instance.new("UIStroke")
 		cardStroke.Color = sd.accent
 		cardStroke.Thickness = 1.5
@@ -307,7 +308,7 @@ function TeamSelectMenu:_buildSideScreen()
 			np.BorderSizePixel = 0
 			np.ZIndex = 14
 			np.Parent = card
-			
+
 			local npCorner = Instance.new("UICorner")
 			npCorner.CornerRadius = UDim.new(0, 5)
 			npCorner.Parent = np
@@ -331,7 +332,7 @@ function TeamSelectMenu:_buildSideScreen()
 			nLabel.TextXAlignment = Enum.TextXAlignment.Left
 			nLabel.ZIndex = 15
 			nLabel.Parent = np
-			
+
 			ny += 36
 		end
 
@@ -342,11 +343,11 @@ function TeamSelectMenu:_buildSideScreen()
 		selBtn.BackgroundTransparency = 0.28; selBtn.Text = "SELECT  ›"
 		selBtn.TextColor3 = Color3.new(1,1,1); selBtn.Font = Enum.Font.GothamBold
 		selBtn.TextSize = 13; selBtn.ZIndex = 16; selBtn.Parent = card
-		
+
 		local btnCorner = Instance.new("UICorner")
 		btnCorner.CornerRadius = UDim.new(0, 8)
 		btnCorner.Parent = selBtn
-		
+
 		local btnStroke = Instance.new("UIStroke")
 		btnStroke.Color = sd.accent; btnStroke.Thickness = 1.5; btnStroke.Transparency = 0.45; btnStroke.Parent = selBtn
 
@@ -354,16 +355,16 @@ function TeamSelectMenu:_buildSideScreen()
 			TweenService:Create(cardStroke, TI_FAST, {Transparency=0.1}):Play()
 			TweenService:Create(card,    TI_FAST, {BackgroundTransparency=0.05}):Play()
 		end)
-		
+
 		card.MouseLeave:Connect(function()
 			TweenService:Create(cardStroke, TI_FAST, {Transparency=0.65}):Play()
 			TweenService:Create(card,    TI_FAST, {BackgroundTransparency=0.15}):Play()
 		end)
-		
+
 		selBtn.MouseEnter:Connect(function()
 			TweenService:Create(selBtn, TI_FAST, {BackgroundTransparency=0.05}):Play()
 		end)
-		
+
 		selBtn.MouseLeave:Connect(function()
 			TweenService:Create(selBtn, TI_FAST, {BackgroundTransparency=0.28}):Play()
 		end)
@@ -371,9 +372,9 @@ function TeamSelectMenu:_buildSideScreen()
 		local function onSelect()
 			self:_onSideSelected(sd, sideIdx)
 		end
-		
+
 		selBtn.MouseButton1Click:Connect(onSelect)
-		
+
 		local hitSurface = Instance.new("TextButton")
 		hitSurface.Name = "HitSurface"
 		hitSurface.Size = UDim2.new(1, 0, 1, -62)
@@ -425,13 +426,13 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	panel.BackgroundTransparency = 0.04
 	panel.ZIndex = 31
 	panel.Parent = overlay
-	
---	local panelCorner = Instance.new("UICorner")
---	panelCorner.CornerRadius = UDim.new(0, 12)
---	panelCorner.Parent = panel
+
+	--	local panelCorner = Instance.new("UICorner")
+	--	panelCorner.CornerRadius = UDim.new(0, 12)
+	--	panelCorner.Parent = panel
 
 	self._loadoutPanel  = panel
-	
+
 	local panelStroke = Instance.new("UIStroke")
 	panelStroke.Color = C_GOLD
 	panelStroke.Thickness = 1.5
@@ -448,7 +449,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	header.BorderSizePixel = 0
 	header.ZIndex = 32
 	header.Parent = panel
-	
+
 	local headerCorner = Instance.new("UICorner")
 	headerCorner.CornerRadius = UDim.new(0, 12)
 	headerCorner.Parent = header
@@ -465,7 +466,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
 	titleLabel.ZIndex = 33
 	titleLabel.Parent = header
-	
+
 	self._headerLabel = titleLabel
 
 	local backBtn = Instance.new("TextButton")
@@ -475,7 +476,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	backBtn.Text = "‹  BACK"; backBtn.TextColor3 = C_DIM
 	backBtn.Font = Enum.Font.GothamBold; backBtn.TextSize = 10
 	backBtn.ZIndex = 34; backBtn.Parent = header
-	
+
 	local backCorner = Instance.new("UICorner")
 	backCorner.CornerRadius = UDim.new(0, 5)
 	backCorner.Parent = backBtn
@@ -483,11 +484,11 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	backBtn.MouseEnter:Connect(function()
 		TweenService:Create(backBtn, TI_FAST, {TextColor3=C_TEXT}):Play()
 	end)
-	
+
 	backBtn.MouseLeave:Connect(function()
 		TweenService:Create(backBtn, TI_FAST, {TextColor3=C_DIM}):Play()
 	end)
-	
+
 	backBtn.MouseButton1Click:Connect(function() 
 		self:_transitionToSideScreen()
 	end)
@@ -541,7 +542,7 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	self._natNavSub    = natSub
 	self._natNavIcon   = natIcon
 	self._natNavStroke = natStroke
-	
+
 	natCard.MouseButton1Click:Connect(function()
 		self:_setRightMode("nations")
 	end)
@@ -555,11 +556,11 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	self._regNavSub    = regSub
 	self._regNavSwatch = regSwatch
 	self._regNavStroke = regStroke
-	
+
 	-- Regiment swatch starts as solid box, not flag image
 	regSwatch.Image = ""; regSwatch.BackgroundColor3 = C_SEP
 	regSwatch.BackgroundTransparency = 0.4
-	
+
 	local regSwatchCorner = Instance.new("UICorner")
 	regSwatchCorner.CornerRadius = UDim.new(0, 4)
 	regSwatchCorner.Parent = regSwatch
@@ -584,11 +585,11 @@ function TeamSelectMenu:_buildLoadoutScreen()
 	deployBtn.TextSize = 12
 	deployBtn.ZIndex = 34
 	deployBtn.Parent = leftNav
-	
+
 	local deployCorner = Instance.new("UICorner")
 	deployCorner.CornerRadius = UDim.new(0, 8)
 	deployCorner.Parent = deployBtn
-	
+
 	self._deployBtn = deployBtn
 
 	deployBtn.MouseEnter:Connect(function()
@@ -596,11 +597,11 @@ function TeamSelectMenu:_buildLoadoutScreen()
 			TweenService:Create(deployBtn, TI_FAST, {BackgroundTransparency=0}):Play()
 		end
 	end)
-	
+
 	deployBtn.MouseLeave:Connect(function()
 		TweenService:Create(deployBtn, TI_FAST, {BackgroundTransparency = self._selectedRegiment and 0.18 or 0.45}):Play()
 	end)
-	
+
 	deployBtn.MouseButton1Click:Connect(function()
 		if self._selectedRegiment then 
 			self:_deploy() 
@@ -706,7 +707,7 @@ function TeamSelectMenu:_makeNavCard(parent, yPos, cardH)
 	frame.BorderSizePixel = 0
 	frame.ZIndex = 33
 	frame.Parent = parent
-	
+
 	local frameCorner = Instance.new("UICorner")
 	frameCorner.CornerRadius = UDim.new(0, 7)
 	frameCorner.Parent = frame
@@ -725,7 +726,7 @@ function TeamSelectMenu:_makeNavCard(parent, yPos, cardH)
 	icon.BackgroundTransparency = 0.50
 	icon.ZIndex = 34
 	icon.Parent = frame
-	
+
 	local iconCorner = Instance.new("UICorner")
 	iconCorner.CornerRadius = UDim.new(0, 4)
 	iconCorner.Parent = icon
@@ -783,7 +784,7 @@ function TeamSelectMenu:_makeNavCard(parent, yPos, cardH)
 	frame.MouseEnter:Connect(function()
 		TweenService:Create(frame, TI_FAST, {BackgroundTransparency=0.30}):Play()
 	end)
-	
+
 	frame.MouseLeave:Connect(function()
 		TweenService:Create(frame, TI_FAST, {BackgroundTransparency=0.50}):Play()
 	end)
@@ -862,13 +863,13 @@ function TeamSelectMenu:_populateNations(sd)
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.18}):Play()
 			end
 		end)
-		
+
 		clickBtn.MouseLeave:Connect(function()
 			if self._selectedNation ~= nd then
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.38}):Play()
 			end
 		end)
-		
+
 		clickBtn.MouseButton1Click:Connect(function()
 			self:_onNationSelected(nd)
 		end)
@@ -887,7 +888,7 @@ function TeamSelectMenu:_populateRegiments(nd)
 			ch:Destroy()
 		end
 	end
-	
+
 	self._regRows = {}
 
 	for i, rd in ipairs(nd.regiments) do
@@ -909,7 +910,7 @@ function TeamSelectMenu:_populateRegiments(nd)
 		sw.Size = UDim2.new(0, 4, 1, -18)
 		sw.Position = UDim2.new(0, 10, 0, 9); sw.BackgroundColor3 = rd.color
 		sw.BorderSizePixel = 0; sw.ZIndex = 35; sw.Parent = row
-		
+
 		local swCorner = Instance.new("UICorner")
 		swCorner.CornerRadius = UDim.new(0, 2); swCorner.Parent = sw
 
@@ -936,13 +937,13 @@ function TeamSelectMenu:_populateRegiments(nd)
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.18}):Play()
 			end
 		end)
-		
+
 		clickBtn.MouseLeave:Connect(function()
 			if self._selectedRegiment ~= rd then
 				TweenService:Create(row, TI_FAST, {BackgroundTransparency=0.38}):Play()
 			end
 		end)
-		
+
 		clickBtn.MouseButton1Click:Connect(function()
 			self:_onRegimentSelected(rd, i)
 		end)
@@ -1002,7 +1003,7 @@ function TeamSelectMenu:_onNationSelected(nd)
 	self._natNavName.Text = nd.name; self._natNavName.TextColor3 = C_TEXT
 	self._natNavSub.Text  = nd.subtitle
 	self._natNavIcon.Image = nd.flag; self._natNavIcon.BackgroundTransparency = 0
-	
+
 	self:_populateRegiments(nd)
 	self._regNavSub.Text = "Select a regiment"
 end
@@ -1050,7 +1051,7 @@ function TeamSelectMenu:_deploy()
 
 	local prev = self._selectedSide and self._selectedSide.accent or C_GOLD
 	self._deployBtn.BackgroundColor3 = Color3.fromRGB(50, 170, 80)
-	
+
 	task.delay(0.4, function()
 		if self._deployBtn and self._deployBtn.Parent then
 			self._deployBtn.BackgroundColor3 = prev
@@ -1078,7 +1079,7 @@ end
 function TeamSelectMenu:_transitionToSideScreen()
 	self._sideScreen.Visible = true
 	TweenService:Create(self._loadoutPanel, TI_OUT, {Position=UDim2.new(0.5,0,1.5,0)}):Play()
-	
+
 	task.delay(0.20, function()
 		if self._loadoutScreen then
 			self._loadoutScreen.Visible = false 
@@ -1095,7 +1096,7 @@ function TeamSelectMenu:show()
 	self:_lockCamera()
 	self._sideScreen.Visible = true
 	self._loadoutScreen.Visible = false
-	
+
 	if self._onVisibilityChanged then 
 		self._onVisibilityChanged(true)
 	end

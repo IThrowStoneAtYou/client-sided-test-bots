@@ -16,6 +16,7 @@ local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
 local RegimentData      = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentData"))
 local AdminPanel        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("AdminPanel"))
+local RagdollUtils = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("RagdollUtils"))
 
 local TeamSelectMenu = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("TeamSelectMenu"))
 
@@ -45,6 +46,7 @@ local musketUtils = {}   -- [shortId] = MusketUtils instance (combat/weapon)
 local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
 local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
 local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
+local lastHitReport = {}  -- [shortId] = os.clock()
 
 local localTimeRemaining = 0
 local localTimerMode     = "none"   -- "match" | "intermission" | "none"
@@ -372,31 +374,40 @@ end)
 
 Network.NpcDespawn.On(function(shortId)
 	local rep = replicators[shortId]
-	if not rep then 
-		return
-	end
+	if not rep then return end
 
-	if rep.Client then 
-		rep.Client:Destroy()
-	end
-
-	rep:Destroy()
+	-- Stop tracking immediately so RenderStepped ignores this NPC
 	replicators[shortId] = nil
+	bearerIds[shortId]   = nil
+	npcOwners[shortId]   = nil
+	lastHitReport[shortId] = nil
 
 	local anim = animators[shortId]
 	if anim then
 		anim:Destroy()
 		animators[shortId] = nil
 	end
-	
+
 	local mu = musketUtils[shortId]
 	if mu then
 		mu:Destroy()
 		musketUtils[shortId] = nil
 	end
 
-	bearerIds[shortId] = nil
-	npcOwners[shortId] = nil
+	-- Grab the client model before wiping it from the replicator,
+	-- then destroy the replicator WITHOUT destroying the model
+	local clientModel = rep.Client
+	rep.Client    = nil   -- prevent rep:Destroy() from nuking the model
+	rep.Snapshots = nil
+	for _, conn in pairs(rep.Connections) do
+		conn:Disconnect()
+	end
+	rep.Connections = {}
+
+	-- Hand the model off to ragdoll — it will self-destroy after RAGDOLL_LIFETIME
+	if clientModel and clientModel.Parent then
+		RagdollUtils.apply(clientModel)
+	end
 end)
 
 -- Company sync event (reliable: sent when companies change or player joins)
@@ -514,13 +525,15 @@ end)
 Network.NpcFire.On(function(shortId, targetPos)
 	local mu = musketUtils[shortId]
 	if not mu then return end
-	print(string.format("[Client] NPC %d Firing", shortId))
 
-	-- If we own this NPC, we are responsible for hit detection
 	if npcOwners[shortId] == localPlayer.UserId then
-		-- Gather friendlies to prevent friendly-fire/body-blocking
+		-- Rate-limit: skip if we already sent a report for this NPC very recently
+		local now = os.clock()
+		if lastHitReport[shortId] and now - lastHitReport[shortId] < 0.1 then return end
+		lastHitReport[shortId] = now
+
 		local ignore = {}
-		local myTeam = replicators[shortId].Client:GetAttribute("TeamName")
+		local myTeam = replicators[shortId] and replicators[shortId].Client:GetAttribute("TeamName")
 		for _, otherRep in pairs(replicators) do
 			if otherRep.Client and otherRep.Client:GetAttribute("TeamName") == myTeam then
 				table.insert(ignore, otherRep.Client)
@@ -528,14 +541,9 @@ Network.NpcFire.On(function(shortId, targetPos)
 		end
 
 		local victimId, actualHitPos = mu:CalculateHit(targetPos, ignore)
-		
-		-- Report the hit/miss to the server
 		Network.NpcHitReport.Fire(shortId, victimId, actualHitPos)
-		
-		-- Play visuals immediately for ourselves
 		mu:PlayFire(actualHitPos)
 	else
-		-- We are seeing someone else's shot (or a server bot's shot)
 		mu:PlayFire(targetPos)
 	end
 end)

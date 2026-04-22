@@ -756,6 +756,7 @@ Network.NpcReady.On(function(player)
 				isBearer     = npc.IsFlagBearer,
 				companyIndex = npc.CompanyIndex,
 				ownerUserId  = npc.CompanyOwner and npc.CompanyOwner.UserId or 0,
+				role         = npc.Role or "ranker",  -- was missing
 			})
 		end
 	end
