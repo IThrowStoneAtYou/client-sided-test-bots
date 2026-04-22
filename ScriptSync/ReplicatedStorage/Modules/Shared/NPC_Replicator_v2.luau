@@ -87,8 +87,8 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 	local outfitFolder = npcFolder and npcFolder:FindFirstChild("Outfit")
 	local nationFolder = outfitFolder and outfitFolder:FindFirstChild("Nation")
 
-	if outfitFolder then print("[Replicator] Found Outfit folder") end
-	if nationFolder then print("[Replicator] Found Nation base folder") end
+--	if outfitFolder then print("[Replicator] Found Outfit folder") end
+--	if nationFolder then print("[Replicator] Found Nation base folder") end
 	
 	local nationPath   = nationFolder and nationFolder:FindFirstChild(nationKey)
 	local regFolder    = nationPath and nationPath:FindFirstChild(regimentKey)
@@ -102,7 +102,7 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 		return 
 	end
 	
-	print(string.format("[Replicator] Found roleFolder: %s", roleFolder:GetFullName()))
+--	print(string.format("[Replicator] Found roleFolder: %s", roleFolder:GetFullName()))
 	
 	-- Prevent duplicate rigs
 	if self.Client:GetAttribute("HasRegimentRig") then return end
@@ -128,7 +128,7 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 		local targetPart   = self.Client:FindFirstChild(targetPartName)
 		
 		if rigTemplate and targetPart then
-			print(string.format("[Replicator] Cloning %s for %s", rigName, targetPartName))
+		--	print(string.format("[Replicator] Cloning %s for %s", rigName, targetPartName))
 			local rig = rigTemplate:Clone()
 			rig.Name = "Rig_" .. rigName
 			
@@ -396,9 +396,9 @@ function NpcReplicator:Destroy()
 	-- These lines below are optional. can re-enable it if dont want to destroy entity manually
 	-->>>>>>>>>>>>
 
-	if self.Client then
-		self.Client:Destroy()
-	end
+--	if self.Client then
+--		self.Client:Destroy()
+--	end
 
 	self.Snapshots = nil
 end

@@ -474,7 +474,9 @@ function ServerFunctions.init(ctx)
 						isBearer     = isNewBearer,
 						companyIndex = npc.CompanyIndex,
 						ownerUserId  = player.UserId,
+						role         = npc.Role or "ranker",  -- was missing, crashed Blink
 					})
+					
 					if not isNewBearer and not c.isMelee then
 						Network.NpcWeaponState.Fire(p, npc.ShortId, C.WEAPON_IDLE)
 					elseif not isNewBearer and c.isMelee then
