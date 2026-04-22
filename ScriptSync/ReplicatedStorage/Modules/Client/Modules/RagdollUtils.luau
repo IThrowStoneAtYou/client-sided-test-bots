@@ -11,6 +11,7 @@ local RAGDOLL_LIFETIME = 5  -- seconds before the model is destroyed
 local RagdollUtils = {}
 
 local function makeAttachment(parent: BasePart, position: Vector3, name: string): Attachment
+	if not parent then return nil end
 	local a          = Instance.new("Attachment")
 	a.Position       = position
 	a.Name           = name
@@ -19,6 +20,7 @@ local function makeAttachment(parent: BasePart, position: Vector3, name: string)
 end
 
 local function makeBallSocket(torso: BasePart, a0: Attachment, a1: Attachment, twistLower: number, twistUpper: number)
+	if not torso or not a0 or not a1 then return end
 	local bs                  = Instance.new("BallSocketConstraint")
 	bs.Attachment0            = a0
 	bs.Attachment1            = a1
@@ -39,10 +41,22 @@ function RagdollUtils.apply(clientModel: Model)
 	local leftLeg  = clientModel:FindFirstChild("Left Leg")
 	local hrp      = clientModel:FindFirstChild("HumanoidRootPart")
 
+	-- ── ALWAYS schedule destruction first as a safety measure ────────
+	task.delay(RAGDOLL_LIFETIME, function()
+		if clientModel and clientModel.Parent then
+			clientModel:Destroy()
+		end
+	end)
+
 	if not torso then
-		-- fallback: just destroy
-		clientModel:Destroy()
 		return
+	end
+
+	-- ── Deep Cleanup: Force remove weapons/flags if they still exist ──
+	for _, child in ipairs(clientModel:GetChildren()) do
+		if child.Name == "Musket" or child.Name == "HeldFlag" then
+			child:Destroy()
+		end
 	end
 
 	-- ── Attachments on limbs (Attachment1 side) ───────────────────────
@@ -86,13 +100,6 @@ function RagdollUtils.apply(clientModel: Model)
 			part.CanCollide = true
 		end
 	end
-
-	-- ── Cleanup after lifetime ────────────────────────────────────────
-	task.delay(RAGDOLL_LIFETIME, function()
-		if clientModel and clientModel.Parent then
-			clientModel:Destroy()
-		end
-	end)
 end
 
 return RagdollUtils

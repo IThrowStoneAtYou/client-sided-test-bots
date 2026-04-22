@@ -1,16 +1,9 @@
 -->>>>>>>>>>>>
 -- GAME_SETTINGS
--- Version 1.0.0
+-- Version 1.1.0
 --
 -- Central mutable settings table shared between NPC_SYSTEM, MatchManager,
 -- and AdminHandler. All values here are the authoritative runtime defaults.
---
--- Usage:
---   local GameSettings = require(ReplicatedStorage.Modules.Shared.GameSettings)
---   local range = GameSettings.COMBAT_RANGE   -- reads live value
---
--- AdminHandler writes to this table; server systems read from it each frame,
--- so changes take effect immediately without a restart.
 -->>>>>>>>>>>>
 
 local GameSettings = {
@@ -49,6 +42,17 @@ local GameSettings = {
 	COST_BOT_DEATH        = 5,
 	COST_BROKE            = 200,
 	COST_OVERRUN          = 500,
+
+	-- ── Flag System ────────────────────────────────────────────────────
+	-- How close an NPC must be (studs) to pick up a dropped flag.
+	FLAG_PICKUP_RADIUS  = 5,
+	-- Seconds an enemy must hold a flag before it is fully captured.
+	FLAG_CAPTURE_TIME   = 20,
+	-- Maximum number of enemy NPCs that will break off to capture a dropped flag.
+	FLAG_CAPTURE_BOTS   = 2,
+	-- If a friendly pickup NPC dies without reaching the flag, this is the
+	-- cooldown (seconds) before another one is assigned.
+	FLAG_REASSIGN_DELAY = 2,
 }
 
 return GameSettings

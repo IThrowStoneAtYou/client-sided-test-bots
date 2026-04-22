@@ -16,9 +16,9 @@ local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild(
 local MusketUtils 		= require(ReplicatedStorage.Modules.Shared:WaitForChild("MusketUtils"))
 local RegimentData      = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentData"))
 local AdminPanel        = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("AdminPanel"))
-local RagdollUtils = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("RagdollUtils"))
 
 local TeamSelectMenu = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("TeamSelectMenu"))
+local FlagController = require(ReplicatedStorage.Modules.Client.Modules:WaitForChild("FlagController"))
 
 -- Combat Gui
 local CompanyHUD        = require(CombatGui.CompanyHUD)
@@ -47,6 +47,15 @@ local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
 local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
 local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
 local lastHitReport = {}  -- [shortId] = os.clock()
+
+-- Tracks which NPC is currently holding each company's flag.
+-- [ownerUserId][compIdx] = shortId
+local flagHolders = {}
+
+-- Active capture-progress UI frames (one per company being captured).
+-- [key "userId_compIdx"] = { frame, timerLabel, bar }
+local captureHudItems = {}
+
 
 local localTimeRemaining = 0
 local localTimerMode     = "none"   -- "match" | "intermission" | "none"
@@ -117,7 +126,13 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 
 	local anim = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
-
+	
+	if isBearer and ownerUserId and companyIndex then
+	    if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
+	    flagHolders[ownerUserId][companyIndex] = shortId
+	    FlagController.attachToNpc(clientModel)
+	end
+	
 	replicators[shortId] = rep
 	animators[shortId] = anim
 
@@ -381,32 +396,36 @@ Network.NpcDespawn.On(function(shortId)
 	bearerIds[shortId]   = nil
 	npcOwners[shortId]   = nil
 	lastHitReport[shortId] = nil
+	
+	-- Wrap cleanup in pcall to ensure Ragdoll is ALWAYS reached
+	pcall(function()
+		FlagController.detachFromNpc(shortId)
+		for uid, compTable in pairs(flagHolders) do
+			for ci, hid in pairs(compTable) do
+				if hid == shortId then compTable[ci] = nil end
+			end
+		end
 
-	local anim = animators[shortId]
-	if anim then
-		anim:Destroy()
-		animators[shortId] = nil
-	end
+		local anim = animators[shortId]
+		if anim then
+			anim:Destroy()
+			animators[shortId] = nil
+		end
 
-	local mu = musketUtils[shortId]
-	if mu then
-		mu:Destroy()
-		musketUtils[shortId] = nil
-	end
+		local mu = musketUtils[shortId]
+		if mu then
+			mu:Destroy()
+			musketUtils[shortId] = nil
+		end
+	end)
 
 	-- Grab the client model before wiping it from the replicator,
 	-- then destroy the replicator WITHOUT destroying the model
 	local clientModel = rep.Client
-	rep.Client    = nil   -- prevent rep:Destroy() from nuking the model
-	rep.Snapshots = nil
-	for _, conn in pairs(rep.Connections) do
-		conn:Disconnect()
-	end
-	rep.Connections = {}
+	rep:Destroy()
 
-	-- Hand the model off to ragdoll — it will self-destroy after RAGDOLL_LIFETIME
 	if clientModel and clientModel.Parent then
-		RagdollUtils.apply(clientModel)
+		clientModel:Destroy()
 	end
 end)
 
@@ -870,6 +889,23 @@ Network.NpcBecomeBearer.On(function(shortId)
 		musketUtils[shortId] = nil
 	end
 	bearerIds[shortId] = true
+
+	-- NEW: attach the flag model to this NPC.
+	local rep = replicators[shortId]
+	if rep and rep.Client then
+		local ownerId = rep.Client:GetAttribute("OwnerUserId")
+		local compIdx = rep.Client:GetAttribute("CompanyIndex")
+		if ownerId and compIdx then
+			if not flagHolders[ownerId] then flagHolders[ownerId] = {} end
+			-- Detach from the old holder if there was one.
+			local oldHolder = flagHolders[ownerId][compIdx]
+			if oldHolder and oldHolder ~= shortId then
+				FlagController.detachFromNpc(oldHolder)
+			end
+			flagHolders[ownerId][compIdx] = shortId
+			FlagController.attachToNpc(rep.Client)
+		end
+	end
 end)
 
 Network.NpcMeleeState.On(function(shortId, state)
@@ -912,6 +948,161 @@ Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost, vCo
 		aColorInt % 256
 	)
 	notifHud:push(vName, vIdx, aName, aIdx, eType, cost, vColor, aColor)
+end)
+
+Network.FlagDropped.On(function(ownerUserId, compIdx, pos)
+	-- Clear old holder tracking.
+	if flagHolders[ownerUserId] then
+		local oldId = flagHolders[ownerUserId][compIdx]
+		if oldId then FlagController.detachFromNpc(oldId) end
+		flagHolders[ownerUserId][compIdx] = nil
+	end
+	-- Spawn anchored world model at ground position.
+	FlagController.spawnDropped(ownerUserId, compIdx, pos)
+end)
+
+-- Someone picked up the dropped flag.
+Network.FlagPickedUp.On(function(ownerUserId, compIdx, pickerShortId, isFriendly)
+	-- Remove world model regardless of who picked it up.
+	FlagController.removeDropped(ownerUserId, compIdx)
+
+	-- Also clear any stale capture progress HUD for this flag.
+	local key = tostring(ownerUserId) .. "_" .. tostring(compIdx)
+	local item = captureHudItems[key]
+	if item then
+		if item.frame and item.frame.Parent then item.frame:Destroy() end
+		captureHudItems[key] = nil
+	end
+
+	-- Attach flag model to the new holder (friend OR foe).
+	local rep = replicators[pickerShortId]
+	if rep and rep.Client then
+		if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
+		local oldId = flagHolders[ownerUserId][compIdx]
+		if oldId and oldId ~= pickerShortId then
+			FlagController.detachFromNpc(oldId)
+		end
+		flagHolders[ownerUserId][compIdx] = pickerShortId
+		FlagController.attachToNpc(rep.Client)
+	end
+end)
+
+-- Capture progress tick (server sends ~1/s while enemy holds flag).
+Network.FlagCaptureProgress.On(function(ownerUserId, compIdx, secondsElapsed)
+	local key        = tostring(ownerUserId) .. "_" .. tostring(compIdx)
+	local captureMax = 20   -- FLAG_CAPTURE_TIME mirror
+
+	-- Lazy-build a small capture progress frame per flag being contested.
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	local item = captureHudItems[key]
+	if not item then
+		-- Find or create a ScreenGui to host capture bars.
+		local gui = playerGui:FindFirstChild("FlagCaptureHUD")
+		if not gui then
+			gui           = Instance.new("ScreenGui")
+			gui.Name      = "FlagCaptureHUD"
+			gui.ResetOnSpawn   = false
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.IgnoreGuiInset = true
+			gui.Parent    = playerGui
+		end
+
+		-- Stack capture bars at top-right, offset per key index.
+		local existingCount = 0
+		for _ in pairs(captureHudItems) do existingCount += 1 end
+
+		local frame          = Instance.new("Frame")
+		frame.Name           = "Capture_" .. key
+		frame.Size           = UDim2.new(0, 220, 0, 34)
+		frame.Position       = UDim2.new(1, -230, 0, 60 + existingCount * 40)
+		frame.AnchorPoint    = Vector2.new(0, 0)
+		frame.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
+		frame.BackgroundTransparency = 0.15
+		frame.BorderSizePixel   = 0
+		frame.ZIndex            = 40
+		frame.Parent            = gui
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color        = Color3.fromRGB(200, 55, 55)
+		stroke.Thickness    = 1.5
+		stroke.Transparency = 0.1
+		stroke.Parent       = frame
+
+		local lbl          = Instance.new("TextLabel")
+		lbl.Size           = UDim2.new(1, -8, 0, 14)
+		lbl.Position       = UDim2.new(0, 4, 0, 2)
+		lbl.BackgroundTransparency = 1
+		lbl.Text           = "FLAG BEING CAPTURED"
+		lbl.TextColor3     = Color3.fromRGB(200, 55, 55)
+		lbl.Font           = Enum.Font.GothamBold
+		lbl.TextSize       = 9
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.ZIndex         = 41
+		lbl.Parent         = frame
+
+		local barBg        = Instance.new("Frame")
+		barBg.Size         = UDim2.new(1, -8, 0, 10)
+		barBg.Position     = UDim2.new(0, 4, 0, 18)
+		barBg.BackgroundColor3 = Color3.fromRGB(30, 10, 10)
+		barBg.BorderSizePixel  = 0
+		barBg.ZIndex           = 41
+		barBg.ClipsDescendants = true
+		barBg.Parent           = frame
+		local barCorner = Instance.new("UICorner"); barCorner.CornerRadius = UDim.new(0, 3); barCorner.Parent = barBg
+
+		local barFill      = Instance.new("Frame")
+		barFill.Name       = "Fill"
+		barFill.Size       = UDim2.new(0, 0, 1, 0)
+		barFill.BackgroundColor3 = Color3.fromRGB(200, 55, 55)
+		barFill.BorderSizePixel  = 0
+		barFill.ZIndex           = 42
+		barFill.Parent           = barBg
+
+		local timerLbl     = Instance.new("TextLabel")
+		timerLbl.Size      = UDim2.new(0, 36, 0, 10)
+		timerLbl.Position  = UDim2.new(1, -40, 0, 18)
+		timerLbl.BackgroundTransparency = 1
+		timerLbl.Text      = "20s"
+		timerLbl.TextColor3   = Color3.fromRGB(230, 230, 230)
+		timerLbl.Font         = Enum.Font.GothamBold
+		timerLbl.TextSize     = 9
+		timerLbl.TextXAlignment = Enum.TextXAlignment.Right
+		timerLbl.ZIndex       = 43
+		timerLbl.Parent       = frame
+
+		item = { frame = frame, bar = barFill, timer = timerLbl }
+		captureHudItems[key] = item
+	end
+
+	-- Update bar and timer text.
+	local ratio = math.clamp(secondsElapsed / captureMax, 0, 1)
+	item.bar.Size        = UDim2.new(ratio, 0, 1, 0)
+	item.timer.Text      = math.ceil(captureMax - secondsElapsed) .. "s"
+end)
+
+-- Flag fully captured — clean up everything for that company.
+Network.FlagCaptured.On(function(victimUserId, victimCompIdx, captorUserId, captorCompIdx)
+	local key = tostring(victimUserId) .. "_" .. tostring(victimCompIdx)
+
+	-- Remove world model if somehow still present.
+	FlagController.removeDropped(victimUserId, victimCompIdx)
+
+	-- Remove flag from whoever was holding it.
+	if flagHolders[victimUserId] then
+		local holderId = flagHolders[victimUserId][victimCompIdx]
+		if holderId then FlagController.detachFromNpc(holderId) end
+		flagHolders[victimUserId][victimCompIdx] = nil
+	end
+
+	-- Remove capture progress HUD.
+	local item = captureHudItems[key]
+	if item then
+		if item.frame and item.frame.Parent then item.frame:Destroy() end
+		captureHudItems[key] = nil
+	end
+
+	-- Re-stack remaining capture bars (simple: just leave the gap for now).
 end)
 
 -- ── Central render loop (runs once per frame, drives all replicators) ───────────

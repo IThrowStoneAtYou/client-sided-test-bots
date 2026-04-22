@@ -1,6 +1,16 @@
 -->>>>>>>>>>>>
 -- SERVER_FUNCTIONS
--- Version 1.1.0
+-- Version 2.0.0
+--
+-- Flag System additions (v2):
+--   • Bearer death → physical flag drops to ground (FlagDropped event)
+--   • Friendly NPC nearest the flag is auto-assigned to pick it up
+--   • Picked-up friendly → that NPC becomes the new bearer (FlagPickedUp isFriendly=true)
+--   • Enemy melee NPCs (up to FLAG_CAPTURE_BOTS) break off to steal the flag
+--   • Enemy pickup → 20 s capture timer (FlagPickedUp isFriendly=false + FlagCaptureProgress)
+--   • Timer expires  → FlagCaptured fires, company is overrun
+--   • Enemy carrier death → flag drops again at that position
+--   • Respawn queue is gated until a friendly holds the flag
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,8 +39,12 @@ function ServerFunctions.init(ctx)
 	local getYaw        = ctx.getYaw
 
 	-- ── Constants ─────────────────────────────────────────────────────────
-	-- C aliases NpcConstants so existing C.X references throughout this
 	local C = NpcConstants
+
+	-- ── Ground-detection ray params (used when dropping the flag) ─────────
+	local groundRayParams = RaycastParams.new()
+	groundRayParams.FilterType = Enum.RaycastFilterType.Exclude
+	-- Populated lazily in dropFlag; registries may not exist at module load time.
 
 	-- ── Forward declarations ───────────────────────────────────────────────
 	local applyDamage
@@ -42,7 +56,17 @@ function ServerFunctions.init(ctx)
 	local updateNpcCombat
 	local updateNpcMelee
 
+	-- Flag system
+	local dropFlag
+	local assignFlagPickup
+	local friendlyPickupFlag
+	local assignEnemyCapture
+	local enemyPickupFlag
+	local captureFlag
+	local updateFlagStates
+
 	-- ── Internal helpers ───────────────────────────────────────────────────
+
 	local function getBearerTarget(npc, comp)
 		local anchorCF   = comp.anchorCF
 		local halfWidth  = ((comp.files - 1) * C.RANK_SPACING) / 2
@@ -71,7 +95,6 @@ function ServerFunctions.init(ctx)
 				break
 			end
 		end
-		
 		if not ourBearerPos then return false end
 		for otherPlayer, otherComps in pairs(companies) do
 			if otherPlayer == player then continue end
@@ -80,7 +103,7 @@ function ServerFunctions.init(ctx)
 				for _, sid in ipairs(otherComp.slots) do
 					local npc = activeNpcs[sid]
 					if npc and npc.IsFlagBearer and npc.Root then
-					if (npc.Root.Position - ourBearerPos).Magnitude <= GameSettings.BEARER_NEARBY_RADIUS then
+						if (npc.Root.Position - ourBearerPos).Magnitude <= GameSettings.BEARER_NEARBY_RADIUS then
 							return true
 						end
 					end
@@ -102,8 +125,7 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	-- ── Core functions ─────────────────────────────────────────────────────
-	-- not gonna bother to explain things here
+	-- ── Damage / Weapon / Melee ────────────────────────────────────────────
 
 	applyDamage = function(targetNpc, damage, attackerNpc)
 		if not targetNpc or not activeNpcs[targetNpc.ShortId] then return end
@@ -119,8 +141,6 @@ function ServerFunctions.init(ctx)
 		end
 
 		targetNpc.Health -= damage
-	--	print(string.format("[Combat] NPC %d damaged: %d remaining", targetNpc.ShortId, targetNpc.Health))
-
 		if targetNpc.Health <= 0 then
 			targetNpc._dying = true
 			killNpc(targetNpc.ShortId)
@@ -130,13 +150,10 @@ function ServerFunctions.init(ctx)
 	setNpcMeleeState = function(npc, state)
 		if npc.MeleeState == state then return end
 
-		npc.MeleeState = state
-		npc._meleePathAccum = 0
+		npc.MeleeState       = state
+		npc._meleePathAccum  = 0
+		npc.MeleeTimer       = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
 
-		npc.MeleeTimer = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
-
-		-- Reset hit flag on any state that begins a fresh attack sequence
-		-- (includes IDLE so survivors reset properly when their company re-engages)
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
 		end
@@ -208,17 +225,42 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
+	-- ── killNpc ────────────────────────────────────────────────────────────
+
 	killNpc = function(shortId)
 		local npc = activeNpcs[shortId]
 		if not npc then return end
-		local wasBearer  = npc.IsFlagBearer
-		local deadPos    = npc.Root.Position
-		local wasWalking = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
-		local owner      = npc.CompanyOwner
-		local compIdx    = npc.CompanyIndex
-		local role       = npc.Role
 
-		print(string.format("[Server] NPC %d Died", shortId))
+		local wasBearer        = npc.IsFlagBearer
+		local isEnemyCarrier   = npc._isEnemyFlagCarrier
+		local carriedFlagOwner = npc._carriedFlagOwner
+		local carriedFlagComp  = npc._carriedFlagCompIdx
+		local deadPos          = npc.Root.Position
+		local wasWalking       = npc.Humanoid and npc.Humanoid.MoveDirection.Magnitude > 0.05
+		local owner            = npc.CompanyOwner
+		local compIdx          = npc.CompanyIndex
+		local role             = npc.Role
+
+		-- Clean up flag-seeking state ─────────────────────────────────────
+		if npc._goingForFlag then
+			local tOwner   = npc._targetFlagOwner   or owner
+			local tCompIdx = npc._targetFlagCompIdx or compIdx
+			local tComp    = companies[tOwner] and companies[tOwner][tCompIdx]
+			if tComp and tComp.flagState then
+				local fs = tComp.flagState
+				if fs.pickupNpcId == shortId then
+					fs.pickupNpcId = nil
+				end
+				for i = #(fs.captureNpcs or {}), 1, -1 do
+					if fs.captureNpcs[i] == shortId then
+						table.remove(fs.captureNpcs, i)
+						break
+					end
+				end
+			end
+		end
+
+		print(string.format("[Server] NPC %d Died (bearer=%s, carrier=%s)", shortId, tostring(wasBearer), tostring(isEnemyCarrier)))
 		if npc.Pathfinder then npc.Pathfinder:Destroy() end
 		if npc.Model      then npc.Model:Destroy() end
 
@@ -237,10 +279,17 @@ function ServerFunctions.init(ctx)
 			end
 		end
 
+		-- ── Bearer died → drop the flag ────────────────────────────────
 		if wasBearer then
 			comp.savedBearerMode   = npc.BearerMode or C.BEARER_MODE_CENTER
 			comp.savedBearerPacing = npc.IsPacing   or false
-			replaceBearer(owner, compIdx, deadPos)
+			dropFlag(owner, compIdx, deadPos)
+
+			-- ── Enemy carrier died → flag re-drops at their position ───────
+		elseif isEnemyCarrier and carriedFlagOwner and carriedFlagComp then
+			dropFlag(carriedFlagOwner, carriedFlagComp, deadPos)
+
+			-- ── Normal soldier died → reform remaining formation ───────────
 		else
 			local soldierIds = {}
 			for _, sid in ipairs(comp.slots) do
@@ -264,9 +313,9 @@ function ServerFunctions.init(ctx)
 			elseif comp.isMelee and soldierCount > 0 then
 				for _, sid in ipairs(soldierIds) do
 					local s = activeNpcs[sid]
-					if not s then continue end
-					s.MeleeTarget  = nil
-					s.MeleeHasHit  = false
+					if not s or s._goingForFlag then continue end
+					s.MeleeTarget = nil
+					s.MeleeHasHit = false
 					setNpcMeleeState(s, C.MELEE_IDLE)
 				end
 			end
@@ -287,81 +336,176 @@ function ServerFunctions.init(ctx)
 		if not comp.respawnQueue then comp.respawnQueue = {} end
 		table.insert(comp.respawnQueue, { time = os.clock(), role = role })
 		syncCompanies(owner)
+		activeNpcs[shortId] = nil
 	end
 
-	replaceBearer = function(player, companyIndex, deadBearerPos)
+	-- ── Flag System ────────────────────────────────────────────────────────
+
+	-->>>>>>>>>>>>
+	-- Called when the bearer dies. Raycasts to find the ground below the death
+	-- position, places the flag there, and broadcasts FlagDropped to all clients.
+	dropFlag = function(player, companyIndex, position)
 		local comp = companies[player] and companies[player][companyIndex]
 		if not comp then return end
-		if not comp.slots or #comp.slots == 0 then return end
 
+		-- Ground raycast — exclude server NPC registry so we land on terrain/map.
+		groundRayParams.FilterDescendantsInstances = {
+			workspace:FindFirstChild("Npc_Registry_Server") or Instance.new("Folder"),
+			workspace:FindFirstChild("Npc_Registry")        or Instance.new("Folder"),
+		}
+		local rayOrigin = position + Vector3.new(0, 3, 0)
+		local result    = workspace:Raycast(rayOrigin, Vector3.new(0, -15, 0), groundRayParams)
+		local flagPos   = result and result.Position or position
+
+		-- Initialise (or reset) flag state.
+		comp.flagState = {
+			isDropped        = true,
+			isEnemyHeld      = false,
+			worldPos         = flagPos,
+			holderNpcId      = nil,
+			captureAccum     = 0,
+			captureBroadcastAccum = 0,
+			pickupNpcId      = nil,
+			captureNpcs      = {},
+			capturingPlayer  = nil,
+			capturingCompIdx = nil,
+			reassignCooldown = 0,
+		}
+
+		-- Gate respawning until a friendly picks the flag up.
 		comp.bearerRespawnGate = true
 
-		local candidates = {}
+		for p in pairs(readyPlayers) do
+			Network.FlagDropped.Fire(p, player.UserId, companyIndex, flagPos)
+		end
+
+		print(string.format("[Flag] Company %d of %s dropped flag at %s", companyIndex, player.Name, tostring(flagPos)))
+
+		-- Immediately try to route a friendly to pick it up.
+		assignFlagPickup(player, companyIndex)
+	end
+
+	-->>>>>>>>>>>>
+	-- Finds the nearest available friendly NPC (not bearer, not already tasked)
+	-- and routes them to the dropped flag.
+	assignFlagPickup = function(player, companyIndex)
+		local comp = companies[player] and companies[player][companyIndex]
+		if not comp then return end
+		local fs = comp.flagState
+		if not fs or not fs.isDropped or fs.isEnemyHeld then return end
+		if fs.pickupNpcId and activeNpcs[fs.pickupNpcId] then return end  -- already assigned
+
+		local flagPos = fs.worldPos
+		if not flagPos then return end
+
+		local nearest, nearestDist = nil, math.huge
 		for _, sid in ipairs(comp.slots) do
 			local npc = activeNpcs[sid]
-			if npc and not npc.IsFlagBearer then candidates[#candidates+1] = sid end
+			if not npc or npc.IsFlagBearer or npc._goingForFlag then continue end
+			local dist = (npc.Root.Position - flagPos).Magnitude
+			if dist < nearestDist then
+				nearestDist = dist
+				nearest     = npc
+			end
 		end
 
-		if #candidates == 0 then
-			task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
-				if companies[player] and companies[player][companyIndex] then
-					comp.bearerRespawnGate = false
-				end
+		if nearest then
+			nearest._goingForFlag       = "pickup"
+			nearest._targetFlagOwner    = player
+			nearest._targetFlagCompIdx  = companyIndex
+			fs.pickupNpcId              = nearest.ShortId
+
+			-- Stop current combat / melee activity.
+			if nearest.WeaponState ~= C.WEAPON_IDLE then
+				setNpcWeaponState(nearest, C.WEAPON_IDLE, nil)
+			end
+			if nearest.MeleeState ~= C.MELEE_IDLE then
+				setNpcMeleeState(nearest, C.MELEE_IDLE)
+			end
+
+			task.spawn(function()
+				if nearest.ActiveTween then nearest.ActiveTween:Cancel() nearest.ActiveTween = nil end
+				nearest.Pathfinder:Stop()
+				nearest.Pathfinder:Run(flagPos)
 			end)
-			return
+
+			print(string.format("[Flag] NPC %d assigned to recover flag for %s co%d", nearest.ShortId, player.Name, companyIndex))
+		end
+	end
+
+	-->>>>>>>>>>>>
+	-- Called when a friendly NPC reaches the dropped flag.
+	-- Makes them the new bearer, re-forms the company, and opens respawn.
+	friendlyPickupFlag = function(player, companyIndex, npc)
+		local comp = companies[player] and companies[player][companyIndex]
+		if not comp then return end
+		local fs = comp.flagState
+		if not fs then return end
+
+		-- Clear all flag-seeking flags for this company's NPCs.
+		for _, sid in ipairs(comp.slots) do
+			local s = activeNpcs[sid]
+			if s then s._goingForFlag = nil; s._targetFlagOwner = nil; s._targetFlagCompIdx = nil end
 		end
 
-		local chosenId  = candidates[math.random(1, #candidates)]
-		local chosenNpc = activeNpcs[chosenId]
-		if not chosenNpc then
-			task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
-				if companies[player] and companies[player][companyIndex] then
-					comp.bearerRespawnGate = false
-				end
-			end)
-			return
-		end
+		-- Mark npc as the new bearer.
+		npc._goingForFlag       = nil
+		npc.IsFlagBearer        = true
+		npc.BearerMode          = comp.savedBearerMode  or C.BEARER_MODE_CENTER
+		npc.IsPacing            = comp.savedBearerPacing or false
+		npc.PaceDirection       = 1
+		npc.WeaponState         = C.WEAPON_IDLE
+		npc.WeaponTimer         = 0
+		npc.WeaponTarget        = nil
+		npc.AimAlign.Enabled    = false
 
-		chosenNpc.IsFlagBearer   = true
-		chosenNpc.BearerMode     = comp.savedBearerMode  or C.BEARER_MODE_CENTER
-		chosenNpc.IsPacing       = comp.savedBearerPacing or false
-		chosenNpc.PaceDirection  = 1
-		chosenNpc.WeaponState    = C.WEAPON_IDLE
-		chosenNpc.WeaponTimer    = 0
-		chosenNpc.WeaponTarget   = nil
-		chosenNpc.AimAlign.Enabled = false
+		-- Clear flag state — flag is now "held" again.
+		comp.flagState           = {
+			isDropped = false, isEnemyHeld = false,
+			worldPos  = nil,   holderNpcId = nil,
+			captureAccum = 0, captureBroadcastAccum = 0,
+			pickupNpcId = nil, captureNpcs = {},
+			capturingPlayer = nil, capturingCompIdx = nil,
+			reassignCooldown = 0,
+		}
 
+		-- Open respawn gate.
+		comp.bearerRespawnGate = false
+
+		-- Tell clients: remove dropped model, attach flag to this NPC.
 		for p in pairs(readyPlayers) do
-			Network.NpcWeaponState.Fire(p, chosenId, C.WEAPON_IDLE)
-			Network.NpcBecomeBearer.Fire(p, chosenId)
+			Network.FlagPickedUp.Fire(p, player.UserId, companyIndex, npc.ShortId, true)
+			Network.NpcBecomeBearer.Fire(p, npc.ShortId)
+			Network.NpcWeaponState.Fire(p, npc.ShortId, C.WEAPON_IDLE)
 		end
 
-		chosenNpc.RegimentTarget = deadBearerPos
-		chosenNpc.MoveRetries    = 0
+		-- Move bearer to formation back.
+		if comp.anchorCF then
+			local targetCF = getBearerTarget(npc, comp)
+			npc.RegimentTarget = targetCF.Position
+			npc.MoveRetries    = 0
+			task.spawn(function()
+				if npc.ActiveTween then npc.ActiveTween:Cancel() npc.ActiveTween = nil end
+				npc.Pathfinder:Stop()
+				npc.Pathfinder:Run(npc.RegimentTarget)
+			end)
+		end
 
-		task.spawn(function()
-			if chosenNpc.ActiveTween then chosenNpc.ActiveTween:Cancel() chosenNpc.ActiveTween = nil end
-			chosenNpc.Pathfinder:Stop()
-			chosenNpc.Pathfinder:Run(deadBearerPos)
-		end)
-
+		-- Reform soldiers around current anchor.
 		local soldierIds = {}
 		for _, sid in ipairs(comp.slots) do
 			local s = activeNpcs[sid]
 			if s and not s.IsFlagBearer then soldierIds[#soldierIds+1] = sid end
 		end
-
-		local soldierCount = #soldierIds
-		if not comp.isMelee and soldierCount > 0 and comp.anchorCF then
+		if #soldierIds > 0 and comp.anchorCF then
 			local files = comp.originalFiles or comp.files
 			local ranks = comp.originalRanks or comp.ranks
-			local slots = RegimentFormation.getSlots(comp.anchorCF, soldierCount, ranks, files)
+			local slots = RegimentFormation.getSlots(comp.anchorCF, #soldierIds, ranks, files)
 			for i, sid in ipairs(soldierIds) do
 				local s = activeNpcs[sid]
 				if not s then continue end
 				s.RegimentTarget = slots[i].Position
 				s.MoveRetries    = 0
-
 				task.spawn(function()
 					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
 					s.Pathfinder:Stop()
@@ -370,36 +514,199 @@ function ServerFunctions.init(ctx)
 			end
 		end
 
-		task.delay(GameSettings.BEARER_REPLACE_DELAY, function()
-			if companies[player] and companies[player][companyIndex] then
-				comp.bearerRespawnGate = false
-			end
-		end)
+		print(string.format("[Flag] NPC %d recovered flag for %s co%d — respawn open", npc.ShortId, player.Name, companyIndex))
 	end
+
+	-->>>>>>>>>>>>
+	-- Assigns up to FLAG_CAPTURE_BOTS enemy NPCs from the given company to
+	-- chase the dropped flag belonging to victimPlayer/victimCompIdx.
+	assignEnemyCapture = function(ePlayer, eCompIdx, victimPlayer, victimCompIdx)
+		local eComp     = companies[ePlayer]     and companies[ePlayer][eCompIdx]
+		local victimComp = companies[victimPlayer] and companies[victimPlayer][victimCompIdx]
+		if not eComp or not victimComp then return end
+
+		local fs = victimComp.flagState
+		if not fs or not fs.isDropped or fs.isEnemyHeld then return end
+
+		local flagPos = fs.worldPos
+		if not flagPos then return end
+
+		-- Count capture NPCs that are still alive and active.
+		local activeCapture = {}
+		for _, sid in ipairs(fs.captureNpcs or {}) do
+			local npc = activeNpcs[sid]
+			if npc and npc._goingForFlag == "capture" then
+				table.insert(activeCapture, sid)
+			end
+		end
+		fs.captureNpcs = activeCapture
+
+		local needed = GameSettings.FLAG_CAPTURE_BOTS - #activeCapture
+		if needed <= 0 then return end
+
+		-- Find idle enemy NPCs to redirect.
+		local candidates = {}
+		for _, sid in ipairs(eComp.slots) do
+			local npc = activeNpcs[sid]
+			if not npc or npc.IsFlagBearer or npc._goingForFlag then continue end
+			-- Only pull from NPCs that aren't mid-attack swing.
+			if npc.MeleeState == C.MELEE_BOT_ATK or npc.MeleeState == C.MELEE_UP_ATK then continue end
+			table.insert(candidates, npc)
+		end
+
+		-- Closest first.
+		table.sort(candidates, function(a, b)
+			return (a.Root.Position - flagPos).Magnitude < (b.Root.Position - flagPos).Magnitude
+		end)
+
+		for i = 1, math.min(needed, #candidates) do
+			local npc = candidates[i]
+			npc._goingForFlag      = "capture"
+			npc._targetFlagOwner   = victimPlayer
+			npc._targetFlagCompIdx = victimCompIdx
+
+			-- Pause any active weapon/melee.
+			if npc.WeaponState ~= C.WEAPON_IDLE then
+				setNpcWeaponState(npc, C.WEAPON_IDLE, nil)
+			end
+			setNpcMeleeState(npc, C.MELEE_IDLE)
+			npc.MeleeTarget = nil
+
+			task.spawn(function()
+				npc.Pathfinder:Stop()
+				npc.Pathfinder:Run(flagPos)
+			end)
+
+			table.insert(fs.captureNpcs, npc.ShortId)
+			fs.capturingPlayer  = ePlayer
+			fs.capturingCompIdx = eCompIdx
+
+			print(string.format("[Flag] Enemy NPC %d (%s co%d) sent to capture flag of %s co%d",
+				npc.ShortId, ePlayer.Name, eCompIdx, victimPlayer.Name, victimCompIdx))
+		end
+	end
+
+	-->>>>>>>>>>>>
+	-- Called when an enemy NPC reaches and picks up the dropped flag.
+	-- Starts the 20 s capture timer.
+	enemyPickupFlag = function(ePlayer, eCompIdx, npc, victimPlayer, victimCompIdx)
+		local victimComp = companies[victimPlayer] and companies[victimPlayer][victimCompIdx]
+		if not victimComp then return end
+		local fs = victimComp.flagState
+		if not fs or not fs.isDropped then return end
+
+		-- Transfer flag ownership to the enemy NPC.
+		npc._isEnemyFlagCarrier = true
+		npc._carriedFlagOwner   = victimPlayer
+		npc._carriedFlagCompIdx = victimCompIdx
+		npc._goingForFlag       = nil  -- done seeking, now carrying
+
+		fs.isDropped     = false
+		fs.isEnemyHeld   = true
+		fs.holderNpcId   = npc.ShortId
+		fs.captureAccum  = 0
+		fs.captureBroadcastAccum = 0
+		fs.capturingPlayer  = ePlayer
+		fs.capturingCompIdx = eCompIdx
+
+		-- Tell clients: remove world model, attach flag to enemy NPC.
+		for p in pairs(readyPlayers) do
+			Network.FlagPickedUp.Fire(p, victimPlayer.UserId, victimCompIdx, npc.ShortId, false)
+		end
+
+		-- Have the enemy carrier walk back toward their anchor.
+		local eComp = companies[ePlayer] and companies[ePlayer][eCompIdx]
+		if eComp and eComp.anchorCF then
+			task.spawn(function()
+				npc.Pathfinder:Stop()
+				npc.Pathfinder:Run(eComp.anchorCF.Position)
+			end)
+		end
+
+		print(string.format("[Flag] Enemy NPC %d (%s co%d) picked up flag of %s co%d — capture timer started",
+			npc.ShortId, ePlayer.Name, eCompIdx, victimPlayer.Name, victimCompIdx))
+	end
+
+	-->>>>>>>>>>>>
+	-- Fires when the 20 s capture timer elapses. Permanently eliminates the
+	-- victim company by triggering an overrun and cleaning up all flag state.
+	captureFlag = function(victimPlayer, victimCompIdx, captorPlayer, captorCompIdx)
+		local comp = companies[victimPlayer] and companies[victimPlayer][victimCompIdx]
+		if not comp then return end
+		local fs = comp.flagState
+
+		-- Clean up enemy carrier NPC.
+		if fs and fs.holderNpcId then
+			local holder = activeNpcs[fs.holderNpcId]
+			if holder then
+				holder._isEnemyFlagCarrier = false
+				holder._carriedFlagOwner   = nil
+				holder._carriedFlagCompIdx = nil
+				holder._goingForFlag       = nil
+			end
+		end
+
+		-- Wipe flag state.
+		comp.flagState = {
+			isDropped = false, isEnemyHeld = false,
+			worldPos  = nil,   holderNpcId = nil,
+			captureAccum = 0, captureBroadcastAccum = 0,
+			pickupNpcId = nil, captureNpcs = {},
+			capturingPlayer = nil, capturingCompIdx = nil,
+			reassignCooldown = 0,
+		}
+		comp.bearerRespawnGate = true  -- no more respawns for this company
+
+		-- Broadcast capture.
+		for p in pairs(readyPlayers) do
+			Network.FlagCaptured.Fire(p,
+				victimPlayer.UserId, victimCompIdx,
+				captorPlayer and captorPlayer.UserId or 0,
+				captorCompIdx or 0)
+		end
+
+		-- Penalise via MatchManager.
+		MatchManager.onCompanyOverrun(victimPlayer, victimCompIdx, captorPlayer, captorCompIdx)
+
+		print(string.format("[Flag] %s co%d CAPTURED by %s co%d",
+			victimPlayer.Name, victimCompIdx,
+			captorPlayer and captorPlayer.Name or "?", captorCompIdx or 0))
+	end
+
+	-- ── replaceBearer (kept for edge cases; normally superseded by dropFlag) ──
+
+	replaceBearer = function(player, companyIndex, deadBearerPos)
+		-- This is a fallback used only by legacy callers. Normally killNpc calls
+		-- dropFlag which routes through the full flag-pickup flow.
+		dropFlag(player, companyIndex, deadBearerPos)
+	end
+
+	-- ── flushRespawnQueue ─────────────────────────────────────────────────
 
 	flushRespawnQueue = function(player, companyIndex)
 		local comp = companies[player] and companies[player][companyIndex]
 		if not comp then return end
 		if comp.isBroken          then return end
-		if comp.bearerRespawnGate then return end
+		if comp.bearerRespawnGate then return end   -- flag not yet recovered
 		if comp.isRespawning      then return end
 		if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
 
+		-- Spawn near the current bearer (flag holder).
 		local bearerPos
 		for _, sid in ipairs(comp.slots) do
 			local npc = activeNpcs[sid]
 			if npc and npc.IsFlagBearer then bearerPos = npc.Root.Position; break end
 		end
-
 		bearerPos = bearerPos or (comp.anchorCF and comp.anchorCF.Position)
 		if not bearerPos then return end
+
 		local currentTime = os.clock()
 		local RESPAWN_DELAY = 3
 		local readyEntry, readyIndex
 
 		for i, entry in ipairs(comp.respawnQueue) do
 			if currentTime - entry.time >= RESPAWN_DELAY then
-				readyEntry = entry; readyIndex = i; break 
+				readyEntry = entry; readyIndex = i; break
 			end
 		end
 
@@ -443,14 +750,13 @@ function ServerFunctions.init(ctx)
 					if s and not s.IsFlagBearer then soldierIds[#soldierIds+1] = sid end
 				end
 
-				local soldierCount = #soldierIds
 				if c.isMelee then
 					npc.MeleeTarget = nil
 					setNpcMeleeState(npc, C.MELEE_IDLE)
-				elseif soldierCount > 0 and c.anchorCF then
+				elseif #soldierIds > 0 and c.anchorCF then
 					local ranks = c.originalRanks or c.ranks
 					local files = c.originalFiles or c.files
-					local slots = RegimentFormation.getSlots(c.anchorCF, soldierCount, ranks, files)
+					local slots = RegimentFormation.getSlots(c.anchorCF, #soldierIds, ranks, files)
 					for j, sid in ipairs(soldierIds) do
 						local s = activeNpcs[sid]
 						if not s then continue end
@@ -474,9 +780,8 @@ function ServerFunctions.init(ctx)
 						isBearer     = isNewBearer,
 						companyIndex = npc.CompanyIndex,
 						ownerUserId  = player.UserId,
-						role         = npc.Role or "ranker",  -- was missing, crashed Blink
+						role         = npc.Role or "ranker",
 					})
-					
 					if not isNewBearer and not c.isMelee then
 						Network.NpcWeaponState.Fire(p, npc.ShortId, C.WEAPON_IDLE)
 					elseif not isNewBearer and c.isMelee then
@@ -495,17 +800,19 @@ function ServerFunctions.init(ctx)
 	-- ── Process functions ──────────────────────────────────────────────────
 
 	updateNpcCombat = function(npc, dt)
+		-- Never shoot while pursuing / carrying a flag.
+		if npc._goingForFlag or npc._isEnemyFlagCarrier then return end
 		if npc.IsFlagBearer then return end
 		if not npc.TeamName then return end
-		
+
 		local owner      = npc.CompanyOwner
 		local companyIdx = npc.CompanyIndex
 		if not owner or not companyIdx then return end
-		
+
 		local canShoot = serverCanAttack[owner] and serverCanAttack[owner][companyIdx]
 		local comp     = companies[owner] and companies[owner][companyIdx]
 		if comp and comp.isMelee then return end
-		
+
 		if not canShoot then
 			local reloading = npc.WeaponState == C.WEAPON_RELOAD_IDLE or npc.WeaponState == C.WEAPON_RELOAD
 			if npc.WeaponState ~= C.WEAPON_IDLE and not reloading then
@@ -580,16 +887,16 @@ function ServerFunctions.init(ctx)
 		for player, playerCompanies in pairs(companies) do
 			for _, comp in pairs(playerCompanies) do
 				local center = Vector3.zero
-				local count = 0
+				local count  = 0
 				for _, sid in ipairs(comp.slots) do
 					local n = activeNpcs[sid]
 					if n and n.Root and not n.IsFlagBearer then
 						center += n.Root.Position
-						count += 1
+						count  += 1
 					end
 				end
 				comp._cachedCenter = count > 0 and (center / count) or nil
-				comp._cachedCount = count
+				comp._cachedCount  = count
 			end
 		end
 	end
@@ -603,7 +910,7 @@ function ServerFunctions.init(ctx)
 						comp.brokenTimer = math.max(0, comp.brokenTimer - dt)
 						if comp.brokenTimer <= 0 then
 							comp.isBroken = false
-					comp.tickets  = math.floor(GameSettings.MAX_TICKETS / 2)
+							comp.tickets  = math.floor(GameSettings.MAX_TICKETS / 2)
 							broadcastStrength(player, compIdx)
 						end
 					end
@@ -624,7 +931,7 @@ function ServerFunctions.init(ctx)
 					end
 					if comp.brokenTimer <= 0 and not isEnemyBearerNearby(player, compIdx) then
 						comp.isBroken             = false
-					comp.tickets              = math.floor(GameSettings.MAX_TICKETS / 2)
+						comp.tickets              = math.floor(GameSettings.MAX_TICKETS / 2)
 						comp.regenAccum           = 0
 						comp.decayAccum           = 0
 						comp.brokenBroadcastAccum = 0
@@ -632,23 +939,23 @@ function ServerFunctions.init(ctx)
 					end
 				else
 					comp.regenAccum = (comp.regenAccum or 0) + dt
-				if comp.regenAccum >= GameSettings.TICKET_REGEN_INTERVAL then
-					comp.regenAccum -= GameSettings.TICKET_REGEN_INTERVAL
+					if comp.regenAccum >= GameSettings.TICKET_REGEN_INTERVAL then
+						comp.regenAccum -= GameSettings.TICKET_REGEN_INTERVAL
 						local prev = comp.tickets
-					comp.tickets = math.min(GameSettings.MAX_TICKETS, comp.tickets + GameSettings.TICKET_REGEN_RATE)
+						comp.tickets = math.min(GameSettings.MAX_TICKETS, comp.tickets + GameSettings.TICKET_REGEN_RATE)
 						if comp.tickets ~= prev then broadcastStrength(player, compIdx) end
 					end
 
 					if isEnemyBearerNearby(player, compIdx) then
 						comp.decayAccum = (comp.decayAccum or 0) + dt
-					if comp.decayAccum >= GameSettings.TICKET_DECAY_INTERVAL then
-						comp.decayAccum -= GameSettings.TICKET_DECAY_INTERVAL
+						if comp.decayAccum >= GameSettings.TICKET_DECAY_INTERVAL then
+							comp.decayAccum -= GameSettings.TICKET_DECAY_INTERVAL
 							local prev = comp.tickets
-						comp.tickets = math.max(0, comp.tickets - GameSettings.TICKET_DECAY_RATE)
+							comp.tickets = math.max(0, comp.tickets - GameSettings.TICKET_DECAY_RATE)
 							if comp.tickets ~= prev then
 								if comp.tickets <= 0 then
 									comp.isBroken             = true
-								comp.brokenTimer          = GameSettings.BROKEN_RECOVERY_TIME
+									comp.brokenTimer          = GameSettings.BROKEN_RECOVERY_TIME
 									comp.brokenBroadcastAccum = 0
 									MatchManager.onCompanyBroke(player, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
 								end
@@ -666,15 +973,19 @@ function ServerFunctions.init(ctx)
 	end
 
 	updateNpcMelee = function(npc, dt)
+		-- If this NPC is chasing / carrying a flag, skip normal melee AI.
+		-- (The pathfinder was already pointed at the flag in assign/enemyPickup.)
+		if npc._goingForFlag or npc._isEnemyFlagCarrier then return end
+
 		local owner = npc.CompanyOwner
-		local comp = owner and companies[owner] and companies[owner][npc.CompanyIndex]
+		local comp  = owner and companies[owner] and companies[owner][npc.CompanyIndex]
 		if not comp or not comp.isMelee then return end
 
 		if npc.IsFlagBearer then
 			local soldierCenter = comp._cachedCenter or npc.Root.Position
-			local movePos = soldierCenter
+			local movePos       = soldierCenter
 			npc._meleePathAccum = (npc._meleePathAccum or 0) + dt
-			
+
 			local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 			if targetComp then
 				local nearestEnemyPos
@@ -684,8 +995,8 @@ function ServerFunctions.init(ctx)
 					if e and e.Root then
 						local d = (e.Root.Position - npc.Root.Position).Magnitude
 						if d < nearestDist and d < GameSettings.MELEE_BEARER_FLEE_RANGE then
-							nearestDist = d
-							nearestEnemyPos = e.Root.Position
+							nearestDist      = d
+							nearestEnemyPos  = e.Root.Position
 						end
 					end
 				end
@@ -694,7 +1005,7 @@ function ServerFunctions.init(ctx)
 					movePos = npc.Root.Position + fleeDir * GameSettings.MELEE_BEARER_FLEE_DIST
 				end
 			end
-			
+
 			if npc._meleePathAccum >= 0.4 and (npc.Root.Position - movePos).Magnitude > 4 then
 				npc._meleePathAccum = 0
 				npc.Pathfinder:Run(movePos)
@@ -709,7 +1020,7 @@ function ServerFunctions.init(ctx)
 		end
 
 		local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
-		
+
 		if npc.MeleeState == C.MELEE_IDLE then
 			if not targetComp then return end
 			local nearest, nearestDist = nil, math.huge
@@ -735,8 +1046,8 @@ function ServerFunctions.init(ctx)
 					npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
 				end
 			end
-			if npc.MeleeTimer <= 0 then 
-				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_START and C.MELEE_BOT_IDLE or C.MELEE_UP_IDLE) 
+			if npc.MeleeTimer <= 0 then
+				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_START and C.MELEE_BOT_IDLE or C.MELEE_UP_IDLE)
 			end
 		elseif npc.MeleeState == C.MELEE_BOT_IDLE or npc.MeleeState == C.MELEE_UP_IDLE then
 			if not npc.MeleeTarget or not npc.MeleeTarget.Root then setNpcMeleeState(npc, C.MELEE_IDLE); return end
@@ -766,21 +1077,137 @@ function ServerFunctions.init(ctx)
 			end
 		end
 	end
+
+	-->>>>>>>>>>>>
+	-- updateFlagStates — call once per heartbeat.
+	-- Checks pickup/capture distances and advances capture timers.
+	updateFlagStates = function(dt)
+		local pickupR  = GameSettings.FLAG_PICKUP_RADIUS
+		local captureT = GameSettings.FLAG_CAPTURE_TIME
+
+		for player, playerCompanies in pairs(companies) do
+			for compIdx, comp in pairs(playerCompanies) do
+				local fs = comp.flagState
+				if not fs then continue end
+				if not fs.isDropped and not fs.isEnemyHeld then continue end
+
+				-- ── Dropped: check friendly pickup reach ──────────────────
+				if fs.isDropped and not fs.isEnemyHeld then
+					local flagPos = fs.worldPos
+					if not flagPos then continue end
+
+					-- Verify assigned pickup NPC is still alive.
+					if fs.pickupNpcId then
+						local pNpc = activeNpcs[fs.pickupNpcId]
+						if pNpc then
+							-- Did they reach the flag?
+							if (pNpc.Root.Position - flagPos).Magnitude <= pickupR then
+								friendlyPickupFlag(player, compIdx, pNpc)
+								continue  -- flag handled, skip rest
+							end
+							-- Still walking — re-run pathfinder if they stalled.
+							pNpc._meleePathAccum = (pNpc._meleePathAccum or 0) + dt
+							if pNpc._meleePathAccum >= 2 then
+								pNpc._meleePathAccum = 0
+								task.spawn(function() pNpc.Pathfinder:Run(flagPos) end)
+							end
+						else
+							-- Dead — reassign after cooldown.
+							fs.pickupNpcId = nil
+							fs.reassignCooldown = (fs.reassignCooldown or 0) + dt
+							if fs.reassignCooldown >= GameSettings.FLAG_REASSIGN_DELAY then
+								fs.reassignCooldown = 0
+								assignFlagPickup(player, compIdx)
+							end
+						end
+					else
+						-- Nobody assigned; try again.
+						fs.reassignCooldown = (fs.reassignCooldown or 0) + dt
+						if fs.reassignCooldown >= GameSettings.FLAG_REASSIGN_DELAY then
+							fs.reassignCooldown = 0
+							assignFlagPickup(player, compIdx)
+						end
+					end
+
+					-- ── Check if any enemy capture NPC reached the flag ──
+					for _, eSid in ipairs(fs.captureNpcs or {}) do
+						local eNpc = activeNpcs[eSid]
+						if eNpc and eNpc.Root then
+							if (eNpc.Root.Position - flagPos).Magnitude <= pickupR then
+								enemyPickupFlag(eNpc.CompanyOwner, eNpc.CompanyIndex, eNpc, player, compIdx)
+								break
+							end
+						end
+					end
+
+					-- ── Auto-assign enemy capture for melee companies ─────
+					for ePlayer, eComps in pairs(companies) do
+						if ePlayer == player then continue end
+						if ePlayer.Team and player.Team and ePlayer.Team == player.Team then continue end
+						for eCompIdx, eComp in pairs(eComps) do
+							if eComp.isMelee
+								and eComp.meleeTargetPlayer == player
+								and eComp.meleeTargetCompIdx == compIdx
+							then
+								assignEnemyCapture(ePlayer, eCompIdx, player, compIdx)
+							end
+						end
+					end
+				end
+
+				-- ── Enemy held: advance capture timer ─────────────────────
+				if fs.isEnemyHeld then
+					local holder = activeNpcs[fs.holderNpcId]
+					if not holder then
+						-- Carrier was killed; dropFlag was already called from killNpc.
+						-- Safety-clear stale state.
+						fs.isEnemyHeld  = false
+						fs.holderNpcId  = nil
+						continue
+					end
+
+					fs.captureAccum              += dt
+					fs.captureBroadcastAccum      = (fs.captureBroadcastAccum or 0) + dt
+
+					-- Broadcast progress ~once per second.
+					if fs.captureBroadcastAccum >= 1 then
+						fs.captureBroadcastAccum -= 1
+						for p in pairs(readyPlayers) do
+							Network.FlagCaptureProgress.Fire(p, player.UserId, compIdx, fs.captureAccum)
+						end
+					end
+
+					if fs.captureAccum >= captureT then
+						captureFlag(player, compIdx, fs.capturingPlayer, fs.capturingCompIdx)
+					end
+				end
+			end
+		end
+	end
+
 	-- ── Return public API ──────────────────────────────────────────────────
 	return {
-		applyDamage         = applyDamage,
-		setNpcMeleeState    = setNpcMeleeState,
-		setNpcWeaponState   = setNpcWeaponState,
-		killNpc             = killNpc,
-		replaceBearer       = replaceBearer,
-		flushRespawnQueue   = flushRespawnQueue,
-		updateNpcCombat     = updateNpcCombat,
-		updateNpcMelee      = updateNpcMelee,
+		applyDamage            = applyDamage,
+		setNpcMeleeState       = setNpcMeleeState,
+		setNpcWeaponState      = setNpcWeaponState,
+		killNpc                = killNpc,
+		replaceBearer          = replaceBearer,
+		flushRespawnQueue      = flushRespawnQueue,
+		updateNpcCombat        = updateNpcCombat,
+		updateNpcMelee         = updateNpcMelee,
 		prepareCompanyMetadata = prepareCompanyMetadata,
-		processTickets      = processTickets,
-		broadcastStrength   = broadcastStrength,
-		isEnemyBearerNearby = isEnemyBearerNearby,
-		getBearerTarget     = getBearerTarget,
+		processTickets         = processTickets,
+		broadcastStrength      = broadcastStrength,
+		isEnemyBearerNearby    = isEnemyBearerNearby,
+		getBearerTarget        = getBearerTarget,
+		-- flag system
+		dropFlag               = dropFlag,
+		assignFlagPickup       = assignFlagPickup,
+		friendlyPickupFlag     = friendlyPickupFlag,
+		assignEnemyCapture     = assignEnemyCapture,
+		enemyPickupFlag        = enemyPickupFlag,
+		captureFlag            = captureFlag,
+		updateFlagStates       = updateFlagStates,
 	}
 end
 
