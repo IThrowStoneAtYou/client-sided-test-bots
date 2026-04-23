@@ -358,7 +358,7 @@ function TeamSelectMenu:_buildSideScreen()
 
 		card.MouseLeave:Connect(function()
 			TweenService:Create(cardStroke, TI_FAST, {Transparency=0.65}):Play()
-			TweenService:Create(card,    TI_FAST, {BackgroundTransparency=0.15}):Play()
+			TweenService:Create(card, TI_FAST, {BackgroundTransparency=0.15}):Play()
 		end)
 
 		selBtn.MouseEnter:Connect(function()

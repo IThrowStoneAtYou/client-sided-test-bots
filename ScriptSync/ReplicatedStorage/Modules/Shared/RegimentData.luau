@@ -32,7 +32,7 @@ RegimentData.Sides = {
 				key      = "warsaw",
 				name     = "Duchy of Warsaw",
 				subtitle = "Księstwo Warszawskie",
-				flag     = "rbxassetid://83061096134014",
+				flag     = "rbxassetid://81489868451061",
 				regiments = {
 					{
 						key   = "13_pulk",
@@ -81,7 +81,7 @@ RegimentData.Sides = {
 				key      = "prussia",
 				name     = "Kingdom of Prussia",
 				subtitle = "Königreich Preußen",
-				flag     = "rbxassetid://101812407823597",
+				flag     = "rbxassetid://91875171151066",
 				regiments = {
 					{
 						key   = "13_inf",

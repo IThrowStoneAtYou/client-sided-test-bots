@@ -545,6 +545,20 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							isMelee              = false,
 							meleeTargetPlayer    = nil,
 							meleeTargetCompIdx   = nil,
+							       -- Flag system initial state (flag is held from spawn)
+							flagState = {
+							        isDropped        = false,
+							        isEnemyHeld      = false,
+							        worldPos         = nil,
+							        holderNpcId      = nil,
+							        captureAccum     = 0,
+							        captureBroadcastAccum = 0,
+							        pickupNpcId      = nil,
+							       	captureNpcs      = {},
+							        capturingPlayer  = nil,
+							        capturingCompIdx = nil,
+							        reassignCooldown = 0,
+							},
 						}
 
 						serverCanAttack[player] = serverCanAttack[player] or {}
@@ -901,14 +915,23 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	end
 
 	for _, shortId in ipairs(comp.slots) do
-		local npc = activeNpcs[shortId]
-		if not npc or npc.IsFlagBearer then continue end
-		if npc.WeaponState ~= WEAPON_IDLE then
-			sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
-		end
-		
-		npc.MeleeTarget = nil
-		sf.setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
+		task.spawn(function()
+			-- Give each bot a unique reaction time between 0 and 0.25 seconds
+			task.wait(math.random() * 0.25)
+
+			local npc = activeNpcs[shortId]
+			-- Safety check: ensure NPC still exists and the company is still in melee mode
+			if not npc or npc.IsFlagBearer or not npc.Model or not npc.Model.Parent then return end
+			if not comp.isMelee then return end 
+
+			if npc.WeaponState ~= WEAPON_IDLE then
+				sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
+			end
+			
+			npc.MeleeTarget = nil
+			local initialState = math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START
+			sf.setNpcMeleeState(npc, initialState)
+		end)
 	end
 end)
 
@@ -935,6 +958,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 	sf.prepareCompanyMetadata()
 	sf.processTickets(dt)
+	sf.updateFlagStates(dt)
 
 	table.clear(DEAD_IDS)
 	local doNear = nearAccum >= NEAR_RATE
