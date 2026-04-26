@@ -21,32 +21,20 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService     = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
 local RunService       = game:GetService("RunService")
 local Players          = game:GetService("Players")
 local RegimentData      = require(ReplicatedStorage.Modules.Shared.RegimentData)
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
--- ── Asset paths ───────────────────────────────────────────────────────
-local FLAG_FOLDER  = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Flag")
-local FLAG_TEMPLATE = FLAG_FOLDER:WaitForChild("f_flag")
-local FLAG_ANIM_OBJ = FLAG_FOLDER:WaitForChild("F_Idle")
-
-local BAR_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-
--- ── State ─────────────────────────────────────────────────────────────
-local attachedFlags = {}   -- [shortId]          = { model: Model, motor: Motor6D, track: AnimationTrack? }
-local droppedFlags  = {}   -- [ownerUserId_compIdx] = Model
-
-local flagUIs = {} -- [ownerUserId_compIdx] = { gui: BillboardGui, fill: Frame, tickets: number, ownerId: number }
-local FlagController = {}
-
 local localPlayer = Players.LocalPlayer
-local Mouse = localPlayer:GetMouse()
 
 -- ── Tooltip UI (Screen Space) ────────────────────────────────────────
+-- We create this IMMEDIATELY at the top so it exists even if assets hang.
 local tooltipGui = Instance.new("ScreenGui")
-tooltipGui.Name = "FlagTooltipGui"
+tooltipGui.Name = "tooltipGui" 
 tooltipGui.Enabled = false
+tooltipGui.IgnoreGuiInset = true
 tooltipGui.DisplayOrder = 100
 tooltipGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
@@ -54,7 +42,7 @@ local tooltipFrame = Instance.new("Frame")
 tooltipFrame.Size = UDim2.new(0, 160, 0, 45)
 tooltipFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 tooltipFrame.BackgroundTransparency = 0.2
-tooltipFrame.AnchorPoint = Vector2.new(1, 0) -- Top-right corner at cursor = Bottom-left appearance
+tooltipFrame.AnchorPoint = Vector2.new(1, 0) -- Top-right corner at cursor
 tooltipFrame.Parent = tooltipGui
 
 local tooltipStroke = Instance.new("UIStroke")
@@ -81,6 +69,24 @@ tooltipStrength.TextSize = 11
 tooltipStrength.TextXAlignment = Enum.TextXAlignment.Right
 tooltipStrength.Parent = tooltipFrame
 
+-- ── Asset paths ───────────────────────────────────────────────────────
+local FLAG_FOLDER  = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Flag")
+-- Use FindFirstChild or logic that won't hang the entire module if an asset is missing
+local FLAG_TEMPLATE = FLAG_FOLDER:FindFirstChild("f_flag")
+local FLAG_ANIM_OBJ = FLAG_FOLDER:FindFirstChild("F_Idle")
+
+if not FLAG_TEMPLATE then warn("[FlagController] CRITICAL: f_flag template missing!") end
+if not FLAG_ANIM_OBJ then warn("[FlagController] CRITICAL: F_Idle animation missing!") end
+
+local BAR_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
+-- ── State ─────────────────────────────────────────────────────────────
+local attachedFlags = {}   -- [shortId]          = { model: Model, motor: Motor6D, track: AnimationTrack? }
+local droppedFlags  = {}   -- [ownerUserId_compIdx] = Model
+
+local flagUIs = {} -- [ownerUserId_compIdx] = { gui: BillboardGui, fill: Frame, tickets: number, ownerId: number }
+local FlagController = {}
+
 local activeHoverKey = nil
 
 -- ── Helpers ───────────────────────────────────────────────────────────
@@ -89,17 +95,17 @@ RunService.Heartbeat:Connect(function()
 	if not activeHoverKey or not tooltipGui.Enabled then return end
 	local data = flagUIs[activeHoverKey]
 	
-	-- Validation: Check if the flag still exists and is within MaxDistance
-	local cam = workspace.CurrentCamera
-	local isOutOfRange = true
-	if data and data.gui and data.gui.Adornee and cam then
+	-- Validation: If the NPC is gone or moves beyond MaxDistance while hovering, hide the tooltip.
+	local isStale = not data or not data.gui or not data.gui.Adornee
+	if not isStale then
+		local cam = workspace.CurrentCamera
 		local dist = (data.gui.Adornee.Position - cam.CFrame.Position).Magnitude
-		if dist <= data.gui.MaxDistance then
-			isOutOfRange = false
+		if dist > data.gui.MaxDistance then
+			isStale = true
 		end
 	end
 
-	if isOutOfRange then
+	if isStale then
 		activeHoverKey = nil
 		tooltipGui.Enabled = false
 		return
@@ -112,8 +118,9 @@ RunService.Heartbeat:Connect(function()
 	tooltipOwner.TextColor3 = (player and player.TeamColor) and player.TeamColor.Color or Color3.new(1,1,1)
 	tooltipStrength.Text = "Company strength is " .. math.floor(ratio * 100) .. "%"
 
-	-- Positioning it at the bottom-left of the cursor
-	tooltipFrame.Position = UDim2.new(0, Mouse.X - 10, 0, Mouse.Y + 10)
+	-- Positioning it at the bottom-left of the cursor using absolute coordinates
+	local mousePos = UserInputService:GetMouseLocation()
+	tooltipFrame.Position = UDim2.new(0, mousePos.X - 10, 0, mousePos.Y + 10)
 end)
 
 local function makeKey(ownerUserId: number, compIdx: number): string
@@ -143,8 +150,9 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 	
 	local container = Instance.new("TextButton")
 	container.Size = UDim2.new(1, 0, 1, 0)
-	container.BackgroundTransparency = 1
+	container.BackgroundTransparency = 0.99 -- Essential for hover detection
 	container.Text = ""
+	container.Active = true
 	container.Parent = bgui
 
 	container.MouseEnter:Connect(function()

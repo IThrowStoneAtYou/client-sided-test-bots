@@ -942,7 +942,7 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
-print("[Client] Sending NpcReady signal to server...")
+print("[Client] Checking server...")
 Network.NpcReady.Fire()
 
 AdminPanel.new(Network)
