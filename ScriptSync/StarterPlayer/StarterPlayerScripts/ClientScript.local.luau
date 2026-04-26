@@ -1,6 +1,6 @@
 -->>>>>>>>>>>>
 -- ClientScript
--- Version 3.5.0
+-- Version 3.6.0
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -34,33 +34,26 @@ local COMPANY_GAP  = 10
 local Network = require(game.ReplicatedStorage.Blink.Client)
 
 -- ── State ─────────────────────────────────────────────────────────────
--- Central state tracking for all NPCs and user interactions
-
 local localPlayer   = Players.LocalPlayer
 local camera        = workspace.CurrentCamera
-local replicators   = {}   -- [shortId] = NpcReplicator (smooth movement interpolation)
-local animators     = {}   -- [shortId] = NpcAnimator (walk/idle state)
-local companySlots  = {}   -- [companyIndex] = { [shortId] = true } (NPC membership)
-local lastFormation = {}   -- [companyIndex] = { ranks, files } (cached for drag operations)
-local musketUtils = {}   -- [shortId] = MusketUtils instance (combat/weapon)
-local canAttack   = {}   -- [ownerUserId][companyIndex] = boolean (combat state)
-local bearerIds   = {}   -- [shortId] = true (flag-carrier NPCs)
-local npcOwners   = {}   -- [shortId] = ownerUserId (tracks NPC ownership)
-local lastHitReport = {}  -- [shortId] = os.clock()
+local replicators   = {}
+local animators     = {}
+local companySlots  = {}
+local lastFormation = {}
+local musketUtils   = {}
+local canAttack     = {}
+local bearerIds     = {}
+local npcOwners     = {}
+local lastHitReport = {}
 
 -- Tracks which NPC is currently holding each company's flag.
 -- [ownerUserId][compIdx] = shortId
 local flagHolders = {}
 
--- Active capture-progress UI frames (one per company being captured).
--- [key "userId_compIdx"] = { frame, timerLabel, bar }
-local captureHudItems = {}
-
-
 local localTimeRemaining = 0
 local localTimerMode     = "none"   -- "match" | "intermission" | "none"
 
-local meleeMode = {}  -- [companyIndex] = boolean
+local meleeMode = {}
 
 local meleeRayParams = RaycastParams.new()
 meleeRayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -78,7 +71,7 @@ local BEARER_MODE_LEFT   = 1
 local BEARER_MODE_RIGHT  = 2
 local BEARER_MODE_PACING = 3
 
-local bearerMode = {}  -- [companyIndex] = number, mirrors server state
+local bearerMode = {}
 
 local function ensureFolder(name)
 	if not workspace:FindFirstChild(name) then
@@ -103,19 +96,13 @@ local matchHud = MatchHUD.new()
 
 local notifHud = NotificationHUD.new()
 
---local compass = CompassHUD.new()
-
 -- ── NPC Registration ──────────────────────────────────────────────────
--- Creates client-side NPC instances when server announces new NPC
-
 local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId, role)
-	
+
 	role = role or "ranker"
-	
-	-- Abort if already registered
+
 	if replicators[shortId] then return end
-	
-	-- Clone model template and create replicator for smooth interpolation
+
 	local clientModel = CLIENT_MODEL:Clone()
 	clientModel.Name = "NPC_" .. shortId
 	local initialCF = buildCFrame(pos, yaw)
@@ -126,49 +113,41 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 
 	local anim = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
-	
+
 	if isBearer and ownerUserId and companyIndex then
-	    if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
-	    flagHolders[ownerUserId][companyIndex] = shortId
-	    FlagController.attachToNpc(clientModel)
+		if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
+		flagHolders[ownerUserId][companyIndex] = shortId
+		FlagController.attachToNpc(clientModel)
 	end
-	
+
 	replicators[shortId] = rep
 	animators[shortId] = anim
 
 	if teamName then
 		clientModel:SetAttribute("TeamName", teamName)
 	end
-	
+
 	if companyIndex then
 		clientModel:SetAttribute("CompanyIndex", companyIndex)
 	end
 
-	-- Only store owner if it's a real player (0 = no owner)
 	ownerUserId = ownerUserId or 0
 	clientModel:SetAttribute("OwnerUserId", ownerUserId)
 	npcOwners[shortId] = ownerUserId
 
-	-- Apply Regiment Rigs (Visuals)
 	local ownerPlayer = Players:GetPlayerByUserId(ownerUserId)
 	if ownerPlayer then
 		local function tryApply()
-			print(string.format("[OutfitGiver] Checking attributes for NPC %d (Owner: %s)", shortId, ownerPlayer.Name))
 			local sideIdx = ownerPlayer:GetAttribute("SideIndex")
 			local regIdx  = ownerPlayer:GetAttribute("RegimentIndex")
-			
+
 			if sideIdx and regIdx then
-				print(string.format("[OutfitGiver] Found Side: %d, Reg: %d", sideIdx, regIdx))
 				local rInfo, nKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
 				if rInfo and nKey then
-					print(string.format("[OutfitGiver] Applying: %s from %s", rInfo.key, nKey))
 					rep:ApplyRegimentRig(nKey, rInfo.key, role)
-				else
-					warn("[OutfitGiver] RegimentData lookup failed for indices provided")
 				end
 				return true
 			end
-			print("[OutfitGiver] Attributes not ready yet...")
 			return false
 		end
 
@@ -212,7 +191,7 @@ local function fireBearerMode(mode: number)
 		if not companySlots[compIdx] then
 			continue 
 		end
-		
+
 		Network.BearerModeCommand.Fire(compIdx, mode)
 		bearerMode[compIdx] = mode
 	end
@@ -220,9 +199,6 @@ end
 
 -- ── Formation Layout ──────────────────────────────────────────────────
 
--->>>>>>>>>>>>
--- Returns the total horizontal span of all selected companies using lastFormation,
--- used to back-compute the left edge for plain clicks.
 local function getTotalWidthFromLastFormation(selectedList): number
 	local total = 0
 	local nc    = 0
@@ -257,22 +233,9 @@ local function getTotalWidthFromLastFormation(selectedList): number
 	return total
 end
 
--->>>>>>>>>>>>
--- Core layout function. All placement is LEFT-BASED.
---
--- leftEdge     : world position of the left edge of the leftmost company.
--- rightDir     : unit vector pointing "right" across the formation line.
---               facingDir is derived as 90° CCW: (rightDir.Z, 0, -rightDir.X).
--- totalDragMag : total drag distance covering ALL companies + gaps.
---               nil = use lastFormation ranks/files per company.
---
--- For single company:  totalDragMag == width of that one company.
--- For multi company:   totalDragMag == sum of all company widths + all gaps.
 local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDragMag)
-	-- Facing is always perpendicular to the right/drag direction
 	local facingDir = Vector3.new(rightDir.Z, 0, -rightDir.X)
 
-	-- Collect valid companies
 	local infos = {}
 	for _, compIdx in ipairs(selectedList) do
 		local slots = companySlots[compIdx]
@@ -293,14 +256,13 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 
 	local nc = #infos
 
-	-- Per-company drag magnitude: subtract all gaps then divide evenly
 	local perCompanyMag
 	if totalDragMag then
 		local gapTotal  = (nc - 1) * COMPANY_GAP
 		perCompanyMag   = math.max((totalDragMag - gapTotal) / nc, 0)
 	end
 
-	local cursor = 0   -- running offset from leftEdge along rightDir (studs)
+	local cursor = 0
 	local result = {}
 
 	for _, info in ipairs(infos) do
@@ -321,7 +283,6 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 
 		local compWidth = (soldierCount > 0) and (files - 1) * RegimentFormation.RANK_SPACING or 0
 
-		-- Company anchor = center of this company's front rank
 		local compCenter = leftEdge + rightDir * (cursor + compWidth / 2)
 		cursor += compWidth + COMPANY_GAP
 
@@ -342,12 +303,9 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 end
 
 -- ── Event Handlers ────────────────────────────────────────────────────
--- Network events from server via Blink
 
--- Single NPC spawn event (sent when an individual NPC is created)
 Network.NpcSpawn.On(function(data)
 	if data.Type == "Single" then
-		print(string.format("[Client] Registering Single NPC: %d", data.id))
 		registerNpc(
 			data.id, 
 			data.pos,
@@ -359,7 +317,6 @@ Network.NpcSpawn.On(function(data)
 			data.role
 		)
 	elseif data.Type == "Batch" then
-		print(string.format("[Client] Registering Batch: %d NPCs", #data.list))
 		for _, entry in ipairs(data.list) do
 			registerNpc(
 				entry.id,
@@ -375,9 +332,6 @@ Network.NpcSpawn.On(function(data)
 	end
 end)
 
--- Batch position update event (unreliable, high frequency: 20/sec near, 4/sec far)
--- chunk = array of {id, pos, yaw} for multiple NPCs
--- Used for smooth movement via snapshot interpolation
 Network.NpcBatch.On(function(timestamp, chunk)
 	for _, entry in ipairs(chunk) do
 		local rep = replicators[entry.id]
@@ -387,65 +341,48 @@ Network.NpcBatch.On(function(timestamp, chunk)
 	end
 end)
 
+-->>>>>>>>>>>>
+-- NpcDespawn: clean order matters.
+-- Tracks (anim/musket) must be stopped while the Humanoid.Animator still exists,
+-- then the flag detached, then the model destroyed via the replicator.
 Network.NpcDespawn.On(function(shortId)
-	local idStr = tostring(shortId)
-	print(string.format("[Despawn Trace] ID %s: Signal received", idStr))
-	
-	local rep = replicators[shortId]
-	
-	-- 1. INSTANT DESTRUCTION: Call Destroy on replicator first.
-	-- Replicator:Destroy() now handles self.Client:Destroy() as its first act.
-	if rep then
-		print(string.format("[Despawn Trace] ID %s: Replicator found, triggering Destroy", idStr))
-		rep:Destroy()
-		replicators[shortId] = nil
-	else
-		print(string.format("[Despawn Trace] ID %s: WARNING - No replicator found", idStr))
+	-- Guard: server fires this once from killNpc; heartbeat sweep may fire again.
+	if not replicators[shortId] then return end
+
+	-- 1. Stop animation tracks while Humanoid.Animator is still alive.
+	local anim = animators[shortId]
+	if anim then
+		animators[shortId] = nil
+		anim:Destroy()
 	end
 
-	-- 2. REGISTRY SWEEP (Fallback): If the model is STILL there for some reason, nuke it by name.
-	local registry = workspace:FindFirstChild("Npc_Registry")
-	if registry then
-		local modelName = "NPC_" .. idStr
-		local remaining = registry:FindFirstChild(modelName)
-		if remaining then
-			print(string.format("[Despawn Trace] ID %s: Found leaked model in registry, manual delete", idStr))
-			remaining:Destroy()
+	-- 2. Stop weapon tracks and destroy musket child model before clientModel goes.
+	local mu = musketUtils[shortId]
+	if mu then
+		musketUtils[shortId] = nil
+		mu:Destroy()
+	end
+
+	-- 3. Detach flag model before clientModel is destroyed.
+	FlagController.detachFromNpc(shortId)
+	for _, compTable in pairs(flagHolders) do
+		for ci, hid in pairs(compTable) do
+			if hid == shortId then compTable[ci] = nil end
 		end
 	end
 
-	-- 3. Cleanup secondary lookup tables
+	-- 4. Destroy client model via replicator (safe: sub-systems already cleaned).
+	local rep = replicators[shortId]
+	replicators[shortId] = nil
+	rep:Destroy()
+
+	-- 5. Secondary state tables.
 	bearerIds[shortId]     = nil
 	npcOwners[shortId]     = nil
 	lastHitReport[shortId] = nil
-
-	-- 4. Silent cleanup of sub-systems (wrapped to prevent thread death)
-	pcall(function()
-		FlagController.detachFromNpc(shortId)
-		for _, compTable in pairs(flagHolders) do
-			for ci, hid in pairs(compTable) do
-				if hid == shortId then compTable[ci] = nil end
-			end
-		end
-
-		local anim = animators[shortId]
-		if anim then animators[shortId] = nil; anim:Destroy() end
-
-		local mu = musketUtils[shortId]
-		if mu then musketUtils[shortId] = nil; mu:Destroy() end
-	end)
-	
-	print(string.format("[Despawn Trace] ID %s: Cleanup complete", idStr))
 end)
 
--- Company sync event (reliable: sent when companies change or player joins)
--- data = array of {index, count, slots{...}, bearers[...]} for each company
--- Updates HUD counts and resets company membership tracking
 Network.NpcCompanySync.On(function(data)
-	print("[Client] Received Company Sync. Total Companies:", #data)
-	-- Only clear owner entries for the local player's previous NPCs.
-	-- Wiping the whole table also removes other players' NPC owner mappings,
-	-- which breaks NpcCanAttackSync for those players.
 	for _, slots in pairs(companySlots) do
 		for shortId in pairs(slots) do
 			npcOwners[shortId] = nil
@@ -488,16 +425,12 @@ Network.NpcCompanySync.On(function(data)
 		companySlots[entry.index] = slotSet
 	end
 
-	-- Clear stale meleeMode entries for companies that no longer exist
 	for compIdx in pairs(meleeMode) do
 		if not companySlots[compIdx] then
 			meleeMode[compIdx] = nil
 		end
 	end
 
-	-- Re-populate npcOwners from stored model attributes.
-	-- Every sync clears npcOwners for old slots; without this step
-	-- all surviving and freshly-respawned bots lose hit-detection ownership.
 	for _, slotSet in pairs(companySlots) do
 		for sid in pairs(slotSet) do
 			local rep = replicators[sid]
@@ -514,9 +447,7 @@ Network.NpcCompanySync.On(function(data)
 	NpcPreview.applyHighlights(replicators, companySlots, hud:getSelectedList())
 end)
 
--- applies server canAttack state and enforces it on all matching NPCs
 Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
-
 	if not canAttack[ownerUserId] then
 		canAttack[ownerUserId] = {}
 	end
@@ -531,8 +462,6 @@ Network.NpcCanAttackSync.On(function(companyIndex, canAttackState, ownerUserId)
 		local rep = replicators[shortId]
 		if not (rep and rep.Client) then continue end
 
-		-- Fall back to the attribute in case npcOwners was cleared by a
-		-- NpcCompanySync that arrived after this NPC was registered.
 		local npcOwner = npcOwners[shortId] or rep.Client:GetAttribute("OwnerUserId")
 		if npcOwner == ownerUserId then
 			local idx = rep.Client:GetAttribute("CompanyIndex")
@@ -555,7 +484,6 @@ Network.NpcFire.On(function(shortId, targetPos)
 	if not mu then return end
 
 	if npcOwners[shortId] == localPlayer.UserId then
-		-- Rate-limit: skip if we already sent a report for this NPC very recently
 		local now = os.clock()
 		if lastHitReport[shortId] and now - lastHitReport[shortId] < 0.1 then return end
 		lastHitReport[shortId] = now
@@ -602,8 +530,8 @@ end
 
 -- ── Drag & Order ──────────────────────────────────────────────────────
 local dragActive = false
-local anchorPos  = nil   -- left edge of company 1 (world space)
-local dragDir    = nil   -- last known rightDir unit vector (nil until drag threshold crossed)
+local anchorPos  = nil
+local dragDir    = nil
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
@@ -618,32 +546,26 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		end
 		return
 	end
-	
-	-- Keyboard shortcuts: 1-4 to select company cards
+
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		local key = input.KeyCode
-		
-		-- Helper function for number key selection
+
 		local function handleCompanyKeySelect(companyIndex)
-			-- Don't select if company doesn't exist
 			if not hud._companies or not hud._companies[companyIndex] then return end
-			
+
 			local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 			if shift then
-				-- Shift+number: toggle
 				hud:toggleSelected(companyIndex)
 			else
-				-- Number: exclusive select, or deselect if already selected
 				local list = hud:getSelectedList()
 				if #list == 1 and list[1] == companyIndex then
-					hud:setSelected(nil)  -- Deselect if clicking same company
+					hud:setSelected(nil)
 				else
 					hud:setSelected(companyIndex)
 				end
 			end
 		end
-		
-		-- Number keys 1-4 for company selection
+
 		local numKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four}
 		local foundIndex = table.find(numKeys, key)
 		if foundIndex then
@@ -651,7 +573,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			return
 		end
 	end
-	
+
 	if input.UserInputType == Enum.UserInputType.Keyboard then
 		local key = input.KeyCode
 
@@ -665,17 +587,16 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			fireBearerMode(BEARER_MODE_RIGHT)
 			return
 		elseif key == Enum.KeyCode.L then
-			-- pacing only toggles from J; otherwise resets to J first
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then
 					continue 
 				end
-				
+
 				local current = bearerMode[compIdx] or BEARER_MODE_CENTER
-				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or  BEARER_MODE_CENTER
-				
+				local next    = (current == BEARER_MODE_CENTER) and BEARER_MODE_PACING or BEARER_MODE_CENTER
+
 				Network.BearerModeCommand.Fire(compIdx, next)
 				bearerMode[compIdx] = next
 			end
@@ -684,10 +605,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			if #selectedList == 0 then return end
 			for _, compIdx in ipairs(selectedList) do
 				if not companySlots[compIdx] then continue end
-				-- Send the toggle to the server (it will broadcast back)
 				Network.NpcCanAttackToggle.Fire(compIdx)
 			end
-			
+
 		elseif key == Enum.KeyCode.T then
 			local selectedList = hud:getSelectedList()
 			if #selectedList == 0 then return end
@@ -695,9 +615,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				if not companySlots[compIdx] then continue end
 				local newMelee = not meleeMode[compIdx]
 				meleeMode[compIdx] = newMelee
-				hud:setMeleeState(compIdx, newMelee) -- Update HUD to show melee state
+				hud:setMeleeState(compIdx, newMelee)
 				Network.NpcMeleeToggle.Fire(compIdx, newMelee)
-				
+
 				if not newMelee then
 					for shortId in pairs(companySlots[compIdx]) do
 						local mu = musketUtils[shortId]
@@ -710,7 +630,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			return
 		elseif key == Enum.KeyCode.M then
 			local currentTeam = localPlayer.Team
-			-- Only request reset if we are actually on a team other than "NO TEAM"
 			if currentTeam and currentTeam.Name ~= "NO TEAM" then
 				Network.RequestTeamReset.Fire()
 			end
@@ -723,11 +642,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 
 	local selectedList = hud:getSelectedList()
 
-	-- Check if any selected company is in melee mode
-	if #selectedList > 0 then
-	--	print("[Melee Input] Click detected with", #selectedList, "companies selected.")
-	end
-	
 	local anyMelee = false
 	for _, compIdx in ipairs(selectedList) do
 		if meleeMode[compIdx] then anyMelee = true break end
@@ -740,33 +654,29 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 
 		if result then
 			local clickPos = result.Position
-			local DETECT_RADIUS = 30  -- More forgiving radius for group targeting
+			local DETECT_RADIUS = 30
 
-			-- Collect all enemy NPC candidates near the click
-			local candidates = {}
-			local registry = workspace:FindFirstChild("Npc_Registry")
 			local closestTarget, minTargetDist = nil, math.huge
 
+			local registry = workspace:FindFirstChild("Npc_Registry")
 			if registry then
 				for shortId, rep in pairs(replicators) do
 					if not (rep and rep.Client) then continue end
-					
+
 					local ownerUserId = rep.Client:GetAttribute("OwnerUserId") 
 					local compIdx     = rep.Client:GetAttribute("CompanyIndex")
-					
-					-- Enhanced targeting debug
+
 					if ownerUserId == nil or compIdx == nil then 
 						continue 
 					end
-					
+
 					if ownerUserId == localPlayer.UserId then 
-						continue -- skip own bots
+						continue
 					end
 
 					local root = rep.Root
 					if not root then continue end
-					
-					-- Flat distance check
+
 					local dist = (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(clickPos.X, 0, clickPos.Z)).Magnitude
 					if dist <= DETECT_RADIUS and dist < minTargetDist then
 						minTargetDist = dist
@@ -784,11 +694,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 						Network.NpcMeleeTarget.Fire(compIdx, closestTarget.ownerUserId, closestTarget.compIdx)
 					end
 				end
-				return  -- consumed the click
+				return
 			end
 		end
-
-		-- Click missed all enemies — fall through to normal formation drag
 	end
 
 	local hit = raycastMouse()
@@ -809,15 +717,14 @@ UserInputService.InputChanged:Connect(function(input)
 	local delta = Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z)
 	local mag   = delta.Magnitude
 	if mag < DRAG_THRESHOLD then
-		NpcPreview.hide() return -- yea
+		NpcPreview.hide() return
 	end
 
-	-- delta direction IS the rightDir — drag left-to-right expands the formation
 	dragDir = delta.Unit
 
 	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
 	if #layouts == 0 then 
-		NpcPreview.hide() return -- uh yea
+		NpcPreview.hide() return
 	end
 
 	NpcPreview.update(layouts, facingDir)
@@ -841,7 +748,6 @@ UserInputService.InputEnded:Connect(function(input)
 	local layouts, facingDir
 
 	if dragDir then
-		-- Drag: get final mouse pos for most accurate magnitude
 		local hit      = raycastMouse()
 		local delta    = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
 		local mag      = delta.Magnitude
@@ -850,21 +756,17 @@ UserInputService.InputEnded:Connect(function(input)
 
 		layouts, facingDir = computeCompanyLayouts(selectedList, anchorPos, finalDir, finalMag)
 	else
-		-- Plain click: derive rightDir from camera facing, center group on anchorPos
 		local look = camera.CFrame.LookVector
 		facingDir  = Vector3.new(look.X, 0, look.Z)
 		if facingDir.Magnitude < 0.01 then 
 			facingDir = Vector3.new(0, 0, -1)
 		end
-		
+
 		facingDir  = facingDir.Unit
 
-		-- rightDir is 90° CW of facingDir: if facing (0,0,-1), right = (1,0,0)
-		-- Added a fallback for rightDir to ensure cross product stability
 		local rightDir   = facingDir:Cross(Vector3.new(0, 1, 0)).Unit
 		local totalWidth = getTotalWidthFromLastFormation(selectedList)
 
-		-- Back-compute leftEdge so the group is centered on anchorPos
 		local leftEdge   = anchorPos - rightDir * (totalWidth / 2)
 
 		layouts, facingDir = computeCompanyLayouts(selectedList, leftEdge, rightDir, nil)
@@ -899,14 +801,12 @@ Network.NpcBecomeBearer.On(function(shortId)
 	end
 	bearerIds[shortId] = true
 
-	-- NEW: attach the flag model to this NPC.
 	local rep = replicators[shortId]
 	if rep and rep.Client then
 		local ownerId = rep.Client:GetAttribute("OwnerUserId")
 		local compIdx = rep.Client:GetAttribute("CompanyIndex")
 		if ownerId and compIdx then
 			if not flagHolders[ownerId] then flagHolders[ownerId] = {} end
-			-- Detach from the old holder if there was one.
 			local oldHolder = flagHolders[ownerId][compIdx]
 			if oldHolder and oldHolder ~= shortId then
 				FlagController.detachFromNpc(oldHolder)
@@ -960,30 +860,17 @@ Network.MatchNotification.On(function(vName, vIdx, aName, aIdx, eType, cost, vCo
 end)
 
 Network.FlagDropped.On(function(ownerUserId, compIdx, pos)
-	-- Clear old holder tracking.
 	if flagHolders[ownerUserId] then
 		local oldId = flagHolders[ownerUserId][compIdx]
 		if oldId then FlagController.detachFromNpc(oldId) end
 		flagHolders[ownerUserId][compIdx] = nil
 	end
-	-- Spawn anchored world model at ground position.
 	FlagController.spawnDropped(ownerUserId, compIdx, pos)
 end)
 
--- Someone picked up the dropped flag.
 Network.FlagPickedUp.On(function(ownerUserId, compIdx, pickerShortId, isFriendly)
-	-- Remove world model regardless of who picked it up.
 	FlagController.removeDropped(ownerUserId, compIdx)
 
-	-- Also clear any stale capture progress HUD for this flag.
-	local key = tostring(ownerUserId) .. "_" .. tostring(compIdx)
-	local item = captureHudItems[key]
-	if item then
-		if item.frame and item.frame.Parent then item.frame:Destroy() end
-		captureHudItems[key] = nil
-	end
-
-	-- Attach flag model to the new holder (friend OR foe).
 	local rep = replicators[pickerShortId]
 	if rep and rep.Client then
 		if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
@@ -996,132 +883,34 @@ Network.FlagPickedUp.On(function(ownerUserId, compIdx, pickerShortId, isFriendly
 	end
 end)
 
--- Capture progress tick (server sends ~1/s while enemy holds flag).
-Network.FlagCaptureProgress.On(function(ownerUserId, compIdx, secondsElapsed)
-	local key        = tostring(ownerUserId) .. "_" .. tostring(compIdx)
-	local captureMax = 20   -- FLAG_CAPTURE_TIME mirror
-
-	-- Lazy-build a small capture progress frame per flag being contested.
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-
-	local item = captureHudItems[key]
-	if not item then
-		-- Find or create a ScreenGui to host capture bars.
-		local gui = playerGui:FindFirstChild("FlagCaptureHUD")
-		if not gui then
-			gui           = Instance.new("ScreenGui")
-			gui.Name      = "FlagCaptureHUD"
-			gui.ResetOnSpawn   = false
-			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-			gui.IgnoreGuiInset = true
-			gui.Parent    = playerGui
-		end
-
-		-- Stack capture bars at top-right, offset per key index.
-		local existingCount = 0
-		for _ in pairs(captureHudItems) do existingCount += 1 end
-
-		local frame          = Instance.new("Frame")
-		frame.Name           = "Capture_" .. key
-		frame.Size           = UDim2.new(0, 220, 0, 34)
-		frame.Position       = UDim2.new(1, -230, 0, 60 + existingCount * 40)
-		frame.AnchorPoint    = Vector2.new(0, 0)
-		frame.BackgroundColor3  = Color3.fromRGB(14, 14, 22)
-		frame.BackgroundTransparency = 0.15
-		frame.BorderSizePixel   = 0
-		frame.ZIndex            = 40
-		frame.Parent            = gui
-
-		local stroke = Instance.new("UIStroke")
-		stroke.Color        = Color3.fromRGB(200, 55, 55)
-		stroke.Thickness    = 1.5
-		stroke.Transparency = 0.1
-		stroke.Parent       = frame
-
-		local lbl          = Instance.new("TextLabel")
-		lbl.Size           = UDim2.new(1, -8, 0, 14)
-		lbl.Position       = UDim2.new(0, 4, 0, 2)
-		lbl.BackgroundTransparency = 1
-		lbl.Text           = "FLAG BEING CAPTURED"
-		lbl.TextColor3     = Color3.fromRGB(200, 55, 55)
-		lbl.Font           = Enum.Font.GothamBold
-		lbl.TextSize       = 9
-		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.ZIndex         = 41
-		lbl.Parent         = frame
-
-		local barBg        = Instance.new("Frame")
-		barBg.Size         = UDim2.new(1, -8, 0, 10)
-		barBg.Position     = UDim2.new(0, 4, 0, 18)
-		barBg.BackgroundColor3 = Color3.fromRGB(30, 10, 10)
-		barBg.BorderSizePixel  = 0
-		barBg.ZIndex           = 41
-		barBg.ClipsDescendants = true
-		barBg.Parent           = frame
-		local barCorner = Instance.new("UICorner"); barCorner.CornerRadius = UDim.new(0, 3); barCorner.Parent = barBg
-
-		local barFill      = Instance.new("Frame")
-		barFill.Name       = "Fill"
-		barFill.Size       = UDim2.new(0, 0, 1, 0)
-		barFill.BackgroundColor3 = Color3.fromRGB(200, 55, 55)
-		barFill.BorderSizePixel  = 0
-		barFill.ZIndex           = 42
-		barFill.Parent           = barBg
-
-		local timerLbl     = Instance.new("TextLabel")
-		timerLbl.Size      = UDim2.new(0, 36, 0, 10)
-		timerLbl.Position  = UDim2.new(1, -40, 0, 18)
-		timerLbl.BackgroundTransparency = 1
-		timerLbl.Text      = "20s"
-		timerLbl.TextColor3   = Color3.fromRGB(230, 230, 230)
-		timerLbl.Font         = Enum.Font.GothamBold
-		timerLbl.TextSize     = 9
-		timerLbl.TextXAlignment = Enum.TextXAlignment.Right
-		timerLbl.ZIndex       = 43
-		timerLbl.Parent       = frame
-
-		item = { frame = frame, bar = barFill, timer = timerLbl }
-		captureHudItems[key] = item
-	end
-
-	-- Update bar and timer text.
-	local ratio = math.clamp(secondsElapsed / captureMax, 0, 1)
-	item.bar.Size        = UDim2.new(ratio, 0, 1, 0)
-	item.timer.Text      = math.ceil(captureMax - secondsElapsed) .. "s"
+-->>>>>>>>>>>>
+-- FlagCaptureProgress is no longer used for a separate HUD.
+-- The server now sends NpcCompanyStrength with isBroken=true and the
+-- remaining capture time as brokenTimer, so the existing brokenPrompt
+-- in CompanyHUD shows the countdown automatically.
+-- Keep a no-op handler so the event doesn't error if the server still fires it.
+Network.FlagCaptureProgress.On(function(_ownerUserId, _compIdx, _secondsElapsed)
+	-- Intentionally empty: display handled by NpcCompanyStrength / brokenPrompt.
 end)
 
--- Flag fully captured — clean up everything for that company.
 Network.FlagCaptured.On(function(victimUserId, victimCompIdx, captorUserId, captorCompIdx)
-	local key = tostring(victimUserId) .. "_" .. tostring(victimCompIdx)
-
-	-- Remove world model if somehow still present.
 	FlagController.removeDropped(victimUserId, victimCompIdx)
 
-	-- Remove flag from whoever was holding it.
 	if flagHolders[victimUserId] then
 		local holderId = flagHolders[victimUserId][victimCompIdx]
 		if holderId then FlagController.detachFromNpc(holderId) end
 		flagHolders[victimUserId][victimCompIdx] = nil
 	end
-
-	-- Remove capture progress HUD.
-	local item = captureHudItems[key]
-	if item then
-		if item.frame and item.frame.Parent then item.frame:Destroy() end
-		captureHudItems[key] = nil
-	end
-
-	-- Re-stack remaining capture bars (simple: just leave the gap for now).
 end)
 
--- ── Central render loop (runs once per frame, drives all replicators) ───────────
+-- ── Central render loop ──────────────────────────────────────────────
 
 RunService.RenderStepped:Connect(function(dt)
 	local serverTime = workspace:GetServerTimeNow()
 	local parts   = {}
 	local cframes = {}
 
-	-- ── Client-side timer countdown ───────────────────────────────────
+	-- Client-side timer countdown
 	if localTimerMode ~= "none" then
 		localTimeRemaining = math.max(0, localTimeRemaining - dt)
 		if localTimerMode == "match" then
@@ -1131,7 +920,7 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- ── NPC render ────────────────────────────────────────────────────
+	-- NPC render
 	for _, rep in pairs(replicators) do
 		local cf = rep:ComputeCFrame(dt, serverTime)
 		if cf then
@@ -1145,8 +934,6 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
--- to avoid server firing at client BEFORE client got a time to load it self.
--- also work as late-join
 print("[Client] Sending NpcReady signal to server...")
 Network.NpcReady.Fire()
 
@@ -1160,7 +947,6 @@ end
 
 local teamMenu = TeamSelectMenu.new(Network, toggleHUDs)
 
--- ── Auto-Show Menu for No Team ──────────────────────────────────────
 local function checkTeamRequirement()
 	local currentTeam = localPlayer.Team
 	if not currentTeam or currentTeam.Name == "NO TEAM" then
@@ -1168,6 +954,5 @@ local function checkTeamRequirement()
 	end
 end
 
--- Run initial check and listen for team resets
 checkTeamRequirement()
 localPlayer:GetPropertyChangedSignal("Team"):Connect(checkTeamRequirement)
