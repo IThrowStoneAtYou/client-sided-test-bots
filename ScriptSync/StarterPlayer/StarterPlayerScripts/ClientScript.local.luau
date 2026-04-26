@@ -107,33 +107,29 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 	clientModel.Name = "NPC_" .. shortId
 	local initialCF = buildCFrame(pos, yaw)
 
+	-- 1. Set attributes first so sub-systems (Flag/Musket) can read them immediately
+	if teamName then clientModel:SetAttribute("TeamName", teamName) end
+	if companyIndex then clientModel:SetAttribute("CompanyIndex", companyIndex) end
+	ownerUserId = ownerUserId or 0
+	clientModel:SetAttribute("OwnerUserId", ownerUserId)
+	npcOwners[shortId] = ownerUserId
+
+	-- 2. Initialize Replicator and Animator
 	local rep = NpcReplicator.new(shortId, clientModel)
 	rep.Root.CFrame = initialCF
 	rep:PushNetworkSnapshot(initialCF, workspace:GetServerTimeNow())
 
 	local anim = NpcAnimator.new(clientModel)
 	rep:SetAnimator(anim)
+	
+	replicators[shortId] = rep
+	animators[shortId]   = anim
 
 	if isBearer and ownerUserId and companyIndex then
 		if not flagHolders[ownerUserId] then flagHolders[ownerUserId] = {} end
 		flagHolders[ownerUserId][companyIndex] = shortId
 		FlagController.attachToNpc(clientModel)
 	end
-
-	replicators[shortId] = rep
-	animators[shortId] = anim
-
-	if teamName then
-		clientModel:SetAttribute("TeamName", teamName)
-	end
-
-	if companyIndex then
-		clientModel:SetAttribute("CompanyIndex", companyIndex)
-	end
-
-	ownerUserId = ownerUserId or 0
-	clientModel:SetAttribute("OwnerUserId", ownerUserId)
-	npcOwners[shortId] = ownerUserId
 
 	local ownerPlayer = Players:GetPlayerByUserId(ownerUserId)
 	if ownerPlayer then
@@ -144,7 +140,17 @@ local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, 
 			if sideIdx and regIdx then
 				local rInfo, nKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
 				if rInfo and nKey then
-					rep:ApplyRegimentRig(nKey, rInfo.key, role)
+					-- Specialty role validation
+					local finalRole = role
+					if role == "sapper" and rInfo.sapper == false then
+						finalRole = "ranker"
+					elseif role == "music_normal" and rInfo.music_normal == false then
+						finalRole = "ranker"
+					elseif role == "music_drum" and rInfo.music_drum == false then
+						finalRole = "ranker"
+					end
+					
+					rep:ApplyRegimentRig(nKey, rInfo.key, finalRole)
 				end
 				return true
 			end
@@ -789,8 +795,10 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 Network.NpcCompanyStrength.On(function(companyIndex, tickets, isBroken, ownerUserId, brokenTimer, enemyNearby)
-	if ownerUserId ~= localPlayer.UserId then return end
-	hud:setStrength(companyIndex, tickets, isBroken, brokenTimer, enemyNearby)
+	if ownerUserId == localPlayer.UserId then
+		hud:setStrength(companyIndex, tickets, isBroken, brokenTimer, enemyNearby)
+	end
+	FlagController.updateFlagUI(ownerUserId, companyIndex, tickets, isBroken)
 end)
 
 Network.NpcBecomeBearer.On(function(shortId)

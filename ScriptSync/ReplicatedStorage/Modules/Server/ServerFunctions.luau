@@ -149,6 +149,9 @@ function ServerFunctions.init(ctx)
 		npc.MeleeState       = state
 		npc._meleePathAccum  = 0
 		npc.MeleeTimer       = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
+		
+		-- Desync pursuit timers immediately on state entry
+		npc._meleePursuitAccum = math.random() * 0.2 
 
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
@@ -495,7 +498,7 @@ function ServerFunctions.init(ctx)
 	end
 
 	assignEnemyCapture = function(ePlayer, eCompIdx, victimPlayer, victimCompIdx)
-		local eComp     = companies[ePlayer]     and companies[ePlayer][eCompIdx]
+		local eComp     = companies[ePlayer] and companies[ePlayer][eCompIdx]
 		local victimComp = companies[victimPlayer] and companies[victimPlayer][victimCompIdx]
 		if not eComp or not victimComp then return end
 
@@ -775,9 +778,16 @@ function ServerFunctions.init(ctx)
 		end
 
 		if npc.WeaponState == C.WEAPON_IDLE then
+			-- Throttling targeting: only scan for enemies every 0.3s to 0.5s.
+			-- At 900 NPCs, per-frame scanning will crash the server.
+			npc._targetSearchAccum = (npc._targetSearchAccum or 0) + dt
+			if npc._targetSearchAccum < (0.3 + math.random() * 0.2) then return end
+			npc._targetSearchAccum = 0
+
 			local myTeam         = npc.TeamName
 			local myPos          = npc.Root.Position
 			local enemiesInRange = {}
+			
 			for _, other in pairs(activeNpcs) do
 				if other ~= npc then
 					local otherTeam = other.TeamName
@@ -924,14 +934,6 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	-->>>>>>>>>>>>
-	-- updateNpcMelee
-	-- v2.1 perf fixes:
-	--   • Pathfinder:Run() now always takes a Vector3 position, never a live BasePart.
-	--     Passing a BasePart caused NoobPath to recompute the path continuously as
-	--     the target moved, which was the primary source of melee combat lag.
-	--   • Pursuit (BOT_IDLE / UP_IDLE) is throttled via _meleePursuitAccum so the
-	--     pathfinder recalculates at most once every 0.5s instead of every Heartbeat.
 	updateNpcMelee = function(npc, dt)
 		if npc._goingForFlag or npc._isEnemyFlagCarrier then return end
 
@@ -980,7 +982,12 @@ function ServerFunctions.init(ctx)
 		local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 
 		if npc.MeleeState == C.MELEE_IDLE then
-			if not targetComp then return end
+			-- 1. Throttle target acquisition (Don't scan every frame)
+			npc._targetSearchAccum = (npc._targetSearchAccum or 0) + dt
+			if npc._targetSearchAccum < 0.25 then return end
+			npc._targetSearchAccum = 0
+
+			if not targetComp or #targetComp.slots == 0 then return end
 			local nearest, nearestDist = nil, math.huge
 			for _, eSid in ipairs(targetComp.slots) do
 				local e = activeNpcs[eSid]
@@ -991,11 +998,10 @@ function ServerFunctions.init(ctx)
 			end
 			if nearest then
 				npc.MeleeTarget        = nearest
-				npc._meleePursuitAccum = 0  -- reset so the first pursuit run fires immediately
 				setNpcMeleeState(npc, math.random() < 0.5 and C.MELEE_BOT_START or C.MELEE_UP_START)
-				-- Use a position snapshot, not the live BasePart, to avoid continuous recomputes.
 				if nearest.Root then
-					npc.Pathfinder:Run(nearest.Root.Position)
+					npc.Pathfinder:Stop()
+					npc.Humanoid:MoveTo(nearest.Root.Position)
 				end
 			end
 
@@ -1015,13 +1021,13 @@ function ServerFunctions.init(ctx)
 				npc.Pathfinder:Stop()
 				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_IDLE and C.MELEE_BOT_ATK or C.MELEE_UP_ATK)
 			else
-				-- Throttle path recalculation: only re-run every 0.5s using a position
-				-- snapshot. Calling Run() every heartbeat with a moving target was the
-				-- main cause of melee lag.
+				-- Use direct MoveTo for pursuit to avoid pathfinding overhead during melee.
+				-- Throttled slightly to 0.15s to keep the chase snappy but efficient.
 				npc._meleePursuitAccum = (npc._meleePursuitAccum or 0) + dt
-				if npc._meleePursuitAccum >= 0.5 then
+				if npc._meleePursuitAccum >= 0.15 then
 					npc._meleePursuitAccum = 0
-					npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
+					npc.Pathfinder:Stop()
+					npc.Humanoid:MoveTo(npc.MeleeTarget.Root.Position)
 				end
 			end
 
@@ -1034,7 +1040,8 @@ function ServerFunctions.init(ctx)
 					npc._meleePathAccum    = 1
 					npc._meleePursuitAccum = 0  -- reset so next approach fires immediately
 					local fleeDir = (npc.Root.Position - npc.MeleeTarget.Root.Position).Unit
-					npc.Pathfinder:Run(npc.Root.Position + fleeDir * 8)
+					npc.Pathfinder:Stop()
+					npc.Humanoid:MoveTo(npc.Root.Position + fleeDir * 8)
 				end
 			end
 			if npc.MeleeTimer <= 0 then
@@ -1043,11 +1050,6 @@ function ServerFunctions.init(ctx)
 		end
 	end
 
-	-->>>>>>>>>>>>
-	-- updateFlagStates — call once per heartbeat.
-	-- v2.1: enemy-held phase now broadcasts NpcCompanyStrength with isBroken=true
-	-- and the remaining capture seconds as brokenTimer. This reuses the existing
-	-- brokenPrompt in CompanyHUD so no separate capture HUD is needed on the client.
 	updateFlagStates = function(dt)
 		local pickupR  = GameSettings.FLAG_PICKUP_RADIUS
 		local captureT = GameSettings.FLAG_CAPTURE_TIME

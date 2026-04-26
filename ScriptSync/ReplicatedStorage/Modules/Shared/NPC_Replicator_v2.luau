@@ -245,16 +245,16 @@ end
 -->>>>>>>>>>>>
 -- Smoothing core logic. This is the function holding the entirety of the module
 -- Extra info: If no future snapshot exist. An extrapolation will occur
-
--- In NpcReplicator.luau, rename Render to ComputeCFrame and return the result
 function NpcReplicator:ComputeCFrame(dt, serverTime)
 	if not self.Snapshots then return nil end
 	local latest = self.Snapshots[#self.Snapshots]
 	if not latest then return nil end
 	if not self._dirty then return nil end
 	
+	-- least complex calculations for performance LMAO
 	if self._frameCounter % 30 == 0 then
-		local dist = (self.Root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
+		local camPos = workspace.CurrentCamera.CFrame.Position
+		local dist = (self.Root.Position - camPos).Magnitude
 		if dist < 60 then
 			self._frameSkip = 0   -- full 60fps
 		elseif dist < 150 then

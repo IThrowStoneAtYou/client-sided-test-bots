@@ -725,7 +725,7 @@ Network.AdminUpdateBots.On(function(player, data)
 
 	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
 	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
-	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1,   4)
+	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1,   1)
 	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,            10,  2000)
 	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,           1,   9999)
 	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,           0,   45)
