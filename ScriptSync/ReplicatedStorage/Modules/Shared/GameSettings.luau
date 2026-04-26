@@ -10,7 +10,7 @@ local GameSettings = {
 	-- ── Bot / Movement ─────────────────────────────────────────────────
 	WALK_SPEED    = 15,
 	MAX_BOTS      = 45,
-	MAX_COMPANIES = 4,
+	MAX_COMPANIES = 1,
 
 	-- ── Company Tickets ─────────────────────────────────────────────────
 	MAX_TICKETS            = 135,
