@@ -387,19 +387,17 @@ end
 -->>>>>>>>>>>>
 -- Self explanatory
 function NpcReplicator:Destroy()
+	if self.Client then
+		local success, err = pcall(function()
+			self.Client:Destroy()
+		end)
+		if not success then warn("[Replicator] Model destroy failed:", err) end
+		self.Client = nil
+	end
 	for _, conn in pairs(self.Connections) do
 		conn:Disconnect()
 	end
 	self.Connections = {}
-
-	-->>>>>>>>>>>>
-	-- These lines below are optional. can re-enable it if dont want to destroy entity manually
-	-->>>>>>>>>>>>
-
---	if self.Client then
---		self.Client:Destroy()
---	end
-
 	self.Snapshots = nil
 end
 

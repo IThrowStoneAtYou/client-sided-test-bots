@@ -388,45 +388,54 @@ Network.NpcBatch.On(function(timestamp, chunk)
 end)
 
 Network.NpcDespawn.On(function(shortId)
-	local rep = replicators[shortId]
-	if not rep then return end
-
-	-- Stop tracking immediately so RenderStepped ignores this NPC
-	replicators[shortId] = nil
-	bearerIds[shortId]   = nil
-	npcOwners[shortId]   = nil
-	lastHitReport[shortId] = nil
+	local idStr = tostring(shortId)
+	print(string.format("[Despawn Trace] ID %s: Signal received", idStr))
 	
-	-- Wrap cleanup in pcall to ensure Ragdoll is ALWAYS reached
+	local rep = replicators[shortId]
+	
+	-- 1. INSTANT DESTRUCTION: Call Destroy on replicator first.
+	-- Replicator:Destroy() now handles self.Client:Destroy() as its first act.
+	if rep then
+		print(string.format("[Despawn Trace] ID %s: Replicator found, triggering Destroy", idStr))
+		rep:Destroy()
+		replicators[shortId] = nil
+	else
+		print(string.format("[Despawn Trace] ID %s: WARNING - No replicator found", idStr))
+	end
+
+	-- 2. REGISTRY SWEEP (Fallback): If the model is STILL there for some reason, nuke it by name.
+	local registry = workspace:FindFirstChild("Npc_Registry")
+	if registry then
+		local modelName = "NPC_" .. idStr
+		local remaining = registry:FindFirstChild(modelName)
+		if remaining then
+			print(string.format("[Despawn Trace] ID %s: Found leaked model in registry, manual delete", idStr))
+			remaining:Destroy()
+		end
+	end
+
+	-- 3. Cleanup secondary lookup tables
+	bearerIds[shortId]     = nil
+	npcOwners[shortId]     = nil
+	lastHitReport[shortId] = nil
+
+	-- 4. Silent cleanup of sub-systems (wrapped to prevent thread death)
 	pcall(function()
 		FlagController.detachFromNpc(shortId)
-		for uid, compTable in pairs(flagHolders) do
+		for _, compTable in pairs(flagHolders) do
 			for ci, hid in pairs(compTable) do
 				if hid == shortId then compTable[ci] = nil end
 			end
 		end
 
 		local anim = animators[shortId]
-		if anim then
-			anim:Destroy()
-			animators[shortId] = nil
-		end
+		if anim then animators[shortId] = nil; anim:Destroy() end
 
 		local mu = musketUtils[shortId]
-		if mu then
-			mu:Destroy()
-			musketUtils[shortId] = nil
-		end
+		if mu then musketUtils[shortId] = nil; mu:Destroy() end
 	end)
-
-	-- Grab the client model before wiping it from the replicator,
-	-- then destroy the replicator WITHOUT destroying the model
-	local clientModel = rep.Client
-	rep:Destroy()
-
-	if clientModel and clientModel.Parent then
-		clientModel:Destroy()
-	end
+	
+	print(string.format("[Despawn Trace] ID %s: Cleanup complete", idStr))
 end)
 
 -- Company sync event (reliable: sent when companies change or player joins)

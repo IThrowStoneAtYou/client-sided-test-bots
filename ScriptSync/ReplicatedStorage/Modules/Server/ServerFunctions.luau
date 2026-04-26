@@ -241,6 +241,14 @@ function ServerFunctions.init(ctx)
 		local compIdx          = npc.CompanyIndex
 		local role             = npc.Role
 
+		-- BUG FIX: Notify clients IMMEDIATELY when an NPC is killed.
+		-- The Heartbeat safety loop misses these because we set activeNpcs[id] = nil below.
+		print(string.format("[Server Trace] Firing NpcDespawn for ID: %d", shortId))
+		for p in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(p, shortId)
+			if farLastSent[p] then farLastSent[p][shortId] = nil end
+		end
+
 		-- Clean up flag-seeking state ─────────────────────────────────────
 		if npc._goingForFlag then
 			local tOwner   = npc._targetFlagOwner   or owner
@@ -1034,29 +1042,22 @@ function ServerFunctions.init(ctx)
 			if nearest then
 				npc.MeleeTarget = nearest
 				setNpcMeleeState(npc, math.random() < 0.5 and C.MELEE_BOT_START or C.MELEE_UP_START)
+				
+				-- Instant pursuit: don't wait for the 0.4s accumulator to start moving
+				if nearest.Root then
+					npc.Pathfinder:Run(nearest.Root)
+				end
 			end
 		elseif npc.MeleeState == C.MELEE_ADVANCE then
 			if not npc.MeleeTarget then setNpcMeleeState(npc, C.MELEE_IDLE); return end
 			setNpcMeleeState(npc, math.random() < 0.5 and C.MELEE_BOT_START or C.MELEE_UP_START)
 		elseif npc.MeleeState == C.MELEE_BOT_START or npc.MeleeState == C.MELEE_UP_START then
-			if npc.MeleeTarget and npc.MeleeTarget.Root then
-				npc._meleePathAccum += dt
-				if npc._meleePathAccum >= 0.4 then
-					npc._meleePathAccum = 0
-					npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
-				end
-			end
 			if npc.MeleeTimer <= 0 then
 				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_START and C.MELEE_BOT_IDLE or C.MELEE_UP_IDLE)
 			end
 		elseif npc.MeleeState == C.MELEE_BOT_IDLE or npc.MeleeState == C.MELEE_UP_IDLE then
 			if not npc.MeleeTarget or not npc.MeleeTarget.Root then setNpcMeleeState(npc, C.MELEE_IDLE); return end
 			local dist = (npc.MeleeTarget.Root.Position - npc.Root.Position).Magnitude
-			npc._meleePathAccum += dt
-			if npc._meleePathAccum >= 0.4 then
-				npc._meleePathAccum = 0
-				npc.Pathfinder:Run(npc.MeleeTarget.Root.Position)
-			end
 			if dist <= GameSettings.MELEE_ENGAGE_RANGE then
 				npc.Pathfinder:Stop()
 				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_IDLE and C.MELEE_BOT_ATK or C.MELEE_UP_ATK)
@@ -1065,9 +1066,9 @@ function ServerFunctions.init(ctx)
 			if npc.MeleeTimer <= 0 then setNpcMeleeState(npc, C.MELEE_BACKPEDAL) end
 		elseif npc.MeleeState == C.MELEE_BACKPEDAL then
 			if npc.MeleeTarget and npc.MeleeTarget.Root then
-				npc._meleePathAccum += dt
-				if npc._meleePathAccum >= 0.2 then
-					npc._meleePathAccum = 0
+				-- Only run backpedal path once per state transition to prevent stuttering
+				if npc._meleePathAccum == 0 then
+					npc._meleePathAccum = 1
 					local fleeDir = (npc.Root.Position - npc.MeleeTarget.Root.Position).Unit
 					npc.Pathfinder:Run(npc.Root.Position + fleeDir * 8)
 				end
