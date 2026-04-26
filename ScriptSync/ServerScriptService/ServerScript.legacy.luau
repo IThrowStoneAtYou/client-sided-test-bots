@@ -916,8 +916,8 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 
 	for _, shortId in ipairs(comp.slots) do
 		task.spawn(function()
-			-- Give each bot a unique reaction time between 0 and 0.25 seconds
-			task.wait(math.random() * 0.25)
+			-- Reduced reaction time (max 100ms) to feel snappier
+			task.wait(math.random() * 0.1)
 
 			local npc = activeNpcs[shortId]
 			-- Safety check: ensure NPC still exists and the company is still in melee mode
@@ -930,6 +930,13 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 			
 			npc.MeleeTarget = nil
 			local initialState = math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START
+			
+			local targetComp = companies[targetPlayer] and companies[targetPlayer][targetCompanyIndex]
+			if targetComp and #targetComp.slots > 0 then
+				-- Acquisition logic inside setNpcMeleeState or updateNpcMelee will now handle 
+				-- the NoobPath:Run(part) call independently for this NPC.
+			end
+
 			sf.setNpcMeleeState(npc, initialState)
 		end)
 	end
@@ -997,12 +1004,8 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- Cleanup dead NPCs after the main loop
+	-- Safety cleanup for NPCs whose models were destroyed externally (e.g., deleted by admin)
 	for _, shortId in ipairs(DEAD_IDS) do
-		for player in pairs(readyPlayers) do
-			Network.NpcDespawn.Fire(player, shortId)
-			if farLastSent[player] then farLastSent[player][shortId] = nil end
-		end
 		activeNpcs[shortId] = nil
 	end
 
