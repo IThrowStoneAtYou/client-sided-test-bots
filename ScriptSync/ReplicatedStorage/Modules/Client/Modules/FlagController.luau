@@ -32,7 +32,8 @@ local localPlayer = Players.LocalPlayer
 -- ── Tooltip UI (Screen Space) ────────────────────────────────────────
 -- We create this IMMEDIATELY at the top so it exists even if assets hang.
 local tooltipGui = Instance.new("ScreenGui")
-tooltipGui.Name = "tooltipGui" 
+tooltipGui.Name = "tooltipGui"
+tooltipGui.ResetOnSpawn = false
 tooltipGui.Enabled = false
 tooltipGui.IgnoreGuiInset = true
 tooltipGui.DisplayOrder = 100
@@ -54,6 +55,7 @@ local tooltipOwner = Instance.new("TextLabel")
 tooltipOwner.Size = UDim2.new(1, -10, 0, 20)
 tooltipOwner.Position = UDim2.new(0, 5, 0, 5)
 tooltipOwner.BackgroundTransparency = 1
+tooltipOwner.TextColor3 = Color3.new(1, 1, 1)
 tooltipOwner.Font = Enum.Font.GothamBold
 tooltipOwner.TextSize = 12
 tooltipOwner.TextXAlignment = Enum.TextXAlignment.Right
@@ -91,36 +93,71 @@ local activeHoverKey = nil
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 
+-- ── Tooltip hover: screen-space detection (replaces unreliable MouseEnter) ──
+-- BillboardGui.AlwaysOnTop breaks Roblox's depth-based input hit detection,
+-- so we manually check if the cursor is inside the billboard's screen quad.
 RunService.Heartbeat:Connect(function()
-	if not activeHoverKey or not tooltipGui.Enabled then return end
-	local data = flagUIs[activeHoverKey]
-	
-	-- Validation: If the NPC is gone or moves beyond MaxDistance while hovering, hide the tooltip.
-	local isStale = not data or not data.gui or not data.gui.Adornee
-	if not isStale then
-		local cam = workspace.CurrentCamera
-		local dist = (data.gui.Adornee.Position - cam.CFrame.Position).Magnitude
-		if dist > data.gui.MaxDistance then
-			isStale = true
+	local cam      = workspace.CurrentCamera
+	local mousePos = UserInputService:GetMouseLocation()
+	local newKey   = nil
+
+	for key, data in pairs(flagUIs) do
+		-- Guard: adornee could be destroyed if NPC died
+		local ok, adornee = pcall(function() return data.gui and data.gui.Adornee end)
+		if not ok or not adornee then continue end
+
+		-- BillboardGui world position = adornee + StudsOffset (world-space Y)
+		local worldPos = adornee.Position + data.gui.StudsOffset
+
+		-- Project to screen. screenPos.Z is depth (negative = behind camera)
+		local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+		if not onScreen or screenPos.Z <= 0 then continue end
+
+		-- gui.Size is UDim2.new(0, 50, 0, 45) — fixed pixel size at any distance
+		local halfW = data.gui.AbsoluteSize.X * 0.5   -- 25
+		local halfH = data.gui.AbsoluteSize.Y * 0.5   -- 22.5
+
+		if math.abs(mousePos.X - screenPos.X) <= halfW
+			and math.abs(mousePos.Y - screenPos.Y) <= halfH then
+			newKey = key
+			break
 		end
 	end
 
-	if isStale then
+	-- Toggle visibility only on state change
+	if newKey ~= activeHoverKey then
+		activeHoverKey = newKey
+		tooltipGui.Enabled = (newKey ~= nil)
+	end
+
+	if not activeHoverKey then return end
+
+	local data = flagUIs[activeHoverKey]
+	if not data then return end
+
+	-- Stale guard (NPC out of range or adornee destroyed)
+	local ok, adornee = pcall(function() return data.gui and data.gui.Adornee end)
+	if not ok or not adornee then
 		activeHoverKey = nil
 		tooltipGui.Enabled = false
 		return
 	end
 
-	local ratio = math.clamp(data.tickets / GameSettings.MAX_TICKETS, 0, 1)
+	-- Update tooltip text
+	local ratio  = math.clamp(data.tickets / GameSettings.MAX_TICKETS, 0, 1)
 	local player = Players:GetPlayerByUserId(data.ownerId)
-	
-	tooltipOwner.Text = player and player.Name or "Unknown"
-	tooltipOwner.TextColor3 = (player and player.TeamColor) and player.TeamColor.Color or Color3.new(1,1,1)
+
+	tooltipOwner.Text      = player and player.Name or "Unknown"
+	tooltipOwner.TextColor3 = (player and player.TeamColor)
+		and player.TeamColor.Color
+		or Color3.new(1, 1, 1)
 	tooltipStrength.Text = "Company strength is " .. math.floor(ratio * 100) .. "%"
 
-	-- Positioning it at the bottom-left of the cursor using absolute coordinates
-	local mousePos = UserInputService:GetMouseLocation()
-	tooltipFrame.Position = UDim2.new(0, mousePos.X - 10, 0, mousePos.Y + 10)
+	-- Position tooltip: anchor is top-left at cursor so it never clips off-screen left
+	-- (original had AnchorPoint (1,0) which pushed it LEFT of cursor — kept intentional
+	--  but clamp so it can't go off the left edge)
+	local tx = math.max(data.gui.AbsoluteSize.X + 10, mousePos.X - 10)
+	tooltipFrame.Position = UDim2.new(0, tx, 0, mousePos.Y + 10)
 end)
 
 local function makeKey(ownerUserId: number, compIdx: number): string
@@ -154,17 +191,6 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 	container.Text = ""
 	container.Active = true
 	container.Parent = bgui
-
-	container.MouseEnter:Connect(function()
-		activeHoverKey = key
-		tooltipGui.Enabled = true
-	end)
-	container.MouseLeave:Connect(function()
-		if activeHoverKey == key then
-			activeHoverKey = nil
-			tooltipGui.Enabled = false
-		end
-	end)
 
 	-- Nation Icon
 	local icon = Instance.new("ImageLabel")
