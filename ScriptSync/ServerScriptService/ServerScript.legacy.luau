@@ -711,7 +711,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	
 	-- Automatically deploy 1 company of 45 bots
 	task.spawn(function()
-		task.wait(5)
+		task.wait(3.5)
 		spawnAllCompanies(player, 1, 45)
 	end)
 end)
