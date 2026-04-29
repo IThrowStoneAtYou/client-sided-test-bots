@@ -128,6 +128,7 @@ RunService.Heartbeat:Connect(function()
 	if newKey ~= activeHoverKey then
 		activeHoverKey = newKey
 		tooltipGui.Enabled = (newKey ~= nil)
+		print("tewst")
 	end
 
 	if not activeHoverKey then return end
@@ -194,6 +195,7 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 
 	-- Nation Icon
 	local icon = Instance.new("ImageLabel")
+	icon.Name = "NationIcon"
 	icon.Size = UDim2.new(0, 24, 0, 24)
 	icon.Position = UDim2.new(0.5, 0, 0.4, 0)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -202,12 +204,13 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 	icon.ZIndex = 2
 	icon.Parent = container
 
-	-- Resolve Flag Asset
-	local player = game.Players:GetPlayerByUserId(ownerUserId)
-	if player then
+	local function updateFlagIcon()
+		local player = game.Players:GetPlayerByUserId(ownerUserId)
+		if not player then return end
+
 		local sideIdx = player:GetAttribute("SideIndex")
 		local regIdx = player:GetAttribute("RegimentIndex")
-		if sideIdx and regIdx then
+		if sideIdx and regIdx and sideIdx > 0 then
 			local _, nationKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
 			if nationKey then
 				for _, nation in ipairs(RegimentData.Sides[sideIdx].nations) do
@@ -218,6 +221,16 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 				end
 			end
 		end
+	end
+
+	-- Initial update
+	updateFlagIcon()
+
+	-- Workaround: Listen for regiment changes so icons update correctly for other players' bots
+	local ownerPlayer = game.Players:GetPlayerByUserId(ownerUserId)
+	if ownerPlayer then
+		ownerPlayer:GetAttributeChangedSignal("SideIndex"):Connect(updateFlagIcon)
+		ownerPlayer:GetAttributeChangedSignal("RegimentIndex"):Connect(updateFlagIcon)
 	end
 
 	-- Strength Bar
@@ -236,8 +249,14 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 	barFill.BorderSizePixel = 0
 	barFill.Parent = barBg
 
+	-- Workaround: Parent to the part directly for visibility, 
+	-- but keep Adornee set so the tooltip logic can find the position.
 	bgui.Adornee = parentPart
-	bgui.Parent = localPlayer:WaitForChild("PlayerGui")
+	if parentPart:IsA("BasePart") then
+		bgui.Parent = parentPart
+	else
+		bgui.Parent = localPlayer:WaitForChild("PlayerGui")
+	end
 
 	flagUIs[key] = {
 		gui = bgui,

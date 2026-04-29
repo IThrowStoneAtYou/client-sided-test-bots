@@ -10,7 +10,7 @@ local GameSettings = {
 	-- ── Bot / Movement ─────────────────────────────────────────────────
 	WALK_SPEED    = 15,
 	MAX_BOTS      = 45,
-	MAX_COMPANIES = 1,
+	MAX_COMPANIES = 6,
 
 	-- ── Company Tickets ─────────────────────────────────────────────────
 	MAX_TICKETS            = 135,
@@ -38,7 +38,7 @@ local GameSettings = {
 	-- ── Match ──────────────────────────────────────────────────────────
 	STARTING_TICKETS      = 10000,
 	MATCH_DURATION        = 15 * 60,   -- seconds
-	INTERMISSION_DURATION = 20,
+	INTERMISSION_DURATION = 15,
 	COST_BOT_DEATH        = 5,
 	COST_BROKE            = 200,
 	COST_OVERRUN          = 500,

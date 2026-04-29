@@ -10,12 +10,14 @@ local Players          = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 
-local ROMAN          = { "I", "II", "III", "IV" }
+local ROMAN = { "I", "II", "III", "IV", "V", "VI" }
 local COMPANY_COLORS = {
-	Color3.fromRGB(65,  105, 210),
-	Color3.fromRGB(200, 55,  55),
-	Color3.fromRGB(55,  170, 90),
-	Color3.fromRGB(210, 160, 35),
+	Color3.fromRGB(65,  105, 210),  -- I   blue
+	Color3.fromRGB(200, 55,  55),   -- II  red
+	Color3.fromRGB(55,  170, 90),   -- III green
+	Color3.fromRGB(210, 160, 35),   -- IV  gold
+	Color3.fromRGB(160, 60,  210),  -- V   purple
+	Color3.fromRGB(55,  190, 190),  -- VI  teal
 }
 
 local CARD_W      = 88
@@ -61,7 +63,7 @@ function CompanyHUD.new(onSelectionChanged)
 	gui.Parent         = playerGui
 	self._gui = gui
 
-	for i = 1, 4 do self:_createCard(i) end
+	for i = 1, 6 do self:_createCard(i) end
 	self:_createGlobalInfoPanel()
 	self:_createBrokenPrompt()
 
@@ -160,7 +162,7 @@ function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
 	self:_updateLayout()
 	if selChanged then self._onChanged(self:getSelectedList()) end
 
-	for i = 1, 4 do self:_refreshCard(i) end
+	for i = 1, 6 do self:_refreshCard(i) end
 
 	local sel = self:getSelectedList()
 	if #sel == 1 then
@@ -174,7 +176,7 @@ end
 
 function CompanyHUD:_updateLayout()
 	local activeIndices = {}
-	for i = 1, 4 do
+	for i = 1, 6 do
 		if self._companies[i] then activeIndices[#activeIndices+1] = i end
 	end
 	local n = #activeIndices
@@ -772,7 +774,7 @@ function CompanyHUD:_updateBrokenPrompt()
 	if not sd or not sd.isBroken then self._brokenPrompt.Visible = false; return end
 
 	self._brokenPrompt.Visible   = true
-	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV"})[idx] .. " BROKEN"
+	self._brokenTitle.Text       = "COMPANY " .. ({"I","II","III","IV","V","VI"})[idx] .. " BROKEN"
 	self._brokenStroke.Color     = COMPANY_COLORS[idx]
 	self._brokenTimerVal.Text    = math.ceil(sd.brokenTimer) .. "s"
 
