@@ -71,13 +71,12 @@ PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP,    CLIENT_NPC_GROUP
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP,    false)
 
 local combatRayParams = RaycastParams.new()
+combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- ── Admin whitelist ──────────────────────────────────────────────────
 local ADMIN_IDS: { [number]: boolean } = {
 	[5327451875] = true,
 }
-
-combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- ── State ─────────────────────────────────────────────────────────────
 local activeNpcs      = {}
@@ -712,7 +711,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	-- Automatically deploy 1 company of 45 bots
 	task.spawn(function()
 		task.wait(3.5)
-		spawnAllCompanies(player, 2, 35)
+		spawnAllCompanies(player, 1, 35)
 	end)
 end)
 
