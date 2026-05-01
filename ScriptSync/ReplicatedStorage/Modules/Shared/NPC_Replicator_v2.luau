@@ -96,9 +96,13 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 
 	if not roleFolder then 
 		warn(string.format("[Replicator] FAILED to find roleFolder at Shared.Npc.Outfit.Nation.%s.%s.%s", nationKey, regimentKey, roleKey))
-		if not outfitFolder then warn("   -> Outfit folder missing")
-		elseif not nationFolder then warn("   -> Nation base folder missing")
-		elseif not nationPath then warn("   -> Specific nation folder missing:", nationKey) end
+		if not outfitFolder then 
+			warn("   -> Outfit folder missing")
+		elseif not nationFolder then
+		--	warn("   -> Nation base folder missing")
+		elseif not nationPath then 
+		--	warn("   -> Specific nation folder missing:", nationKey) 
+		end
 		return 
 	end
 	

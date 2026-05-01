@@ -80,8 +80,11 @@ function NpcPreview.setHighlightVisible(clientModel, companyIndex, visible)
 	if not h then
 		h = Instance.new("Highlight")
 		h.Name                = HIGHLIGHT_TAG
-		h.FillColor           = CompanyHUD.getColor(companyIndex)
-		h.OutlineColor        = CompanyHUD.getColor(companyIndex)
+		
+		local hColor = CompanyHUD.getColor(companyIndex) or Color3.fromRGB(200, 200, 200)
+		h.FillColor    = hColor
+		h.OutlineColor = hColor
+		
 		h.FillTransparency    = 0.62
 		h.OutlineTransparency = 0.1
 		h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop

@@ -275,7 +275,7 @@ function AdminPanel.new(Network)
 		{ key = "WALK_SPEED",              label = "Walk Speed",                     default = "15"  },
 		{ key = "MAX_BOTS",                label = "Max Bots",                       default = "45"  },
 		{ key = "MAX_COMPANIES",           label = "Max Companies",                  default = "4"   },
-		{ key = "COMBAT_RANGE",            label = "Combat Range (studs)",           default = "400" },
+		{ key = "MAX_COMPANIES", label = "Max Companies (1-6)", default = "6" },
 		{ key = "MUSKET_DAMAGE",           label = "Musket Damage",                  default = "100" },
 		{ key = "BULLET_SPREAD",           label = "Bullet Spread (°)",              default = "3"   },
 		{ key = "MELEE_ENGAGE_RANGE",      label = "Melee Engage Range (studs)",     default = "7"   },

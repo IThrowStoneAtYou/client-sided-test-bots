@@ -712,7 +712,7 @@ Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regime
 	-- Automatically deploy 1 company of 45 bots
 	task.spawn(function()
 		task.wait(3.5)
-		spawnAllCompanies(player, 1, 45)
+		spawnAllCompanies(player, 2, 35)
 	end)
 end)
 
@@ -738,7 +738,7 @@ Network.AdminUpdateBots.On(function(player, data)
 
 	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
 	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
-	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1,   1)
+	GameSettings.MAX_COMPANIES = math.clamp(math.floor(data.maxCompanies), 1, 6)
 	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,            10,  2000)
 	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,           1,   9999)
 	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,           0,   45)
