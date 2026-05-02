@@ -126,23 +126,18 @@ function CompanyHUD:setSelected(index: number?)
 end
 
 function CompanyHUD:toggleSelected(index: number)
+	-- DISABLED: Multi-company selection retired. Now always exclusive selection.
+	-- Old code preserved below for potential re-enablement.
+	--[[
 	if not self._companies[index] then return end
 	if self._selected[index] then
 		self._selected[index] = nil
 	else
 		self._selected[index] = true
 	end
-	self._onChanged(self:getSelectedList())
-	self:_refreshCard(index)
-
-	local sel = self:getSelectedList()
-	if #sel == 1 then
-		self:_updateGlobalPanel(sel[1])
-		self._globalPanel.Visible = true
-	else
-		self._globalPanel.Visible = false
-	end
-	self:_updateBrokenPrompt()
+	]]
+	-- New behavior: Only allow single company selection
+	self:setSelected(index)
 end
 
 function CompanyHUD:syncCompanies(data: {{index: number, count: number}})
