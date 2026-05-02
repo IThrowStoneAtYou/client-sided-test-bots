@@ -29,7 +29,7 @@ local RANK_DEPTH   = 5    -- studs between ranks front to back
 function RegimentFormation.dragToLayout(count: number, dragMagnitude: number): (number, number)
 	-- files derived from width dragged, clamped between 1 and count
 	local files = math.floor(dragMagnitude / RANK_SPACING) + 1
-	files = math.clamp(files, 1, count)   -- count = fully flat single rank
+	files = math.clamp(files, 1, count)   -- allow 1 (column) through count (flat line)
 	
 	local ranks = math.ceil(count / files)
 	
@@ -53,34 +53,30 @@ end
 --   files: Number of columns (left to right)
 --
 -- Slot Algorithm:
---   Iterates i=1 to count, calculates rank and file for each soldier.
---   Positions are calculated relative to anchor:
---   - Files offset horizontally (centered, left to right)
---   - Ranks offset backward (front to back)
+--   Simple grid layout: soldiers fill left-to-right, front-to-back
+--   No clustering, no special modes.
 --
--- Example: 2 ranks × 3 files (count=6)
---   Front rank (rank 0):  3 soldiers side-by-side
---   Back rank (rank 1):   3 soldiers behind front row
+-- Example (12 soldiers, files=4):
+--   O O O O    (rank 1)
+--   O O O O    (rank 2)
+--   O O O O    (rank 3)
 --
 function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: number, files: number): {CFrame}
-	-- Logic: Iterates through NPC count and calculates relative offsets for each rank and file.
 	local slots  = {}
 	local right  = anchorCF.RightVector
 	local look   = anchorCF.LookVector
 	local yaw    = math.atan2(-look.X, -look.Z)
 	local faceCF = CFrame.Angles(0, yaw, 0)
 
+	-- Standard grid layout: all formations use simple grid positioning
 	for i = 1, count do
 		local rank = math.floor((i - 1) / files)
 		local file = (i - 1) % files
 
 		local offsetRight = (file - (files - 1) / 2) * RANK_SPACING
-		local offsetBack  = rank * RANK_DEPTH
+		local offsetBack = rank * RANK_DEPTH
 
-		local pos = anchorCF.Position
-			+ right  * offsetRight
-			+ (-look) * offsetBack
-
+		local pos = anchorCF.Position + right * offsetRight + (-look) * offsetBack
 		slots[i] = CFrame.new(pos) * faceCF
 	end
 

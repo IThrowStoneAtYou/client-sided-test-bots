@@ -80,7 +80,7 @@ end
 -- Clones and welds head/body rigs from Shared.Npc.Nation based on keys.
 function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, roleKey: string)
 	roleKey = roleKey or "ranker"
-	print(string.format("[Replicator] Attempting rig apply: %s/%s/%s", tostring(nationKey), tostring(regimentKey), tostring(roleKey)))
+--	print(string.format("[Replicator] Attempting rig apply: %s/%s/%s", tostring(nationKey), tostring(regimentKey), tostring(roleKey)))
 	
 	local sharedFolder = replicatestorage.Shared
 	local npcFolder    = sharedFolder and sharedFolder:FindFirstChild("Npc")

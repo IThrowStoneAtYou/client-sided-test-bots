@@ -31,9 +31,6 @@ local CLIENT_MODEL   = ReplicatedStorage:WaitForChild("CLIENT")
 local DRAG_THRESHOLD = 3
 local COMPANY_GAP  = 10
 
-local DIVISION_GAP  = 13   -- studs between divisions (historically ~2 paces of depth + company depth)
-local formationMode = "line"  -- "line" | "column"
-
 
 local Network = require(game.ReplicatedStorage.Blink.Client)
 
@@ -99,53 +96,6 @@ end)
 local matchHud = MatchHUD.new()
 
 local notifHud = NotificationHUD.new()
-
--- ── Formation mode indicator ──────────────────────────────────────────
-local modeGui = Instance.new("ScreenGui")
-modeGui.Name           = "FormationModeGui"
-modeGui.ResetOnSpawn   = false
-modeGui.IgnoreGuiInset = true
-modeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-modeGui.Parent         = localPlayer:WaitForChild("PlayerGui")
-
-local modeLabel = Instance.new("TextLabel")
-modeLabel.Name               = "ModeLabel"
-modeLabel.Size               = UDim2.new(0, 150, 0, 26)
-modeLabel.AnchorPoint        = Vector2.new(0.5, 0)
-modeLabel.Position           = UDim2.new(0.5, 0, 0, 66)
-modeLabel.BackgroundColor3   = Color3.fromRGB(14, 14, 22)
-modeLabel.BackgroundTransparency = 0.1
-modeLabel.Text               = ""
-modeLabel.TextColor3         = Color3.fromRGB(100, 200, 255)
-modeLabel.Font               = Enum.Font.GothamBold
-modeLabel.TextSize           = 11
-modeLabel.ZIndex             = 35
-modeLabel.Visible            = false
-modeLabel.Parent             = modeGui
-local _mlCorner = Instance.new("UICorner")
-_mlCorner.CornerRadius = UDim.new(0, 5)
-_mlCorner.Parent       = modeLabel
-local _mlStroke = Instance.new("UIStroke")
-_mlStroke.Thickness = 1
-_mlStroke.Parent    = modeLabel
-
-local _modeHideTask = nil
-local function showModeLabel()
-	if _modeHideTask then task.cancel(_modeHideTask) end
-	if formationMode == "line" then
-		modeLabel.Text       = "▬  LINE FORMATION"
-		modeLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
-		_mlStroke.Color      = Color3.fromRGB(40, 80, 160)
-	else
-		modeLabel.Text       = "▪▪  COLUMN BY DIV"
-		modeLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
-		_mlStroke.Color      = Color3.fromRGB(160, 100, 20)
-	end
-	modeLabel.Visible = true
-	_modeHideTask = task.delay(2.5, function()
-		modeLabel.Visible = false
-	end)
-end
 
 -- ── NPC Registration ──────────────────────────────────────────────────
 local function registerNpc(shortId, pos, yaw, teamName, isBearer, companyIndex, ownerUserId, role)
@@ -290,109 +240,6 @@ local function getTotalWidthFromLastFormation(selectedList): number
 	return total
 end
 
--- Column by Division layout.
--- Companies pair up left→right into "divisions", then divisions stack
--- in depth behind the anchor (front of column).
---
--- Division pairing order follows selectedList order:
---   selectedList = {1,2,3,4,5,6}
---   Division 1 = companies 1 & 2  (front)
---   Division 2 = companies 3 & 4
---   Division 3 = companies 5 & 6  (rear)
---
--- Each company keeps its lastFormation ranks/files so frontage is preserved
--- when transitioning from line to column.
---
-local function computeColumnByDivisionLayouts(selectedList, anchorPos, facingDir)
-	local backDir  = -facingDir
-	local rightDir = facingDir:Cross(Vector3.new(0, 1, 0)).Unit
-
-	-- Build divisions (pairs)
-	local divisions = {}
-	for i = 1, #selectedList, 2 do
-		local div = { selectedList[i] }
-		if selectedList[i + 1] then
-			table.insert(div, selectedList[i + 1])
-		end
-		table.insert(divisions, div)
-	end
-
-	local result     = {}
-	local depthAccum = 0   -- how far back the current division starts
-
-	for _, div in ipairs(divisions) do
-		local compInfos = {}
-		local divWidth  = 0
-
-		for _, compIdx in ipairs(div) do
-			local slots = companySlots[compIdx]
-			local count = 0
-			for _ in pairs(slots or {}) do count += 1 end
-			local soldierCount = math.max(0, count - 1)
-
-			local ranks, files
-			if soldierCount > 0 then
-				local f = lastFormation[compIdx]
-				files   = f and f.files or math.min(soldierCount, 10)
-				ranks   = math.ceil(soldierCount / files)
-			else
-				ranks, files = 1, 1
-			end
-
-			table.insert(compInfos, {
-				compIdx      = compIdx,
-				count        = count,
-				soldierCount = soldierCount,
-				ranks        = ranks,
-				files        = files,
-			})
-			divWidth += (files - 1) * RegimentFormation.RANK_SPACING
-		end
-
-		-- Gap between the two companies within the division
-		if #div > 1 then
-			divWidth += COMPANY_GAP
-		end
-
-		local startX   = -divWidth / 2
-		local cursor   = 0
-		local maxRanks = 1
-
-		for _, info in ipairs(compInfos) do
-			local compWidth  = (info.soldierCount > 0)
-				and (info.files - 1) * RegimentFormation.RANK_SPACING
-				or 0
-
-			local compCenter = anchorPos
-				+ backDir  * depthAccum
-				+ rightDir * (startX + cursor + compWidth / 2)
-
-			cursor += compWidth + COMPANY_GAP
-
-			local anchorCF = CFrame.lookAt(compCenter, compCenter + facingDir)
-			local slotCFs  = (info.soldierCount > 0)
-				and RegimentFormation.getSlots(anchorCF, info.soldierCount, info.ranks, info.files)
-				or {}
-
-			table.insert(result, {
-				compIdx = info.compIdx,
-				anchor  = compCenter,
-				ranks   = info.ranks,
-				files   = info.files,
-				slots   = slotCFs,
-				color   = CompanyHUD.getColor(info.compIdx),
-			})
-
-			if info.ranks > maxRanks then maxRanks = info.ranks end
-		end
-
-		-- Depth of this division + gap before next division
-		depthAccum += (maxRanks - 1) * RegimentFormation.RANK_DEPTH + DIVISION_GAP
-	end
-
-	return result, facingDir
-end
-
 --
 local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDragMag)
 	
@@ -434,11 +281,21 @@ local function computeCompanyLayouts(selectedList, leftEdge, rightDir, totalDrag
 
 		if soldierCount > 0 then
 			if perCompanyMag then
+				-- During drag: calculate fresh from drag distance
 				ranks, files = RegimentFormation.dragToLayout(soldierCount, perCompanyMag)
 			else
+				-- No drag: always recalculate to preserve current shape
+				-- (was using cached lastFormation which prevented reshaping)
 				local f = lastFormation[info.compIdx]
-				files   = f and f.files or math.min(soldierCount, 10)
-				ranks   = f and f.ranks or math.ceil(soldierCount / files)
+				if f then
+					-- Keep existing shape
+					ranks = f.ranks
+					files = f.files
+				else
+					-- New formation: default to linear (wide)
+					files = math.min(soldierCount, 10)
+					ranks = math.ceil(soldierCount / files)
+				end
 			end
 		else
 			ranks, files = 1, 1
@@ -805,18 +662,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				Network.RequestTeamReset.Fire()
 			end
 			return
-		elseif key == Enum.KeyCode.C then
-			-- Toggle between Line and Column by Division
-			formationMode = (formationMode == "line") and "column" or "line"
-			showModeLabel()
-			-- Cancel any active drag so the mode switch is clean
-			if dragActive then
-				dragActive = false
-				NpcPreview.hide()
-				anchorPos = nil
-				dragDir   = nil
-			end
-			return
 		end
 	end
 
@@ -905,15 +750,8 @@ UserInputService.InputChanged:Connect(function(input)
 
 	dragDir = delta.Unit
 
-	--	local layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
 	local layouts, facingDir
-	if formationMode == "column" then
-		-- In column mode the drag direction IS the facing direction.
-		-- Magnitude doesn't resize the formation — it just needs to be long enough.
-		layouts, facingDir = computeColumnByDivisionLayouts(hud:getSelectedList(), anchorPos, dragDir)
-	else
-		layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
-	end
+	layouts, facingDir = computeCompanyLayouts(hud:getSelectedList(), anchorPos, dragDir, mag)
 	
 	if #layouts == 0 then 
 		NpcPreview.hide() return
@@ -939,41 +777,25 @@ UserInputService.InputEnded:Connect(function(input)
 	local selectedList = hud:getSelectedList()
 	local layouts, facingDir
 
-	if formationMode == "column" then
-		-- Column: drag direction = facing direction.
-		-- No-drag fallback = camera look vector.
-		local fd
-		if dragDir then
-			fd = dragDir
-		else
-			local look = camera.CFrame.LookVector
-			fd = Vector3.new(look.X, 0, look.Z)
-			if fd.Magnitude < 0.01 then fd = Vector3.new(0, 0, -1) end
-			fd = fd.Unit
-		end
-		layouts, facingDir = computeColumnByDivisionLayouts(selectedList, anchorPos, fd)
-
+	-- Line formation: drag-to-resize behaviour
+	if dragDir then
+		local hit      = raycastMouse()
+		local delta    = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
+		local mag      = delta.Magnitude
+		local finalDir = (mag > DRAG_THRESHOLD) and delta.Unit or dragDir
+		local finalMag = math.max(mag, DRAG_THRESHOLD)
+		layouts, facingDir = computeCompanyLayouts(selectedList, anchorPos, finalDir, finalMag)
 	else
-		-- Line: existing drag-to-resize behaviour.
-		if dragDir then
-			local hit      = raycastMouse()
-			local delta    = hit and Vector3.new(hit.X - anchorPos.X, 0, hit.Z - anchorPos.Z) or Vector3.zero
-			local mag      = delta.Magnitude
-			local finalDir = (mag > DRAG_THRESHOLD) and delta.Unit or dragDir
-			local finalMag = math.max(mag, DRAG_THRESHOLD)
-			layouts, facingDir = computeCompanyLayouts(selectedList, anchorPos, finalDir, finalMag)
-		else
-			local look = camera.CFrame.LookVector
-			facingDir  = Vector3.new(look.X, 0, look.Z)
-			if facingDir.Magnitude < 0.01 then
-				facingDir = Vector3.new(0, 0, -1)
-			end
-			facingDir  = facingDir.Unit
-			local rightDir   = facingDir:Cross(Vector3.new(0, 1, 0)).Unit
-			local totalWidth = getTotalWidthFromLastFormation(selectedList)
-			local leftEdge   = anchorPos - rightDir * (totalWidth / 2)
-			layouts, facingDir = computeCompanyLayouts(selectedList, leftEdge, rightDir, nil)
+		local look = camera.CFrame.LookVector
+		facingDir  = Vector3.new(look.X, 0, look.Z)
+		if facingDir.Magnitude < 0.01 then
+			facingDir = Vector3.new(0, 0, -1)
 		end
+		facingDir  = facingDir.Unit
+		local rightDir   = facingDir:Cross(Vector3.new(0, 1, 0)).Unit
+		local totalWidth = getTotalWidthFromLastFormation(selectedList)
+		local leftEdge   = anchorPos - rightDir * (totalWidth / 2)
+		layouts, facingDir = computeCompanyLayouts(selectedList, leftEdge, rightDir, nil)
 	end
 
 	if #layouts == 0 then
@@ -1149,7 +971,6 @@ local function toggleHUDs(menuVisible)
 	hud:SetVisible(not menuVisible)
 	matchHud:SetVisible(not menuVisible)
 	notifHud:SetVisible(not menuVisible)
-	modeGui.Enabled = not menuVisible
 end
 
 
