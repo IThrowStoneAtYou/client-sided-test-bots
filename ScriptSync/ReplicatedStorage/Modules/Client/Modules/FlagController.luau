@@ -1,22 +1,16 @@
 -->>>>>>>>>>>>
 -- FLAG_CONTROLLER
--- Version 1.0.0
+-- Version 1.1.0
 --
--- Manages all client-side flag visuals:
---   • Attaches f_flag model to bearer NPCs (friendly OR enemy carrier)
---   • Shows an anchored dropped-flag model in the world when the flag falls
---   • Plays the F_Idle wave animation on the held flag model
---   • Removes visuals on pickup / capture
---
--- API
---   FlagController.attachToNpc(clientModel)
---     → weld f_flag to the NPC's torso and play F_Idle
---   FlagController.detachFromNpc(shortId)
---     → destroy the welded model
---   FlagController.spawnDropped(ownerUserId, compIdx, position) 
---     → anchor a copy of f_flag at the given world position
---   FlagController.removeDropped(ownerUserId, compIdx)
---     → remove the anchored model
+-- Changes from 1.0:
+--   • Hover detection now uses WorldToScreenPoint (matches GetMouseLocation coords)
+--     instead of WorldToViewportPoint, fixing tooltips that would sometimes not
+--     appear when the billboard sits behind geometry or near screen edges.
+--   • Hit-test uses fixed pixel half-sizes (matching BillboardGui 50×45 px)
+--     plus an 8-px padding ring instead of the unreliable AbsoluteSize property.
+--   • lastKnownTickets / lastKnownBroken tables persist the bar state across
+--     flag hand-offs so the strength bar doesn't reset to full on every re-attach.
+--   • Removed stray debug print.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -30,7 +24,6 @@ local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 local localPlayer = Players.LocalPlayer
 
 -- ── Tooltip UI (Screen Space) ────────────────────────────────────────
--- We create this IMMEDIATELY at the top so it exists even if assets hang.
 local tooltipGui = Instance.new("ScreenGui")
 tooltipGui.Name = "tooltipGui"
 tooltipGui.ResetOnSpawn = false
@@ -43,7 +36,7 @@ local tooltipFrame = Instance.new("Frame")
 tooltipFrame.Size = UDim2.new(0, 160, 0, 45)
 tooltipFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 tooltipFrame.BackgroundTransparency = 0.2
-tooltipFrame.AnchorPoint = Vector2.new(1, 0) -- Top-right corner at cursor
+tooltipFrame.AnchorPoint = Vector2.new(0, 0)   -- anchor top-left; position right of cursor
 tooltipFrame.Parent = tooltipGui
 
 local tooltipStroke = Instance.new("UIStroke")
@@ -71,9 +64,14 @@ tooltipStrength.TextSize = 11
 tooltipStrength.TextXAlignment = Enum.TextXAlignment.Right
 tooltipStrength.Parent = tooltipFrame
 
+-- ── Hover hit-test constants ──────────────────────────────────────────
+-- BillboardGui is UDim2.new(0, 50, 0, 45) → half sizes are 25 and 22.
+-- Extra padding makes it easier to hover small flags.
+local HOVER_HALF_W = 25 + 8   -- 33 px
+local HOVER_HALF_H = 22 + 8   -- 30 px
+
 -- ── Asset paths ───────────────────────────────────────────────────────
 local FLAG_FOLDER  = ReplicatedStorage.Shared.Npc.Item:WaitForChild("Flag")
--- Use FindFirstChild or logic that won't hang the entire module if an asset is missing
 local FLAG_TEMPLATE = FLAG_FOLDER:FindFirstChild("f_flag")
 local FLAG_ANIM_OBJ = FLAG_FOLDER:FindFirstChild("F_Idle")
 
@@ -83,52 +81,48 @@ if not FLAG_ANIM_OBJ then warn("[FlagController] CRITICAL: F_Idle animation miss
 local BAR_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 -- ── State ─────────────────────────────────────────────────────────────
-local attachedFlags = {}   -- [shortId]          = { model: Model, motor: Motor6D, track: AnimationTrack? }
-local droppedFlags  = {}   -- [ownerUserId_compIdx] = Model
+local attachedFlags = {}   -- [shortId] = { model, motor, track }
+local droppedFlags  = {}   -- [key]     = Model
+local flagUIs       = {}   -- [key]     = { gui, fill, tickets, ownerId, isBroken }
 
-local flagUIs = {} -- [ownerUserId_compIdx] = { gui: BillboardGui, fill: Frame, tickets: number, ownerId: number }
+-- Persist bar state across flag hand-offs (carrier dies → new carrier).
+-- Without this, the bar always starts at 100% after re-attach.
+local lastKnownTickets: { [string]: number }  = {}
+local lastKnownBroken:  { [string]: boolean } = {}
+
 local FlagController = {}
 
 local activeHoverKey = nil
 
 -- ── Helpers ───────────────────────────────────────────────────────────
 
--- ── Tooltip hover: screen-space detection (replaces unreliable MouseEnter) ──
--- BillboardGui.AlwaysOnTop breaks Roblox's depth-based input hit detection,
--- so we manually check if the cursor is inside the billboard's screen quad.
+-- Heartbeat hover: use WorldToScreenPoint so coordinates match GetMouseLocation.
 RunService.Heartbeat:Connect(function()
 	local cam      = workspace.CurrentCamera
 	local mousePos = UserInputService:GetMouseLocation()
-	local newKey   = nil
+	local newKey: string? = nil
 
 	for key, data in pairs(flagUIs) do
-		-- Guard: adornee could be destroyed if NPC died
 		local ok, adornee = pcall(function() return data.gui and data.gui.Adornee end)
 		if not ok or not adornee then continue end
 
-		-- BillboardGui world position = adornee + StudsOffset (world-space Y)
-		local worldPos = adornee.Position + data.gui.StudsOffset
-
-		-- Project to screen. screenPos.Z is depth (negative = behind camera)
-		local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+		-- Project billboard center to screen space.
+		-- StudsOffset is world-space so add it to the adornee world position.
+		local worldPos  = adornee.Position + data.gui.StudsOffset
+		-- WorldToScreenPoint accounts for the GUI inset, matching GetMouseLocation.
+		local screenPos, onScreen = cam:WorldToScreenPoint(worldPos)
 		if not onScreen or screenPos.Z <= 0 then continue end
 
-		-- gui.Size is UDim2.new(0, 50, 0, 45) — fixed pixel size at any distance
-		local halfW = data.gui.AbsoluteSize.X * 0.5   -- 25
-		local halfH = data.gui.AbsoluteSize.Y * 0.5   -- 22.5
-
-		if math.abs(mousePos.X - screenPos.X) <= halfW
-			and math.abs(mousePos.Y - screenPos.Y) <= halfH then
+		if math.abs(mousePos.X - screenPos.X) <= HOVER_HALF_W
+			and math.abs(mousePos.Y - screenPos.Y) <= HOVER_HALF_H then
 			newKey = key
 			break
 		end
 	end
 
-	-- Toggle visibility only on state change
 	if newKey ~= activeHoverKey then
 		activeHoverKey = newKey
 		tooltipGui.Enabled = (newKey ~= nil)
-		print("tewst")
 	end
 
 	if not activeHoverKey then return end
@@ -136,7 +130,6 @@ RunService.Heartbeat:Connect(function()
 	local data = flagUIs[activeHoverKey]
 	if not data then return end
 
-	-- Stale guard (NPC out of range or adornee destroyed)
 	local ok, adornee = pcall(function() return data.gui and data.gui.Adornee end)
 	if not ok or not adornee then
 		activeHoverKey = nil
@@ -144,21 +137,18 @@ RunService.Heartbeat:Connect(function()
 		return
 	end
 
-	-- Update tooltip text
+	-- Update tooltip content
 	local ratio  = math.clamp(data.tickets / GameSettings.MAX_TICKETS, 0, 1)
 	local player = Players:GetPlayerByUserId(data.ownerId)
 
-	tooltipOwner.Text      = player and player.Name or "Unknown"
+	tooltipOwner.Text       = player and player.Name or "Unknown"
 	tooltipOwner.TextColor3 = (player and player.TeamColor)
 		and player.TeamColor.Color
 		or Color3.new(1, 1, 1)
-	tooltipStrength.Text = "Company strength is " .. math.floor(ratio * 100) .. "%"
+	tooltipStrength.Text    = "Company strength: " .. math.floor(ratio * 100) .. "%"
 
-	-- Position tooltip: anchor is top-left at cursor so it never clips off-screen left
-	-- (original had AnchorPoint (1,0) which pushed it LEFT of cursor — kept intentional
-	--  but clamp so it can't go off the left edge)
-	local tx = math.max(data.gui.AbsoluteSize.X + 10, mousePos.X - 10)
-	tooltipFrame.Position = UDim2.new(0, tx, 0, mousePos.Y + 10)
+	-- Position tooltip to the right of and slightly below the cursor
+	tooltipFrame.Position = UDim2.new(0, mousePos.X + 16, 0, mousePos.Y + 10)
 end)
 
 local function makeKey(ownerUserId: number, compIdx: number): string
@@ -177,39 +167,38 @@ end
 
 local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: number)
 	local key = makeKey(ownerUserId, compIdx)
-	
+
 	local bgui = Instance.new("BillboardGui")
-	bgui.Name = "FlagStatusUI"
-	bgui.Size = UDim2.new(0, 50, 0, 45)
-	bgui.StudsOffset = Vector3.new(0, 47, 0) -- Floats just above the flag
+	bgui.Name        = "FlagStatusUI"
+	bgui.Size        = UDim2.new(0, 50, 0, 45)
+	bgui.StudsOffset = Vector3.new(0, 47, 0)
 	bgui.AlwaysOnTop = true
 	bgui.MaxDistance = 250
-	bgui.Active = true
-	
+	bgui.Active      = true
+
 	local container = Instance.new("TextButton")
-	container.Size = UDim2.new(1, 0, 1, 0)
-	container.BackgroundTransparency = 0.99 -- Essential for hover detection
-	container.Text = ""
+	container.Size                 = UDim2.new(1, 0, 1, 0)
+	container.BackgroundTransparency = 0.99
+	container.Text   = ""
 	container.Active = true
 	container.Parent = bgui
 
 	-- Nation Icon
 	local icon = Instance.new("ImageLabel")
-	icon.Name = "NationIcon"
-	icon.Size = UDim2.new(0, 24, 0, 24)
-	icon.Position = UDim2.new(0.5, 0, 0.4, 0)
-	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Name                = "NationIcon"
+	icon.Size                = UDim2.new(0, 24, 0, 24)
+	icon.Position            = UDim2.new(0.5, 0, 0.4, 0)
+	icon.AnchorPoint         = Vector2.new(0.5, 0.5)
 	icon.BackgroundTransparency = 1
-	icon.Image = "rbxassetid://13488010851" -- Default
-	icon.ZIndex = 2
-	icon.Parent = container
+	icon.Image               = "rbxassetid://13488010851"
+	icon.ZIndex              = 2
+	icon.Parent              = container
 
 	local function updateFlagIcon()
-		local player = game.Players:GetPlayerByUserId(ownerUserId)
-		if not player then return end
-
-		local sideIdx = player:GetAttribute("SideIndex")
-		local regIdx = player:GetAttribute("RegimentIndex")
+		local p = game.Players:GetPlayerByUserId(ownerUserId)
+		if not p then return end
+		local sideIdx = p:GetAttribute("SideIndex")
+		local regIdx  = p:GetAttribute("RegimentIndex")
 		if sideIdx and regIdx and sideIdx > 0 then
 			local _, nationKey = RegimentData.GetRegimentInfo(sideIdx, regIdx)
 			if nationKey then
@@ -223,10 +212,8 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 		end
 	end
 
-	-- Initial update
 	updateFlagIcon()
 
-	-- Workaround: Listen for regiment changes so icons update correctly for other players' bots
 	local ownerPlayer = game.Players:GetPlayerByUserId(ownerUserId)
 	if ownerPlayer then
 		ownerPlayer:GetAttributeChangedSignal("SideIndex"):Connect(updateFlagIcon)
@@ -235,22 +222,27 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 
 	-- Strength Bar
 	local barBg = Instance.new("Frame")
-	barBg.Size = UDim2.new(0.8, 0, 0, 4)
-	barBg.Position = UDim2.new(0.1, 0, 0.8, 0)
-	barBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	barBg.Size                = UDim2.new(0.8, 0, 0, 4)
+	barBg.Position            = UDim2.new(0.1, 0, 0.8, 0)
+	barBg.BackgroundColor3    = Color3.fromRGB(0, 0, 0)
 	barBg.BackgroundTransparency = 0.4
-	barBg.BorderSizePixel = 0
-	barBg.Parent = container
+	barBg.BorderSizePixel     = 0
+	barBg.Parent              = container
 
 	local barFill = Instance.new("Frame")
-	barFill.Name = "Fill"
-	barFill.Size = UDim2.new(1, 0, 1, 0)
-	barFill.BackgroundColor3 = Color3.fromRGB(0, 120, 220)
-	barFill.BorderSizePixel = 0
-	barFill.Parent = barBg
+	barFill.Name               = "Fill"
+	barFill.Size               = UDim2.new(1, 0, 1, 0)
+	barFill.BackgroundColor3   = Color3.fromRGB(0, 120, 220)
+	barFill.BorderSizePixel    = 0
+	barFill.Parent             = barBg
 
-	-- Workaround: Parent to the part directly for visibility, 
-	-- but keep Adornee set so the tooltip logic can find the position.
+	-- ── Restore last known bar state so the bar doesn't flicker to 100% ──
+	local initTickets = lastKnownTickets[key] or GameSettings.MAX_TICKETS
+	local initBroken  = lastKnownBroken[key]  or false
+	local initRatio   = math.clamp(initTickets / GameSettings.MAX_TICKETS, 0, 1)
+	barFill.Size             = UDim2.new(initRatio, 0, 1, 0)
+	barFill.BackgroundColor3 = initBroken and Color3.fromRGB(200, 50, 50) or getTicketColor(initRatio)
+
 	bgui.Adornee = parentPart
 	if parentPart:IsA("BasePart") then
 		bgui.Parent = parentPart
@@ -259,10 +251,11 @@ local function createFlagUI(parentPart: BasePart, ownerUserId: number, compIdx: 
 	end
 
 	flagUIs[key] = {
-		gui = bgui,
-		fill = barFill,
-		tickets = GameSettings.MAX_TICKETS,
-		ownerId = ownerUserId
+		gui      = bgui,
+		fill     = barFill,
+		tickets  = initTickets,
+		ownerId  = ownerUserId,
+		isBroken = initBroken,
 	}
 	return bgui
 end
@@ -278,10 +271,8 @@ local function disableCollision(model: Model)
 end
 
 local function playFlagAnim(model: Model)
-	-- Mirroring MusketUtils: Find Humanoid/Controller and its Animator
 	local container = model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildOfClass("AnimationController")
-	local animator = container and container:FindFirstChildOfClass("Animator")
-
+	local animator  = container and container:FindFirstChildOfClass("Animator")
 	if not animator then return nil end
 
 	local ok, track = pcall(function()
@@ -289,7 +280,7 @@ local function playFlagAnim(model: Model)
 	end)
 	if ok and track then
 		track.Priority = Enum.AnimationPriority.Action
-		track.Looped = true
+		track.Looped   = true
 		track:Play()
 		return track
 	end
@@ -298,9 +289,6 @@ end
 
 -- ── Public API ────────────────────────────────────────────────────────
 
--->>>>>>>>>>>>
--- Welds a copy of f_flag to the given client NPC model (by Torso attachment).
--- shortId is used to key the attachment so it can be removed later.
 function FlagController.attachToNpc(clientModel: Model)
 	local shortId = tonumber(clientModel.Name:sub(5))
 	if not shortId then return end
@@ -308,7 +296,6 @@ function FlagController.attachToNpc(clientModel: Model)
 	local ownerId = clientModel:GetAttribute("OwnerUserId")
 	local compIdx = clientModel:GetAttribute("CompanyIndex")
 
-	-- Remove any existing flag on this NPC first.
 	FlagController.detachFromNpc(shortId)
 
 	local torso = clientModel:FindFirstChild("Torso")
@@ -317,35 +304,25 @@ function FlagController.attachToNpc(clientModel: Model)
 	local flagModel = FLAG_TEMPLATE:Clone()
 	flagModel.Name  = "HeldFlag"
 
-	-- Determine the primary attachment part (Prefer 'Handle' as requested).
 	local handlePart = flagModel:FindFirstChild("Handle") or flagModel.PrimaryPart or flagModel:FindFirstChildOfClass("BasePart")
-	if not handlePart then
-		flagModel:Destroy()
-		return
-	end
+	if not handlePart then flagModel:Destroy(); return end
 
-	-- Anchor temporarily so we can weld/motorize properly without physics fighting us.
 	for _, p in ipairs(flagModel:GetDescendants()) do
-		if p:IsA("BasePart") then
-			p.Anchored = true
-		end
+		if p:IsA("BasePart") then p.Anchored = true end
 	end
 
 	flagModel.Parent = clientModel
 
-	local motor       = Instance.new("Motor6D")
-	motor.Name        = "FlagGrip"
-	motor.Part0       = torso
-	motor.Part1       = handlePart
-	motor.C0          = CFrame.new()
-	motor.C1          = CFrame.new()
-	motor.Parent      = torso
+	local motor    = Instance.new("Motor6D")
+	motor.Name     = "FlagGrip"
+	motor.Part0    = torso
+	motor.Part1    = handlePart
+	motor.C0       = CFrame.new()
+	motor.C1       = CFrame.new()
+	motor.Parent   = torso
 
-	-- Unanchor so the weld can move it.
 	for _, p in ipairs(flagModel:GetDescendants()) do
-		if p:IsA("BasePart") then
-			p.Anchored = false
-		end
+		if p:IsA("BasePart") then p.Anchored = false end
 	end
 	disableCollision(flagModel)
 
@@ -357,62 +334,40 @@ function FlagController.attachToNpc(clientModel: Model)
 	attachedFlags[shortId] = { model = flagModel, motor = motor, track = track }
 end
 
--->>>>>>>>>>>>
--- Removes the welded flag from the NPC with the given shortId.
 function FlagController.detachFromNpc(shortId: number)
 	local data = attachedFlags[shortId]
 	if not data then return end
 
-	local ownerId = data.model.Parent:GetAttribute("OwnerUserId")
-	local compIdx = data.model.Parent:GetAttribute("CompanyIndex")
+	local ownerId = data.model.Parent and data.model.Parent:GetAttribute("OwnerUserId")
+	local compIdx = data.model.Parent and data.model.Parent:GetAttribute("CompanyIndex")
 	if ownerId and compIdx then
 		local key = makeKey(ownerId, compIdx)
 		if flagUIs[key] then flagUIs[key].gui:Destroy(); flagUIs[key] = nil end
 	end
 
-	if data.track then
-		pcall(function() data.track:Stop() end)
-	end
-	if data.motor and data.motor.Parent then
-		data.motor:Destroy()
-	end
-	if data.model and data.model.Parent then
-		data.model:Destroy()
-	end
+	if data.track then pcall(function() data.track:Stop() end) end
+	if data.motor and data.motor.Parent then data.motor:Destroy() end
+	if data.model and data.model.Parent then data.model:Destroy() end
 
 	attachedFlags[shortId] = nil
 end
 
--->>>>>>>>>>>>
--- Spawns an anchored dropped-flag model at the given world position.
--- Uses a raycast (already done on server) result sent via FlagDropped.
 function FlagController.spawnDropped(ownerUserId: number, compIdx: number, position: Vector3)
 	local key = makeKey(ownerUserId, compIdx)
-
-	-- Remove any stale model for this flag slot.
 	FlagController.removeDropped(ownerUserId, compIdx)
 
 	local flagModel = FLAG_TEMPLATE:Clone()
 	flagModel.Name  = "DroppedFlag_" .. key
 
-	-- Anchor every part; flag lies on the ground.
 	for _, p in ipairs(flagModel:GetDescendants()) do
-		if p:IsA("BasePart") then
-			p.Anchored = true
-		end
+		if p:IsA("BasePart") then p.Anchored = true end
 	end
 	disableCollision(flagModel)
 
-	-- Tilt the flag slightly as if it's stuck in the ground.
-	-- The flag pole stands upright; rotate if needed based on model orientation.
 	local rootPart = flagModel.PrimaryPart or flagModel:FindFirstChildOfClass("BasePart")
-	if rootPart then
-		flagModel:PivotTo(CFrame.new(position))
-	end
+	if rootPart then flagModel:PivotTo(CFrame.new(position)) end
 
 	flagModel.Parent = workspace
-
-	-- Play idle wave even on the dropped model.
 	playFlagAnim(flagModel)
 
 	if rootPart then
@@ -423,32 +378,34 @@ function FlagController.spawnDropped(ownerUserId: number, compIdx: number, posit
 end
 
 -->>>>>>>>>>>>
--- Updates the bar fill and color based on company health.
+-- Updates the strength bar. Persists ticket/broken values so re-attached flags
+-- start at the correct bar level instead of resetting to 100%.
 function FlagController.updateFlagUI(ownerUserId: number, compIdx: number, tickets: number, isBroken: boolean)
-	local key = makeKey(ownerUserId, compIdx)
+	local key  = makeKey(ownerUserId, compIdx)
+
+	-- Always persist so re-created UIs can restore the last known state.
+	lastKnownTickets[key] = tickets
+	lastKnownBroken[key]  = isBroken
+
 	local data = flagUIs[key]
 	if not data then return end
 
 	local ratio = math.clamp(tickets / GameSettings.MAX_TICKETS, 0, 1)
 	local color = isBroken and Color3.fromRGB(200, 50, 50) or getTicketColor(ratio)
-	data.tickets = tickets
+	data.tickets  = tickets
 	data.isBroken = isBroken
 
 	TweenService:Create(data.fill, BAR_TWEEN, {
-		Size = UDim2.new(ratio, 0, 1, 0),
-		BackgroundColor3 = color
+		Size             = UDim2.new(ratio, 0, 1, 0),
+		BackgroundColor3 = color,
 	}):Play()
 end
 
--->>>>>>>>>>>>
--- Removes the anchored dropped-flag model for the given company.
 function FlagController.removeDropped(ownerUserId: number, compIdx: number)
 	local key   = makeKey(ownerUserId, compIdx)
 	local model = droppedFlags[key]
-	if model and model.Parent then
-		model:Destroy()
-	end
-	
+	if model and model.Parent then model:Destroy() end
+
 	if flagUIs[key] then
 		flagUIs[key].gui:Destroy()
 		flagUIs[key] = nil
