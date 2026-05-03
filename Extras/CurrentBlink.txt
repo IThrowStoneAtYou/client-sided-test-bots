@@ -102,9 +102,9 @@ event NpcCanAttackSync {
 
 event NpcHitReport {
     From: Client,
-    Type: Reliable,
+    Type: Unreliable,    -- Change from Reliable to Unreliable
     Call: ManyAsync,
-    Data: (u16, u16, vector) -- attackerId, victimId (0 if miss), actualHitPos
+    Data: (u16, u16, vector)
 }
 
 event NpcFire {
@@ -232,4 +232,45 @@ event RequestTeamReset {
     From: Client,
     Type: Reliable,
     Call: SingleAsync
+}
+
+-- ── Flag System ────────────────────────────────────────────────────────
+
+-- Fired when a bearer dies and the flag falls to the ground.
+event FlagDropped {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (f64, u8, vector<f32>)
+    -- ownerUserId, companyIndex, worldPosition
+}
+
+-- Fired when any NPC picks up a dropped flag.
+-- isFriendly = true  → the NPC is the flag owner's team (new bearer).
+-- isFriendly = false → enemy NPC grabbed it (capture begins).
+event FlagPickedUp {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (f64, u8, u16, boolean)
+    -- ownerUserId, companyIndex, pickerShortId, isFriendly
+}
+
+-- Fired once per second while an enemy is actively holding the flag.
+-- secondsElapsed counts up to FLAG_CAPTURE_TIME.
+event FlagCaptureProgress {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (f64, u8, f32)
+    -- ownerUserId, companyIndex, secondsElapsed
+}
+
+-- Fired when the 20-second capture timer expires — company is captured.
+event FlagCaptured {
+    From: Server,
+    Type: Reliable,
+    Call: ManyAsync,
+    Data: (f64, u8, f64, u8)
+    -- victimUserId, victimCompIdx, captorUserId, captorCompIdx
 }

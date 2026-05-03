@@ -1,11 +1,6 @@
 -->>>>>>>>>>>>
 -- REGIMENT_FORMATION
 -- Version 1.1.0
---
--- Spacing Constants:
---   - RANK_SPACING = 5 studs (left-right between soldiers)
---   - RANK_DEPTH = 5 studs (front-back between rows)
---
 -->>>>>>>>>>>>
 
 local RegimentFormation = {}
@@ -19,20 +14,13 @@ local RANK_DEPTH   = 5    -- studs between ranks front to back
 --
 -- Algorithm:
 --   files = floor(dragMagnitude / RANK_SPACING) + 1, clamped to [1, count]
---   ranks = ceil(count / files)
---
--- Example: count=10, drag=20 studs
---   files = floor(20 / 5) + 1 = 5
---   ranks = ceil(10 / 5) = 2
---   Result: 2 ranks × 5 files = 10 soldiers in an elongated line
---
 function RegimentFormation.dragToLayout(count: number, dragMagnitude: number): (number, number)
 	-- files derived from width dragged, clamped between 1 and count
 	local files = math.floor(dragMagnitude / RANK_SPACING) + 1
 	files = math.clamp(files, 1, count)   -- allow 1 (column) through count (flat line)
-	
+
 	local ranks = math.ceil(count / files)
-	
+
 	return ranks, files
 end
 
@@ -51,16 +39,6 @@ end
 --   count: Total number of soldiers
 --   ranks: Number of rows (front to back)
 --   files: Number of columns (left to right)
---
--- Slot Algorithm:
---   Simple grid layout: soldiers fill left-to-right, front-to-back
---   No clustering, no special modes.
---
--- Example (12 soldiers, files=4):
---   O O O O    (rank 1)
---   O O O O    (rank 2)
---   O O O O    (rank 3)
---
 function RegimentFormation.getSlots(anchorCF: CFrame, count: number, ranks: number, files: number): {CFrame}
 	local slots  = {}
 	local right  = anchorCF.RightVector

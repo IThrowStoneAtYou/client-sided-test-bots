@@ -134,13 +134,20 @@ end
 
 local function applyWalkSpeedNow()
 	local registry = workspace:FindFirstChild("Npc_Registry_Server")
-	if not registry then return end
+	if not registry then 
+		print("[Admin] Warning: Npc_Registry_Server folder not found - no NPCs to update yet")
+		return 
+	end
+	
+	local count = 0
 	for _, model in ipairs(registry:GetChildren()) do
 		local hum = model:FindFirstChildOfClass("Humanoid")
 		if hum then
 			hum.WalkSpeed = GameSettings.WALK_SPEED
+			count += 1
 		end
 	end
+	print(string.format("[Admin] Applied WalkSpeed %.1f to %d NPCs", GameSettings.WALK_SPEED, count))
 end
 
 local function cfChanged(cf, lastCF, npc)
@@ -733,7 +740,12 @@ Network.RequestTeamReset.On(function(player: Player)
 end)
 
 Network.AdminUpdateBots.On(function(player, data)
-	if not isAdmin(player) then return end
+	if not isAdmin(player) then 
+		print(string.format("[Admin] Non-admin %s attempted to update bot settings", player.Name))
+		return 
+	end
+
+	print(string.format("[Admin] Updating bot settings by %s | WalkSpeed: %.1f", player.Name, data.walkSpeed))
 
 	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
 	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
@@ -910,21 +922,12 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	local targetPlayer = Players:GetPlayerByUserId(targetOwnerUserId)
 	if not targetPlayer then return end
 	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
+	
+	-- Prevent friendly fire (same team)
+	if targetPlayer.Team == player.Team then return end
+	
 	comp.meleeTargetPlayer  = targetPlayer
 	comp.meleeTargetCompIdx = targetCompanyIndex
-
-	local targetComp = companies[targetPlayer][targetCompanyIndex]
-	if targetComp and targetComp.isMelee then
-		targetComp.meleeTargetPlayer  = player
-		targetComp.meleeTargetCompIdx = companyIndex
-		for _, eSid in ipairs(targetComp.slots) do
-			local eNpc = activeNpcs[eSid]
-			if eNpc and not eNpc.IsFlagBearer then
-				eNpc.MeleeTarget = nil
-				sf.setNpcMeleeState(eNpc, MELEE_IDLE)
-			end
-		end
-	end
 
 	for _, shortId in ipairs(comp.slots) do
 		task.spawn(function()
@@ -944,11 +947,8 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 			local initialState = math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START
 			
 			local targetComp = companies[targetPlayer] and companies[targetPlayer][targetCompanyIndex]
-			if targetComp and #targetComp.slots > 0 then
-				-- Acquisition logic inside setNpcMeleeState or updateNpcMelee will now handle 
-				-- the NoobPath:Run(part) call independently for this NPC.
-			end
-
+		-- Acquisition logic inside setNpcMeleeState or updateNpcMelee will now handle
+		-- the NoobPath:Run(part) call independently for this NPC.
 			sf.setNpcMeleeState(npc, initialState)
 		end)
 	end

@@ -30,6 +30,8 @@ RegimentData.Sides = {
 					},
 				},
 			},
+			
+			--[[
 			{
 				key      = "warsaw",
 				name     = "Duchy of Warsaw",
@@ -52,6 +54,8 @@ RegimentData.Sides = {
 					},
 				},
 			},
+			--[[]]
+			
 		},
 	},
 	[2] = {
@@ -83,6 +87,8 @@ RegimentData.Sides = {
 					},
 				},
 			},
+			
+			--[[
 			{
 				key      = "prussia",
 				name     = "Kingdom of Prussia",
@@ -105,6 +111,8 @@ RegimentData.Sides = {
 					},
 				},
 			},
+			--[[]]
+			
 		},
 	},
 }

@@ -1,14 +1,17 @@
 -->>>>>>>>>>>>
 -- SERVER_FUNCTIONS
--- Version 2.1.0
+-- Version 2.2.0
 --
--- v2.1 changes:
---   • Flag capture timer now broadcasts via NpcCompanyStrength (isBroken=true,
---     brokenTimer=remaining seconds) so the client brokenPrompt handles display.
---     FlagCaptureProgress is no longer used.
---   • Melee pathfinder: Run() now takes a position snapshot instead of a live
---     BasePart, preventing NoobPath from recomputing every frame.
---   • Melee pursuit (BOT_IDLE/UP_IDLE) throttled to one path recalc per 0.5s.
+-- v2.2 changes:
+--   • captureFlag now calls ctx.respawnAfterOverrun so the victim company is
+--     automatically despawned and respawned 5 s later.
+--   • killNpc #slots==0 wipeout path also calls respawnAfterOverrun when the
+--     flag is in a dropped state (no survivors to pick it up themselves).
+--   • updateFlagStates enemy-held branch now periodically paths victim company
+--     soldiers toward the enemy carrier so they can intercept and stop the
+--     capture timer before it reaches 0.
+--   • Chase assignment is throttled (2 s) and respects existing _goingForFlag
+--     assignments to avoid conflicting with the normal pickup logic.
 -->>>>>>>>>>>>
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -149,9 +152,7 @@ function ServerFunctions.init(ctx)
 		npc.MeleeState       = state
 		npc._meleePathAccum  = 0
 		npc.MeleeTimer       = (C.MELEE_DURATIONS[state] or 0) + (math.random() * 0.2)
-		
-		-- Desync pursuit timers immediately on state entry
-		npc._meleePursuitAccum = math.random() * 0.2 
+		npc._meleePursuitAccum = math.random() * 0.2
 
 		if state == C.MELEE_BOT_START or state == C.MELEE_UP_START or state == C.MELEE_IDLE then
 			npc.MeleeHasHit = false
@@ -252,9 +253,7 @@ function ServerFunctions.init(ctx)
 			local tComp    = companies[tOwner] and companies[tOwner][tCompIdx]
 			if tComp and tComp.flagState then
 				local fs = tComp.flagState
-				if fs.pickupNpcId == shortId then
-					fs.pickupNpcId = nil
-				end
+				if fs.pickupNpcId == shortId then fs.pickupNpcId = nil end
 				for i = #(fs.captureNpcs or {}), 1, -1 do
 					if fs.captureNpcs[i] == shortId then
 						table.remove(fs.captureNpcs, i)
@@ -276,8 +275,22 @@ function ServerFunctions.init(ctx)
 			if comp.slots[i] == shortId then
 				table.remove(comp.slots, i)
 				MatchManager.onBotDied(npc.TeamName)
+
 				if #comp.slots == 0 then
+					-- Company fully wiped out.
 					MatchManager.onCompanyOverrun(owner, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
+
+					-- If flag is dropped (no survivors to pick it up), schedule a full respawn.
+					-- This prevents the company from being permanently stuck with bearerRespawnGate=true
+					-- and an empty respawnQueue that can never be flushed.
+					if not comp._overrunScheduled then
+						comp._overrunScheduled = true
+						if ctx.respawnAfterOverrun then
+							task.spawn(function()
+								ctx.respawnAfterOverrun(owner)
+							end)
+						end
+					end
 				end
 				break
 			end
@@ -289,6 +302,7 @@ function ServerFunctions.init(ctx)
 			dropFlag(owner, compIdx, deadPos)
 
 		elseif isEnemyCarrier and carriedFlagOwner and carriedFlagComp then
+			-- Enemy carrier killed → flag drops back to the ground for friendly pickup
 			dropFlag(carriedFlagOwner, carriedFlagComp, deadPos)
 
 		else
@@ -306,7 +320,7 @@ function ServerFunctions.init(ctx)
 					s.RegimentTarget = slots[i].Position
 					s.MoveRetries    = 0
 					task.spawn(function()
-						if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+						if s.ActiveTween then s.ActiveTween:Cancel(); s.ActiveTween = nil end
 						s.Pathfinder:Stop()
 						s.Pathfinder:Run(slots[i].Position)
 					end)
@@ -366,6 +380,8 @@ function ServerFunctions.init(ctx)
 			capturingPlayer  = nil,
 			capturingCompIdx = nil,
 			reassignCooldown = 0,
+			-- chase throttle (used when enemy holds the flag)
+			_chaseAccum      = 0,
 		}
 
 		comp.bearerRespawnGate = true
@@ -375,7 +391,6 @@ function ServerFunctions.init(ctx)
 		end
 
 		print(string.format("[Flag] Company %d of %s dropped flag at %s", companyIndex, player.Name, tostring(flagPos)))
-
 		assignFlagPickup(player, companyIndex)
 	end
 
@@ -414,7 +429,7 @@ function ServerFunctions.init(ctx)
 			end
 
 			task.spawn(function()
-				if nearest.ActiveTween then nearest.ActiveTween:Cancel() nearest.ActiveTween = nil end
+				if nearest.ActiveTween then nearest.ActiveTween:Cancel(); nearest.ActiveTween = nil end
 				nearest.Pathfinder:Stop()
 				nearest.Pathfinder:Run(flagPos)
 			end)
@@ -450,7 +465,7 @@ function ServerFunctions.init(ctx)
 			captureAccum = 0, captureBroadcastAccum = 0,
 			pickupNpcId = nil, captureNpcs = {},
 			capturingPlayer = nil, capturingCompIdx = nil,
-			reassignCooldown = 0,
+			reassignCooldown = 0, _chaseAccum = 0,
 		}
 
 		comp.bearerRespawnGate = false
@@ -466,7 +481,7 @@ function ServerFunctions.init(ctx)
 			npc.RegimentTarget = targetCF.Position
 			npc.MoveRetries    = 0
 			task.spawn(function()
-				if npc.ActiveTween then npc.ActiveTween:Cancel() npc.ActiveTween = nil end
+				if npc.ActiveTween then npc.ActiveTween:Cancel(); npc.ActiveTween = nil end
 				npc.Pathfinder:Stop()
 				npc.Pathfinder:Run(npc.RegimentTarget)
 			end)
@@ -487,7 +502,7 @@ function ServerFunctions.init(ctx)
 				s.RegimentTarget = slots[i].Position
 				s.MoveRetries    = 0
 				task.spawn(function()
-					if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+					if s.ActiveTween then s.ActiveTween:Cancel(); s.ActiveTween = nil end
 					s.Pathfinder:Stop()
 					s.Pathfinder:Run(slots[i].Position)
 				end)
@@ -498,7 +513,7 @@ function ServerFunctions.init(ctx)
 	end
 
 	assignEnemyCapture = function(ePlayer, eCompIdx, victimPlayer, victimCompIdx)
-		local eComp     = companies[ePlayer] and companies[ePlayer][eCompIdx]
+		local eComp      = companies[ePlayer] and companies[ePlayer][eCompIdx]
 		local victimComp = companies[victimPlayer] and companies[victimPlayer][victimCompIdx]
 		if not eComp or not victimComp then return end
 
@@ -574,6 +589,7 @@ function ServerFunctions.init(ctx)
 		fs.holderNpcId   = npc.ShortId
 		fs.captureAccum  = 0
 		fs.captureBroadcastAccum = 0
+		fs._chaseAccum   = 0   -- reset chase timer on fresh pickup
 		fs.capturingPlayer  = ePlayer
 		fs.capturingCompIdx = eCompIdx
 
@@ -614,7 +630,7 @@ function ServerFunctions.init(ctx)
 			captureAccum = 0, captureBroadcastAccum = 0,
 			pickupNpcId = nil, captureNpcs = {},
 			capturingPlayer = nil, capturingCompIdx = nil,
-			reassignCooldown = 0,
+			reassignCooldown = 0, _chaseAccum = 0,
 		}
 		comp.bearerRespawnGate = true
 
@@ -627,7 +643,17 @@ function ServerFunctions.init(ctx)
 
 		MatchManager.onCompanyOverrun(victimPlayer, victimCompIdx, captorPlayer, captorCompIdx)
 
-		print(string.format("[Flag] %s co%d CAPTURED by %s co%d",
+		-- Trigger full company despawn + 5-second respawn delay.
+		if not comp._overrunScheduled then
+			comp._overrunScheduled = true
+			if ctx.respawnAfterOverrun then
+				task.spawn(function()
+					ctx.respawnAfterOverrun(victimPlayer)
+				end)
+			end
+		end
+
+		print(string.format("[Flag] %s co%d CAPTURED by %s co%d — scheduling respawn",
 			victimPlayer.Name, victimCompIdx,
 			captorPlayer and captorPlayer.Name or "?", captorCompIdx or 0))
 	end
@@ -646,6 +672,7 @@ function ServerFunctions.init(ctx)
 		if comp.isBroken          then return end
 		if comp.bearerRespawnGate then return end
 		if comp.isRespawning      then return end
+		if comp._overrunScheduled then return end   -- overrun respawn is handling this
 		if not comp.respawnQueue or #comp.respawnQueue == 0 then return end
 
 		local bearerPos
@@ -719,7 +746,7 @@ function ServerFunctions.init(ctx)
 						s.RegimentTarget = slots[j].Position
 						s.MoveRetries    = 0
 						task.spawn(function()
-							if s.ActiveTween then s.ActiveTween:Cancel() s.ActiveTween = nil end
+							if s.ActiveTween then s.ActiveTween:Cancel(); s.ActiveTween = nil end
 							s.Pathfinder:Stop()
 							s.Pathfinder:Run(slots[j].Position)
 						end)
@@ -774,12 +801,23 @@ function ServerFunctions.init(ctx)
 				setNpcWeaponState(npc, C.WEAPON_IDLE, nil)
 				npc.WeaponTarget = nil
 			end
+			
+			-- Allow completing reload cycle even if canShoot is false
+			if reloading then
+				npc.WeaponTimer -= dt
+				if npc.WeaponTimer <= 0 then
+					if npc.WeaponState == C.WEAPON_RELOAD_IDLE then
+						setNpcWeaponState(npc, C.WEAPON_RELOAD, nil)
+					elseif npc.WeaponState == C.WEAPON_RELOAD then
+						npc.WeaponTarget = nil
+						setNpcWeaponState(npc, C.WEAPON_IDLE, nil)
+					end
+				end
+			end
 			return
 		end
 
 		if npc.WeaponState == C.WEAPON_IDLE then
-			-- Throttling targeting: only scan for enemies every 0.3s to 0.5s.
-			-- At 900 NPCs, per-frame scanning will crash the server.
 			npc._targetSearchAccum = (npc._targetSearchAccum or 0) + dt
 			if npc._targetSearchAccum < (0.3 + math.random() * 0.2) then return end
 			npc._targetSearchAccum = 0
@@ -787,7 +825,7 @@ function ServerFunctions.init(ctx)
 			local myTeam         = npc.TeamName
 			local myPos          = npc.Root.Position
 			local enemiesInRange = {}
-			
+
 			for _, other in pairs(activeNpcs) do
 				if other ~= npc then
 					local otherTeam = other.TeamName
@@ -955,8 +993,8 @@ function ServerFunctions.init(ctx)
 					if e and e.Root then
 						local d = (e.Root.Position - npc.Root.Position).Magnitude
 						if d < nearestDist and d < GameSettings.MELEE_BEARER_FLEE_RANGE then
-							nearestDist      = d
-							nearestEnemyPos  = e.Root.Position
+							nearestDist     = d
+							nearestEnemyPos = e.Root.Position
 						end
 					end
 				end
@@ -982,7 +1020,6 @@ function ServerFunctions.init(ctx)
 		local targetComp = comp.meleeTargetPlayer and companies[comp.meleeTargetPlayer] and companies[comp.meleeTargetPlayer][comp.meleeTargetCompIdx]
 
 		if npc.MeleeState == C.MELEE_IDLE then
-			-- 1. Throttle target acquisition (Don't scan every frame)
 			npc._targetSearchAccum = (npc._targetSearchAccum or 0) + dt
 			if npc._targetSearchAccum < 0.25 then return end
 			npc._targetSearchAccum = 0
@@ -997,7 +1034,7 @@ function ServerFunctions.init(ctx)
 				end
 			end
 			if nearest then
-				npc.MeleeTarget        = nearest
+				npc.MeleeTarget = nearest
 				setNpcMeleeState(npc, math.random() < 0.5 and C.MELEE_BOT_START or C.MELEE_UP_START)
 				if nearest.Root then
 					npc.Pathfinder:Stop()
@@ -1021,8 +1058,6 @@ function ServerFunctions.init(ctx)
 				npc.Pathfinder:Stop()
 				setNpcMeleeState(npc, npc.MeleeState == C.MELEE_BOT_IDLE and C.MELEE_BOT_ATK or C.MELEE_UP_ATK)
 			else
-				-- Use direct MoveTo for pursuit to avoid pathfinding overhead during melee.
-				-- Throttled slightly to 0.15s to keep the chase snappy but efficient.
 				npc._meleePursuitAccum = (npc._meleePursuitAccum or 0) + dt
 				if npc._meleePursuitAccum >= 0.15 then
 					npc._meleePursuitAccum = 0
@@ -1038,7 +1073,7 @@ function ServerFunctions.init(ctx)
 			if npc.MeleeTarget and npc.MeleeTarget.Root then
 				if npc._meleePathAccum == 0 then
 					npc._meleePathAccum    = 1
-					npc._meleePursuitAccum = 0  -- reset so next approach fires immediately
+					npc._meleePursuitAccum = 0
 					local fleeDir = (npc.Root.Position - npc.MeleeTarget.Root.Position).Unit
 					npc.Pathfinder:Stop()
 					npc.Humanoid:MoveTo(npc.Root.Position + fleeDir * 8)
@@ -1117,35 +1152,66 @@ function ServerFunctions.init(ctx)
 					end
 				end
 
-				-- ── Enemy held: advance capture timer ─────────────────────
+				-- ── Enemy held: advance capture timer + friendly chase ─────
 				if fs.isEnemyHeld then
 					local holder = activeNpcs[fs.holderNpcId]
 					if not holder then
-						-- Carrier was killed; dropFlag already called from killNpc.
 						fs.isEnemyHeld = false
 						fs.holderNpcId = nil
 						continue
 					end
 
+					-- ── Friendly chase: path victim company soldiers toward the carrier
+					-- so they can engage in combat and potentially kill it, resetting the
+					-- capture timer.  Throttled to every 2 s to avoid pathfinder spam.
+					fs._chaseAccum = (fs._chaseAccum or 0) + dt
+					if fs._chaseAccum >= 2 then
+						fs._chaseAccum = 0
+						local carrierPos = holder.Root.Position
+
+						-- Send soldiers from the victim company toward the carrier.
+						for _, sid in ipairs(comp.slots) do
+							local s = activeNpcs[sid]
+							if not s or s.IsFlagBearer or s._goingForFlag then continue end
+							-- Don't interrupt soldiers that are already reloading mid-combat.
+							-- Just redirect their movement; combat detection handles the rest.
+							task.spawn(function()
+								s.Pathfinder:Stop()
+								s.Pathfinder:Run(carrierPos)
+							end)
+						end
+
+						-- Also send soldiers from same-team allied companies if their flag
+						-- is not being threatened (opportunistic assistance).
+						for allyPlayer, allyComps in pairs(companies) do
+							if allyPlayer == player then continue end
+							if not (allyPlayer.Team and player.Team and allyPlayer.Team == player.Team) then continue end
+							for _, allyComp in pairs(allyComps) do
+								-- Only assist if the ally's own flag is safe
+								local allyFs = allyComp.flagState
+								if allyFs and (allyFs.isDropped or allyFs.isEnemyHeld) then continue end
+								for _, sid in ipairs(allyComp.slots) do
+									local s = activeNpcs[sid]
+									if not s or s.IsFlagBearer or s._goingForFlag then continue end
+									task.spawn(function()
+										s.Pathfinder:Stop()
+										s.Pathfinder:Run(carrierPos)
+									end)
+								end
+							end
+						end
+					end
+
 					fs.captureAccum          += dt
 					fs.captureBroadcastAccum  = (fs.captureBroadcastAccum or 0) + dt
 
-					-- Broadcast via NpcCompanyStrength once per second so the client
-					-- brokenPrompt shows the capture countdown. We send isBroken=true
-					-- and brokenTimer = remaining seconds so the existing UI handles it
-					-- without a separate capture HUD.
 					if fs.captureBroadcastAccum >= 1 then
 						fs.captureBroadcastAccum -= 1
 						local remaining = math.max(0, captureT - fs.captureAccum)
 						for p in pairs(readyPlayers) do
 							Network.NpcCompanyStrength.Fire(
-								p,
-								compIdx,
-								comp.tickets,
-								true,         -- isBroken: force broken display while captured
-								player.UserId,
-								remaining,    -- brokenTimer counts down to 0
-								true          -- enemyNearby: always true while flag is held
+								p, compIdx, comp.tickets, true,
+								player.UserId, remaining, true
 							)
 						end
 					end

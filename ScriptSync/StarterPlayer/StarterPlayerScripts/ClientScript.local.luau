@@ -702,6 +702,12 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 						continue
 					end
 
+					-- Skip friendly companies (same team)
+					local targetPlayer = Players:GetPlayerByUserId(ownerUserId)
+					if targetPlayer and targetPlayer.Team == localPlayer.Team then
+						continue
+					end
+
 					local root = rep.Root
 					if not root then continue end
 

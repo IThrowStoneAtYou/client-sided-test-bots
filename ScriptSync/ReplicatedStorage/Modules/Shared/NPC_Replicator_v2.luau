@@ -1,3 +1,5 @@
+--!optimize 2
+
 -->>>>>>>>>>>>
 -- NPC_REPLICATOR
 -- Written by @Razor5 on discord
@@ -95,7 +97,7 @@ function NpcReplicator:ApplyRegimentRig(nationKey: string, regimentKey: string, 
 	local roleFolder   = regFolder and regFolder:FindFirstChild(roleKey)
 
 	if not roleFolder then 
-		warn(string.format("[Replicator] FAILED to find roleFolder at Shared.Npc.Outfit.Nation.%s.%s.%s", nationKey, regimentKey, roleKey))
+		warn(string.format("FAILED to find roleFolder at Shared.Npc.Outfit.Nation.%s.%s.%s", nationKey, regimentKey, roleKey))
 		if not outfitFolder then 
 			warn("   -> Outfit folder missing")
 		elseif not nationFolder then
