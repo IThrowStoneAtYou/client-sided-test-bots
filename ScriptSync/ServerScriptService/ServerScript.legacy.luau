@@ -581,6 +581,7 @@ end
 
 local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
 	local playerCompanies = companies[player]
+	if not playerCompanies then return end          -- guard: companies table may not exist yet
 	local company = playerCompanies[companyIndex]
 
 	if not company then return end
@@ -590,8 +591,18 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	if flat.Magnitude < 0.01 then return end
 	flat = flat.Unit
 
-	local count        = #company.slots
-	local soldierCount = math.max(1, count - 1)
+	-- Count only live, non-bearer NPCs so the slots array is the correct size.
+	-- The old code used (#company.slots - 1), which is wrong when the bearer
+	-- is dead: all remaining NPCs are soldiers, and soldierIdx would exceed #slots.
+	local liveSoldierCount = 0
+	for _, shortId in ipairs(company.slots) do
+		local npc = activeNpcs[shortId]
+		if npc and npc.Model and npc.Model.Parent and not npc.IsFlagBearer then
+			liveSoldierCount += 1
+		end
+	end
+
+	local soldierCount = math.max(1, liveSoldierCount)
 	ranks = math.clamp(ranks, 1, soldierCount)
 	files = math.clamp(files, 1, soldierCount)
 
@@ -611,6 +622,8 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			soldierIdx += 1
 		end
 
+		if not targetCF then continue end   -- safety net: bearer died mid-iteration
+
 		npc.RegimentTarget = targetCF.Position
 		npc.RegimentFacing = flat
 		npc.MoveRetries    = 0
@@ -624,7 +637,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 					npc.ActiveTween:Cancel()
 					npc.ActiveTween = nil
 				end
-				
+
 				npc.Pathfinder:Stop()
 				npc.Pathfinder:Run(targetCF.Position)
 				npc.LastMoveTime = os.clock()
@@ -638,6 +651,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	company.originalRanks = ranks
 	company.originalFiles = files
 end
+
 
 -- ── Player events ─────────────────────────────────────────────────────
 Players.PlayerRemoving:Connect(function(player)
@@ -873,8 +887,12 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 			for _, shortId in ipairs(comp.slots) do
 				local npc = activeNpcs[shortId]
 				if npc and npc.WeaponState ~= WEAPON_IDLE then
-					local reloading = npc.WeaponState == NpcConstants.WEAPON_RELOAD_IDLE or npc.WeaponState == NpcConstants.WEAPON_RELOAD
-					if not reloading then
+					-- WEAPON_FIRE is now included: once an NPC has pulled the
+					-- trigger it is "committed" and must reload before firing again.
+					local committed = npc.WeaponState == NpcConstants.WEAPON_FIRE
+						or npc.WeaponState == NpcConstants.WEAPON_RELOAD_IDLE
+						or npc.WeaponState == NpcConstants.WEAPON_RELOAD
+					if not committed then
 						sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
 						npc.WeaponTarget = nil
 					end
@@ -883,6 +901,7 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 		end
 	end
 end)
+
 
 Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	if not companies[player] or not companies[player][companyIndex] then return end

@@ -27,7 +27,7 @@ local GameSettings = {
 	-- ── Ranged Combat ──────────────────────────────────────────────────
 	COMBAT_RANGE  = 400,
 	MUSKET_DAMAGE = 100,
-	BULLET_SPREAD = 3,      -- degrees
+	BULLET_SPREAD = 2.5,      -- degrees
 
 	-- ── Melee ──────────────────────────────────────────────────────────
 	MELEE_ENGAGE_RANGE      = 7,
