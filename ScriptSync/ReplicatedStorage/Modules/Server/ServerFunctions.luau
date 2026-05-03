@@ -801,6 +801,19 @@ function ServerFunctions.init(ctx)
 				setNpcWeaponState(npc, C.WEAPON_IDLE, nil)
 				npc.WeaponTarget = nil
 			end
+			
+			-- Allow completing reload cycle even if canShoot is false
+			if reloading then
+				npc.WeaponTimer -= dt
+				if npc.WeaponTimer <= 0 then
+					if npc.WeaponState == C.WEAPON_RELOAD_IDLE then
+						setNpcWeaponState(npc, C.WEAPON_RELOAD, nil)
+					elseif npc.WeaponState == C.WEAPON_RELOAD then
+						npc.WeaponTarget = nil
+						setNpcWeaponState(npc, C.WEAPON_IDLE, nil)
+					end
+				end
+			end
 			return
 		end
 
