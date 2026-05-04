@@ -1,9 +1,21 @@
 -->>>>>>>>>>>>
 -- ServerScript
--- Version 4.1.0
+-- Version 4.2.0
 -- Core game logic lives in ServerFunctions.
+--
+-- Declaration order (dependency-safe):
+--   1. Services, requires, constants, state
+--   2. Pure helpers (no cross-deps)
+--   3. Company sync / can-attack broadcast
+--   4. spawnNpc
+--   5. despawnCompany → despawnAllCompanies → watchDespawnRequest
+--   6. getRoleForSlot → spawnAllCompanies → respawnAfterOverrun
+--   7. sf = ServerFunctions.init(...)   ← all ctx refs now defined
+--   8. orderCompany                     ← needs sf.*
+--   9. Player events, remote handlers, heartbeat
 -->>>>>>>>>>>>
 
+-- ── 1. Services ───────────────────────────────────────────────────────
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,6 +23,7 @@ local Teams             = game:GetService("Teams")
 local PhysicsService    = game:GetService("PhysicsService")
 local TweenService      = game:GetService("TweenService")
 
+-- ── 1. Requires ───────────────────────────────────────────────────────
 local Network           = require(game.ReplicatedStorage.Blink.Server)
 local RegimentFormation = require(ReplicatedStorage.Modules.Shared:WaitForChild("RegimentFormation"))
 local NoobPath          = require(ReplicatedStorage.Modules.Packages:WaitForChild("NoobPath"))
@@ -20,28 +33,23 @@ local GameSettings      = require(ReplicatedStorage.Modules.Shared.GameSettings)
 local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
 local RegimentData      = require(ReplicatedStorage.Modules.Shared.RegimentData)
 
--- ── Destructure NpcConstants for local use ────────────────────────────
--- Pure-networking / performance constants stay as locals below;
--- everything else comes from the shared module.
-local SPAWN_OFFSET         = NpcConstants.SPAWN_OFFSET
-local COMPANY_GAP          = NpcConstants.COMPANY_GAP
-local RANK_SPACING         = NpcConstants.RANK_SPACING
-local RANK_DEPTH           = NpcConstants.RANK_DEPTH
-local FLAG_OFFSET_Z        = NpcConstants.FLAG_OFFSET_Z
-local MOVE_RETRIES         = NpcConstants.MOVE_RETRIES
-local WEAPON_IDLE          = NpcConstants.WEAPON_IDLE
-local WEAPON_DURATIONS     = NpcConstants.WEAPON_DURATIONS
-local MELEE_NONE           = NpcConstants.MELEE_NONE
-local MELEE_IDLE           = NpcConstants.MELEE_IDLE
-local MELEE_BOT_START      = NpcConstants.MELEE_BOT_START
-local MELEE_UP_START       = NpcConstants.MELEE_UP_START
-local MELEE_ADVANCE        = NpcConstants.MELEE_ADVANCE
-local MELEE_DURATIONS      = NpcConstants.MELEE_DURATIONS
-local BEARER_MODE_CENTER   = NpcConstants.BEARER_MODE_CENTER
-local BEARER_MODE_PACING   = NpcConstants.BEARER_MODE_PACING
+-- ── 1. NpcConstants destructure ───────────────────────────────────────
+local SPAWN_OFFSET       = NpcConstants.SPAWN_OFFSET
+local COMPANY_GAP        = NpcConstants.COMPANY_GAP
+local RANK_SPACING       = NpcConstants.RANK_SPACING
+local RANK_DEPTH         = NpcConstants.RANK_DEPTH
+local FLAG_OFFSET_Z      = NpcConstants.FLAG_OFFSET_Z
+local MOVE_RETRIES       = NpcConstants.MOVE_RETRIES
+local WEAPON_IDLE        = NpcConstants.WEAPON_IDLE
+local MELEE_NONE         = NpcConstants.MELEE_NONE
+local MELEE_IDLE         = NpcConstants.MELEE_IDLE
+local MELEE_BOT_START    = NpcConstants.MELEE_BOT_START
+local MELEE_UP_START     = NpcConstants.MELEE_UP_START
+local MELEE_ADVANCE      = NpcConstants.MELEE_ADVANCE
+local BEARER_MODE_CENTER = NpcConstants.BEARER_MODE_CENTER
+local BEARER_MODE_PACING = NpcConstants.BEARER_MODE_PACING
 
--- ── Server-only performance / networking constants ────────────────────
--- These are never needed by ServerFunctions or the client so they stay local.
+-- ── 1. Server-only networking/perf constants ──────────────────────────
 local CHUNK_SIZE    = 35
 local NEAR_RATE     = 1 / 20
 local FAR_RATE      = 1 / 4
@@ -59,13 +67,13 @@ local WANDER_CENTER = Vector3.new(0, 0, 0)
 local WANDER_RADIUS = 60
 local WANDER_MIN    = 8
 
+-- ── 1. Collision groups ───────────────────────────────────────────────
 if not PhysicsService:IsCollisionGroupRegistered(NPC_COLLISION_GROUP) then
 	PhysicsService:RegisterCollisionGroup(NPC_COLLISION_GROUP)
 end
 if not PhysicsService:IsCollisionGroupRegistered(CLIENT_NPC_GROUP) then
 	PhysicsService:RegisterCollisionGroup(CLIENT_NPC_GROUP)
 end
-
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, NPC_COLLISION_GROUP, false)
 PhysicsService:CollisionGroupSetCollidable(CLIENT_NPC_GROUP,    CLIENT_NPC_GROUP,    false)
 PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP,    false)
@@ -73,36 +81,36 @@ PhysicsService:CollisionGroupSetCollidable(NPC_COLLISION_GROUP, CLIENT_NPC_GROUP
 local combatRayParams = RaycastParams.new()
 combatRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
--- ── Admin whitelist ──────────────────────────────────────────────────
+-- ── 1. Admin whitelist ────────────────────────────────────────────────
 local ADMIN_IDS: { [number]: boolean } = {
 	[5327451875] = true,
 }
 
--- ── State ─────────────────────────────────────────────────────────────
+-- ── 1. Shared state ───────────────────────────────────────────────────
 local activeNpcs      = {}
 local nextShortId     = 1
 local readyPlayers    = {}
 local farLastSent     = {}
 local companies       = {}
 local serverCanAttack = {}
-local sf              -- Forward declaration for ServerFunctions
 
--- ── Performance Pooling ──────────────────────────────────────────────
+local sf -- forward-declared; assigned after all ctx functions are defined
+
+-- ── 1. Performance pools ──────────────────────────────────────────────
 local ENTRY_POOL    = {}
 local USED_ENTRIES  = {}
 local DIRTY_ENTRIES = {}
 local FAR_ENTRIES   = {}
 local DEAD_IDS      = {}
-local NEAR_BUFFER   = {}
-local FAR_BUFFER    = {}
 local CHUNK_BUFFER  = table.create(CHUNK_SIZE)
-
 local PLAYER_WORK_NEAR = {}
 local PLAYER_WORK_FAR  = {}
 
+-- ── 2. Pure helpers ───────────────────────────────────────────────────
+
 local function getPooledEntry(id, pos, yaw)
 	local t = table.remove(ENTRY_POOL) or { id = 0, pos = Vector3.zero, yaw = 0 }
-	t.id = id
+	t.id  = id
 	t.pos = pos
 	t.yaw = yaw
 	table.insert(USED_ENTRIES, t)
@@ -116,14 +124,17 @@ local function releaseEntries()
 	table.clear(USED_ENTRIES)
 end
 
--- ── Helpers ───────────────────────────────────────────────────────────
 local function randomPoint(center, radius, minDist)
 	local angle = math.random() * math.pi * 2
 	local dist  = minDist + math.random() * (radius - minDist)
-	return Vector3.new(center.X + math.cos(angle)*dist, center.Y, center.Z + math.sin(angle)*dist)
+	return Vector3.new(
+		center.X + math.cos(angle) * dist,
+		center.Y,
+		center.Z + math.sin(angle) * dist
+	)
 end
 
-local function getYaw(cf)
+local function getYaw(cf: CFrame): number
 	local _, y, _ = cf:ToEulerAnglesYXZ()
 	return y
 end
@@ -134,11 +145,10 @@ end
 
 local function applyWalkSpeedNow()
 	local registry = workspace:FindFirstChild("Npc_Registry_Server")
-	if not registry then 
-		print("[Admin] Warning: Npc_Registry_Server folder not found - no NPCs to update yet")
-		return 
+	if not registry then
+		print("[Admin] Warning: Npc_Registry_Server not found — no NPCs to update yet")
+		return
 	end
-	
 	local count = 0
 	for _, model in ipairs(registry:GetChildren()) do
 		local hum = model:FindFirstChildOfClass("Humanoid")
@@ -150,27 +160,26 @@ local function applyWalkSpeedNow()
 	print(string.format("[Admin] Applied WalkSpeed %.1f to %d NPCs", GameSettings.WALK_SPEED, count))
 end
 
-local function cfChanged(cf, lastCF, npc)
-	local threshold = (npc.IsRegiment and npc.RegimentTarget and (cf.Position - npc.RegimentTarget).Magnitude < 3) and 1.5 or DELTA_POS
-	if (cf.Position - lastCF.Position).Magnitude > threshold then 
-		return true
-	end
-	
-	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT then 
-		return true
-	end
+local function cfChanged(cf: CFrame, lastCF: CFrame, npc): boolean
+	local threshold = (
+		npc.IsRegiment
+			and npc.RegimentTarget
+			and (cf.Position - npc.RegimentTarget).Magnitude < 3
+	) and 1.5 or DELTA_POS
+
+	if (cf.Position - lastCF.Position).Magnitude > threshold then return true end
+	if math.abs(getYaw(cf) - getYaw(lastCF)) > DELTA_ROT        then return true end
 	return false
 end
 
-local function getPlayerRootPos(player)
+local function getPlayerRootPos(player: Player): Vector3?
 	local char = player.Character
 	if not char then return nil end
 	local root = char:FindFirstChild("HumanoidRootPart")
-	
 	return root and root.Position or nil
 end
 
-local function fireChunked(player, timestamp, entries)
+local function fireChunked(player: Player, timestamp: number, entries: {})
 	for i = 1, #entries, CHUNK_SIZE do
 		table.clear(CHUNK_BUFFER)
 		for j = i, math.min(i + CHUNK_SIZE - 1, #entries) do
@@ -180,7 +189,8 @@ local function fireChunked(player, timestamp, entries)
 	end
 end
 
--- ── Company management ────────────────────────────────────────────────
+-- ── 3. Company sync / can-attack ──────────────────────────────────────
+
 local function syncCompanies(player: Player)
 	local playerCompanies = companies[player]
 	local data = {}
@@ -188,40 +198,46 @@ local function syncCompanies(player: Player)
 		for idx, company in pairs(playerCompanies) do
 			table.insert(data, { index = idx, count = #company.slots, slots = company.slots })
 		end
-		
-		table.sort(data, function(a, b) 
-			return a.index < b.index
-		end)
+		table.sort(data, function(a, b) return a.index < b.index end)
 	end
 	Network.NpcCompanySync.Fire(player, data)
 end
 
-local function broadcastCanAttackState(player, companyIndex, state)
+local function broadcastCanAttackState(player: Player, companyIndex: number, state: boolean)
 	for p in pairs(readyPlayers) do
 		Network.NpcCanAttackSync.Fire(p, companyIndex, state, player.UserId)
 	end
 end
 
--- ── NPC Spawn ─────────────────────────────────────────────────────────
-local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer: Player?, companyIndex: number?, role: string?)
-	local shortId  = nextShortId
-	nextShortId   += 1
+-- ── 4. spawnNpc ───────────────────────────────────────────────────────
+
+local function spawnNpc(
+	spawnCF:       CFrame?,
+	suppressNotify: boolean?,
+	ownerPlayer:   Player?,
+	companyIndex:  number?,
+	role:          string?
+)
+	local shortId = nextShortId
+	nextShortId  += 1
 
 	local model    = SERVER_MODEL:Clone()
 	model.Name     = "NPC_" .. shortId
-	
+
 	local root     = model.HumanoidRootPart
 	local humanoid = model.Humanoid
 	humanoid.AutoRotate = true
 	humanoid.WalkSpeed  = GameSettings.WALK_SPEED
 
-	local cf = spawnCF or CFrame.new(randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0,4,0))
+	local cf = spawnCF
+		or CFrame.new(randomPoint(WANDER_CENTER, WANDER_RADIUS, WANDER_MIN) + Vector3.new(0, 4, 0))
 	root.CFrame  = cf
 	model.Parent = workspace.Npc_Registry_Server
 
-	local teamName = nil
+	local teamName: string? = nil
 	if ownerPlayer then
-		teamName = ownerPlayer.Team and ownerPlayer.Team.Name or ("Player_" .. ownerPlayer.UserId)
+		teamName = ownerPlayer.Team and ownerPlayer.Team.Name
+			or ("Player_" .. ownerPlayer.UserId)
 		model:SetAttribute("TeamName", teamName)
 		if ownerPlayer.Team then
 			model:SetAttribute("TeamColor", ownerPlayer.Team.TeamColor)
@@ -230,15 +246,18 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.Transparency = 1
-			part.CanTouch     = false
-			part.CanQuery     = true
+			part.Transparency   = 1
+			part.CanTouch       = false
+			part.CanQuery       = true
 			part.CollisionGroup = NPC_COLLISION_GROUP
 			part:SetNetworkOwner(nil)
 		end
 	end
 
-	local pathfinder = NoobPath.Humanoid(model, { WaypointSpacing = 6, AgentRadius = 1.5, AgentHeight = 5 })
+	local pathfinder = NoobPath.Humanoid(
+		model,
+		{ WaypointSpacing = 6, AgentRadius = 1.5, AgentHeight = 5 }
+	)
 
 	local npc = {
 		ShortId         = shortId,
@@ -272,11 +291,11 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		_meleePathAccum = 0,
 	}
 
+	-- sf is assigned later but these callbacks only fire after init completes
 	pathfinder.Reached:Connect(function()
 		if npc.IsFlagBearer and npc.IsPacing then
 			npc.MoveRetries   = 0
 			npc.PaceDirection = -(npc.PaceDirection or 1)
-			
 			local pComps = companies[npc.CompanyOwner]
 			if pComps and pComps[npc.CompanyIndex] then
 				local comp     = pComps[npc.CompanyIndex]
@@ -287,13 +306,12 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 		elseif npc.IsRegiment then
 			npc.MoveRetries = 0
 			if npc.RegimentFacing then
-				if npc.ActiveTween then
-					npc.ActiveTween:Cancel() 
-				end
-				
+				if npc.ActiveTween then npc.ActiveTween:Cancel() end
 				local pos      = npc.Root.Position
 				local targetCF = CFrame.lookAt(pos, pos + npc.RegimentFacing)
-				npc.ActiveTween = TweenService:Create(npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF })
+				npc.ActiveTween = TweenService:Create(
+					npc.Root, ROTATION_TWEEN_INFO, { CFrame = targetCF }
+				)
 				npc.ActiveTween:Play()
 			end
 		end
@@ -302,7 +320,7 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	pathfinder.Trapped:Connect(function()
 		npc.MoveRetries += 1
 		if npc.MoveRetries <= MOVE_RETRIES and npc.RegimentTarget then
-			task.delay(0.5 + math.random()*0.5, function()
+			task.delay(0.5 + math.random() * 0.5, function()
 				if npc.Model and npc.Model.Parent then
 					npc.Pathfinder:Run(npc.RegimentTarget)
 					npc.LastMoveTime = os.clock()
@@ -312,7 +330,6 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	end)
 
 	activeNpcs[shortId] = npc
---	print(string.format("[Server] Spawned NPC %d | Owner: %s | Company: %s", shortId, ownerPlayer and ownerPlayer.Name or "None", tostring(companyIndex)))
 
 	if not suppressNotify then
 		for player in pairs(readyPlayers) do
@@ -343,57 +360,47 @@ local function spawnNpc(spawnCF: CFrame?, suppressNotify: boolean?, ownerPlayer:
 	}
 end
 
--- ── Init ServerFunctions ───────────────────────────────────────────────
--- ctx now only carries shared state and function references.
--- All constants come from NpcConstants, which ServerFunctions requires directly.
-sf = ServerFunctions.init({
-	-- Shared state
-	activeNpcs      = activeNpcs,
-	companies       = companies,
-	serverCanAttack = serverCanAttack,
-	readyPlayers    = readyPlayers,
-	farLastSent     = farLastSent,
-	combatRayParams = combatRayParams,
+-- ── 5. Despawn ────────────────────────────────────────────────────────
 
-	-- Function references (defined before this call above)
-	spawnNpc        = spawnNpc,
-	syncCompanies   = syncCompanies,
-	getYaw          = getYaw,
-})
-
--- ── Spawn/Despawn ─────────────────────────────────────────────────────
 local function despawnCompany(player: Player, companyIndex: number)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
 	local company = playerCompanies[companyIndex]
 	if not company then return end
-	
+
 	for _, shortId in ipairs(company.slots) do
-		if activeNpcs[shortId] then
-			for p in pairs(readyPlayers) do
-				Network.NpcDespawn.Fire(p, shortId)
-				if farLastSent[p] then 
-					farLastSent[p][shortId] = nil 
-				end
-			end
-			
-			if activeNpcs[shortId].Pathfinder then 
-				activeNpcs[shortId].Pathfinder:Destroy() 
-			end
-			
-			activeNpcs[shortId].Model:Destroy()
-			activeNpcs[shortId] = nil
+		local npc = activeNpcs[shortId]
+		if not npc then continue end  -- already killed by killNpc
+
+		for p in pairs(readyPlayers) do
+			Network.NpcDespawn.Fire(p, shortId)
+			if farLastSent[p] then farLastSent[p][shortId] = nil end
 		end
+
+		-- Stop before Destroy: NoobPath.Stop reads the model internally
+		if npc.Pathfinder then
+			pcall(function() npc.Pathfinder:Stop()    end)
+			pcall(function() npc.Pathfinder:Destroy() end)
+		end
+		if npc.Model and npc.Model.Parent then
+			pcall(function() npc.Model:Destroy() end)
+		end
+
+		activeNpcs[shortId] = nil
 	end
-	
+
 	playerCompanies[companyIndex] = nil
+
 	if serverCanAttack[player] then
 		serverCanAttack[player][companyIndex] = nil
 	end
-	
+
+	-- Clear melee targets that pointed at this company
 	for _, otherPlayerComps in pairs(companies) do
 		for _, comp in pairs(otherPlayerComps) do
-			if comp.meleeTargetPlayer == player and comp.meleeTargetCompIdx == companyIndex then
+			if comp.meleeTargetPlayer == player
+				and comp.meleeTargetCompIdx == companyIndex
+			then
 				comp.meleeTargetPlayer  = nil
 				comp.meleeTargetCompIdx = nil
 			end
@@ -404,10 +411,9 @@ end
 local function despawnAllCompanies(player: Player)
 	local playerCompanies = companies[player]
 	if not playerCompanies then return end
-	for idx in pairs(playerCompanies) do 
+	for idx in pairs(playerCompanies) do
 		despawnCompany(player, idx)
 	end
-	
 	companies[player] = nil
 end
 
@@ -421,25 +427,22 @@ local function watchDespawnRequest(player: Player)
 	end)
 end
 
-local function getRoleForSlot(slotIndex: number)
+-- ── 6. Spawn helpers → spawnAllCompanies → respawnAfterOverrun ────────
+
+local function getRoleForSlot(slotIndex: number): string
 	local C = NpcConstants
-	if slotIndex == 1 then 
-		return C.ROLE_OFFICER -- Bearer
-	elseif slotIndex == 2 then 
-		return C.ROLE_OFFICER -- Line Officer
-	elseif slotIndex == 3 or slotIndex == 4 then 
-		return C.ROLE_SAPPER
-	elseif slotIndex == 5 then 
-		return C.ROLE_MUSIC_NORMAL
-	elseif slotIndex == 6 then 
-		return C.ROLE_MUSIC_DRUM
+	if slotIndex == 1 then return C.ROLE_OFFICER     -- Bearer / Officer
+	elseif slotIndex == 2 then return C.ROLE_OFFICER  -- Line Officer
+	elseif slotIndex == 3 or slotIndex == 4 then return C.ROLE_SAPPER
+	elseif slotIndex == 5 then return C.ROLE_MUSIC_NORMAL
+	elseif slotIndex == 6 then return C.ROLE_MUSIC_DRUM
 	else return C.ROLE_RANKER
 	end
 end
 
 local function spawnAllCompanies(player: Player, companyCount: number, botCount: number)
 	companyCount = math.clamp(companyCount, 1, GameSettings.MAX_COMPANIES)
-	botCount     = math.clamp(botCount, 1, GameSettings.MAX_BOTS)
+	botCount     = math.clamp(botCount,     1, GameSettings.MAX_BOTS)
 
 	local char = player.Character
 	if not char then return end
@@ -452,40 +455,41 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 
 	local look     = playerRoot.CFrame.LookVector
 	local flatLook = Vector3.new(look.X, 0, look.Z).Unit
-	local right    = flatLook:Cross(Vector3.new(0,1,0)).Unit
+	local right    = flatLook:Cross(Vector3.new(0, 1, 0)).Unit
 
-	local soldierCount  = math.max(1, botCount - 1)
-	local files         = math.min(soldierCount, 10)
-	local ranks         = math.ceil(soldierCount / files)
-	local companyWidth  = (files - 1) * RANK_SPACING
-	local totalWidth    = companyCount * companyWidth + (companyCount - 1) * COMPANY_GAP
-	local startOffset   = -totalWidth / 2
+	local soldierCount = math.max(1, botCount - 1)
+	local files        = math.min(soldierCount, 10)
+	local ranks        = math.ceil(soldierCount / files)
+	local companyWidth = (files - 1) * RANK_SPACING
+	local totalWidth   = companyCount * companyWidth + (companyCount - 1) * COMPANY_GAP
+	local startOffset  = -totalWidth / 2
 
 	local pending        = companyCount * botCount
 	local results        = {}
 	local companyAnchors = {}
 
 	for i = 1, companyCount do
-		local centerOffset = startOffset + (i-1)*(companyWidth+COMPANY_GAP) + companyWidth/2
-		local anchorPos    = playerRoot.Position + flatLook*SPAWN_OFFSET + right*centerOffset
+		local centerOffset = startOffset + (i - 1) * (companyWidth + COMPANY_GAP) + companyWidth / 2
+		local anchorPos    = playerRoot.Position + flatLook * SPAWN_OFFSET + right * centerOffset
 		local anchorCF     = CFrame.lookAt(anchorPos, anchorPos + flatLook)
 
-		companyAnchors[i]  = anchorCF
-		local slots        = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
+		companyAnchors[i] = anchorCF
+		local slots       = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
 
 		for j = 1, botCount do
 			task.spawn(function()
 				local isBearer = (j == 1)
-				local role = getRoleForSlot(j)
+				local role     = getRoleForSlot(j)
 				local targetCF
+
 				if isBearer then
-					local totalDepth = (ranks-1)*RANK_DEPTH
+					local totalDepth = (ranks - 1) * RANK_DEPTH
 					targetCF = anchorCF * CFrame.new(0, 0, totalDepth + FLAG_OFFSET_Z)
 				else
-					targetCF = slots[j-1]
+					targetCF = slots[j - 1]
 				end
 
-				local npc, data = spawnNpc(targetCF + Vector3.new(0,4,0), true, player, i, role)
+				local npc, data = spawnNpc(targetCF + Vector3.new(0, 4, 0), true, player, i, role)
 				if npc then
 					npc.IsRegiment     = true
 					npc.RegimentFacing = flatLook
@@ -501,16 +505,24 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 					end
 
 					npc.Pathfinder:Run(targetCF.Position)
-					table.insert(results, { companyIndex = i, slotIndex = j, shortId = npc.ShortId, spawnData = data })
+					table.insert(results, {
+						companyIndex = i,
+						slotIndex    = j,
+						shortId      = npc.ShortId,
+						spawnData    = data,
+					})
 				end
 
 				pending -= 1
 				if pending == 0 then
 					local allSpawnData   = {}
 					local companiesSlots = {}
+
 					for _, res in ipairs(results) do
-						allSpawnData[#allSpawnData+1] = res.spawnData
-						if not companiesSlots[res.companyIndex] then companiesSlots[res.companyIndex] = {} end
+						allSpawnData[#allSpawnData + 1] = res.spawnData
+						if not companiesSlots[res.companyIndex] then
+							companiesSlots[res.companyIndex] = {}
+						end
 						companiesSlots[res.companyIndex][res.slotIndex] = res.shortId
 					end
 
@@ -528,7 +540,9 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 						local cSlots   = companiesSlots[idx]
 						if cSlots then
 							for sIdx = 1, botCount do
-								if cSlots[sIdx] then table.insert(slotList, cSlots[sIdx]) end
+								if cSlots[sIdx] then
+									table.insert(slotList, cSlots[sIdx])
+								end
 							end
 						end
 
@@ -551,27 +565,28 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 							isMelee              = false,
 							meleeTargetPlayer    = nil,
 							meleeTargetCompIdx   = nil,
-							       -- Flag system initial state (flag is held from spawn)
+							_overrunScheduled    = false,
 							flagState = {
-							        isDropped        = false,
-							        isEnemyHeld      = false,
-							        worldPos         = nil,
-							        holderNpcId      = nil,
-							        captureAccum     = 0,
-							        captureBroadcastAccum = 0,
-							        pickupNpcId      = nil,
-							       	captureNpcs      = {},
-							        capturingPlayer  = nil,
-							        capturingCompIdx = nil,
-							        reassignCooldown = 0,
+								isDropped             = false,
+								isEnemyHeld           = false,
+								worldPos              = nil,
+								holderNpcId           = nil,
+								captureAccum          = 0,
+								captureBroadcastAccum = 0,
+								pickupNpcId           = nil,
+								captureNpcs           = {},
+								capturingPlayer       = nil,
+								capturingCompIdx      = nil,
+								reassignCooldown      = 0,
+								_chaseAccum           = 0,
 							},
 						}
 
-						serverCanAttack[player] = serverCanAttack[player] or {}
+						serverCanAttack[player]      = serverCanAttack[player] or {}
 						serverCanAttack[player][idx] = true
-
 						broadcastCanAttackState(player, idx, true)
 					end
+
 					syncCompanies(player)
 				end
 			end)
@@ -579,11 +594,54 @@ local function spawnAllCompanies(player: Player, companyCount: number, botCount:
 	end
 end
 
-local function orderCompany(player: Player, companyIndex: number, anchorPos: Vector3, facingDir: Vector3, ranks: number, files: number)
-	local playerCompanies = companies[player]
-	if not playerCompanies then return end          -- guard: companies table may not exist yet
-	local company = playerCompanies[companyIndex]
+local function respawnAfterOverrun(player: Player)
+	if not Players:GetPlayerByUserId(player.UserId) then return end
 
+	print(string.format("[Overrun] %s — despawning companies and scheduling respawn", player.Name))
+
+	despawnAllCompanies(player)
+	syncCompanies(player)
+
+	pcall(function() player:LoadCharacterAsync() end)
+
+	task.delay(3, function()
+		if not Players:GetPlayerByUserId(player.UserId) then return end
+		local t = player.Team
+		if not t or t.Name == "NO TEAM" then return end
+		print(string.format("[Overrun] Spawning replacement company for %s", player.Name))
+		spawnAllCompanies(player, 1, 35)
+	end)
+end
+
+-- ── 7. ServerFunctions init — all ctx refs now defined above ──────────
+
+sf = ServerFunctions.init({
+	activeNpcs          = activeNpcs,
+	companies           = companies,
+	serverCanAttack     = serverCanAttack,
+	readyPlayers        = readyPlayers,
+	farLastSent         = farLastSent,
+	combatRayParams     = combatRayParams,
+
+	spawnNpc            = spawnNpc,
+	syncCompanies       = syncCompanies,
+	getYaw              = getYaw,
+	respawnAfterOverrun = respawnAfterOverrun,  -- defined above ✓
+})
+
+-- ── 8. orderCompany — needs sf.getBearerTarget / sf.setNpcMeleeState ──
+
+local function orderCompany(
+	player:       Player,
+	companyIndex: number,
+	anchorPos:    Vector3,
+	facingDir:    Vector3,
+	ranks:        number,
+	files:        number
+)
+	local playerCompanies = companies[player]
+	if not playerCompanies then return end
+	local company = playerCompanies[companyIndex]
 	if not company then return end
 	if not company.slots or #company.slots == 0 then return end
 
@@ -591,9 +649,7 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	if flat.Magnitude < 0.01 then return end
 	flat = flat.Unit
 
-	-- Count only live, non-bearer NPCs so the slots array is the correct size.
-	-- The old code used (#company.slots - 1), which is wrong when the bearer
-	-- is dead: all remaining NPCs are soldiers, and soldierIdx would exceed #slots.
+	-- Count only live non-bearer NPCs so the slot array is exactly right.
 	local liveSoldierCount = 0
 	for _, shortId in ipairs(company.slots) do
 		local npc = activeNpcs[shortId]
@@ -606,8 +662,8 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	ranks = math.clamp(ranks, 1, soldierCount)
 	files = math.clamp(files, 1, soldierCount)
 
-	local anchorCF = CFrame.lookAt(anchorPos, anchorPos + flat)
-	local slots    = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
+	local anchorCF   = CFrame.lookAt(anchorPos, anchorPos + flat)
+	local slots      = RegimentFormation.getSlots(anchorCF, soldierCount, ranks, files)
 	local soldierIdx = 1
 
 	for _, shortId in ipairs(company.slots) do
@@ -618,11 +674,11 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 		if npc.IsFlagBearer then
 			targetCF = sf.getBearerTarget(npc, { anchorCF = anchorCF, ranks = ranks, files = files })
 		else
-			targetCF = slots[soldierIdx]
+			targetCF    = slots[soldierIdx]
 			soldierIdx += 1
 		end
 
-		if not targetCF then continue end   -- safety net: bearer died mid-iteration
+		if not targetCF then continue end  -- bearer died mid-iteration
 
 		npc.RegimentTarget = targetCF.Position
 		npc.RegimentFacing = flat
@@ -633,11 +689,10 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 			sf.setNpcMeleeState(npc, MELEE_ADVANCE)
 		else
 			task.spawn(function()
-				if npc.ActiveTween then 
+				if npc.ActiveTween then
 					npc.ActiveTween:Cancel()
 					npc.ActiveTween = nil
 				end
-
 				npc.Pathfinder:Stop()
 				npc.Pathfinder:Run(targetCF.Position)
 				npc.LastMoveTime = os.clock()
@@ -652,15 +707,16 @@ local function orderCompany(player: Player, companyIndex: number, anchorPos: Vec
 	company.originalFiles = files
 end
 
+-- ── 9. Player events ──────────────────────────────────────────────────
 
--- ── Player events ─────────────────────────────────────────────────────
 Players.PlayerRemoving:Connect(function(player)
 	despawnAllCompanies(player)
 	readyPlayers[player] = nil
 	farLastSent[player]  = nil
 end)
 
--- ── Chat ──────────────────────────────────────────────────────────────
+-- ── 9. Chat commands ──────────────────────────────────────────────────
+
 local function hookChat(player: Player)
 	player.Chatted:Connect(function(msg: string)
 		local ncStr, nStr = msg:match("^%s*/[Ss][Pp][Aa][Ww][Nn]%s+(%d+)%s+(%d+)%s*$")
@@ -674,22 +730,21 @@ local function hookChat(player: Player)
 		end
 
 		if isAdmin(player) then
-			local targetPart, pNcStr, pNStr = msg:match("^%s*/[Pp][Ss][Pp][Aa][Ww][Nn]%s+(%S+)%s+(%d+)%s+(%d+)%s*$")
+			local targetPart, pNcStr, pNStr =
+				msg:match("^%s*/[Pp][Ss][Pp][Aa][Ww][Nn]%s+(%S+)%s+(%d+)%s+(%d+)%s*$")
 			if targetPart and pNcStr and pNStr then
-				local lowerPart  = targetPart:lower()
+				local lowerPart = targetPart:lower()
 				local targetPlayer
 				for _, p in ipairs(Players:GetPlayers()) do
-					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then --pluh
-						targetPlayer = p; break
+					if p ~= player and p.Name:lower():find(lowerPart, 1, true) then
+						targetPlayer = p
+						break
 					end
 				end
-
 				if targetPlayer then
 					local nc = tonumber(pNcStr)
 					local n  = tonumber(pNStr)
-					if nc and n then 
-						spawnAllCompanies(targetPlayer, nc, n) 
-					end
+					if nc and n then spawnAllCompanies(targetPlayer, nc, n) end
 				end
 			end
 		end
@@ -698,95 +753,80 @@ end
 
 Players.PlayerAdded:Connect(hookChat)
 Players.PlayerAdded:Connect(watchDespawnRequest)
-
-for _, p in ipairs(Players:GetPlayers()) do 
+for _, p in ipairs(Players:GetPlayers()) do
 	hookChat(p)
 	watchDespawnRequest(p)
 end
 
--- ── Remote Handlers ───────────────────────────────────────────────────
+-- ── 9. Remote handlers ────────────────────────────────────────────────
 
 Network.TeamRegimentSelect.On(function(player: Player, sideIndex: number, regimentIndex: number)
 	sideIndex     = math.floor(sideIndex)
 	regimentIndex = math.floor(regimentIndex)
 
-	local side = RegimentData.Sides[sideIndex]
+	local side    = RegimentData.Sides[sideIndex]
 	local regInfo = RegimentData.GetRegimentInfo(sideIndex, regimentIndex)
-	if not side or not regInfo then
-		return
-	end
+	if not side or not regInfo then return end
 
-	local team     = Teams:FindFirstChild(side.role)
-	if team then
-		player.Team = team
-	end
+	local team = Teams:FindFirstChild(side.role)
+	if team then player.Team = team end
 
-	player:SetAttribute("SideIndex",      sideIndex)
-	player:SetAttribute("RegimentIndex",  regimentIndex)
-	player:SetAttribute("RegimentName",   regInfo.name)
-	player:SetAttribute("TeamIndex",      sideIndex == 1 and 2 or 1)
-	
-	-- Force player to respawn at their new team spawner
+	player:SetAttribute("SideIndex",     sideIndex)
+	player:SetAttribute("RegimentIndex", regimentIndex)
+	player:SetAttribute("RegimentName",  regInfo.name)
+	player:SetAttribute("TeamIndex",     sideIndex == 1 and 2 or 1)
+
 	player:LoadCharacterAsync()
-	
-	-- Automatically deploy 1 company of 45 bots
+
 	task.spawn(function()
-		task.wait(3.5)
+		task.wait(3)
 		spawnAllCompanies(player, 1, 35)
 	end)
 end)
 
 Network.RequestTeamReset.On(function(player: Player)
 	local noTeam = Teams:FindFirstChild("NO TEAM")
-	if noTeam then
-		player.Team = noTeam
-		
-		despawnAllCompanies(player)
-		syncCompanies(player)
+	if not noTeam then return end
 
-		player:SetAttribute("SideIndex",      nil)
-		player:SetAttribute("RegimentIndex",  nil)
-		player:SetAttribute("RegimentName",   nil)
-		player:SetAttribute("TeamIndex",      nil)
-		
-		player:LoadCharacterAsync() -- Teleport back to neutral/lobby spawn
-	end
+	player.Team = noTeam
+	despawnAllCompanies(player)
+	syncCompanies(player)
+
+	player:SetAttribute("SideIndex",     nil)
+	player:SetAttribute("RegimentIndex", nil)
+	player:SetAttribute("RegimentName",  nil)
+	player:SetAttribute("TeamIndex",     nil)
+
+	player:LoadCharacterAsync()
 end)
 
 Network.AdminUpdateBots.On(function(player, data)
-	if not isAdmin(player) then 
-		print(string.format("[Admin] Non-admin %s attempted to update bot settings", player.Name))
-		return 
+	if not isAdmin(player) then
+		print(string.format("[Admin] Non-admin %s attempted bot settings update", player.Name))
+		return
 	end
-
-	print(string.format("[Admin] Updating bot settings by %s | WalkSpeed: %.1f", player.Name, data.walkSpeed))
-
-	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,              1,    200)
-	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),    1,    500)
-	GameSettings.MAX_COMPANIES = math.clamp(math.floor(data.maxCompanies), 1, 6)
-	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,            10,  2000)
-	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,           1,   9999)
-	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,           0,   45)
-	GameSettings.MELEE_ENGAGE_RANGE      = math.clamp(data.meleeEngageRange,       1,   100)
-	GameSettings.MELEE_DAMAGE            = math.clamp(data.meleeDamage,            1,   9999)
-	GameSettings.MELEE_BEARER_FLEE_RANGE = math.clamp(data.meleeBearerFleeRange,   1,   500)
-	GameSettings.MELEE_BEARER_FLEE_DIST  = math.clamp(data.meleeBearerFleeDist,    1,   300)
-
+	GameSettings.WALK_SPEED              = math.clamp(data.walkSpeed,            1,   200)
+	GameSettings.MAX_BOTS                = math.clamp(math.floor(data.maxBots),  1,   500)
+	GameSettings.MAX_COMPANIES           = math.clamp(math.floor(data.maxCompanies), 1, 6)
+	GameSettings.COMBAT_RANGE            = math.clamp(data.combatRange,          10,  2000)
+	GameSettings.MUSKET_DAMAGE           = math.clamp(data.musketDamage,         1,   9999)
+	GameSettings.BULLET_SPREAD           = math.clamp(data.bulletSpread,         0,   45)
+	GameSettings.MELEE_ENGAGE_RANGE      = math.clamp(data.meleeEngageRange,     1,   100)
+	GameSettings.MELEE_DAMAGE            = math.clamp(data.meleeDamage,          1,   9999)
+	GameSettings.MELEE_BEARER_FLEE_RANGE = math.clamp(data.meleeBearerFleeRange, 1,   500)
+	GameSettings.MELEE_BEARER_FLEE_DIST  = math.clamp(data.meleeBearerFleeDist,  1,   300)
 	applyWalkSpeedNow()
-	
 	print(string.format("[Admin] Bot settings updated by %s", player.Name))
 end)
 
 Network.AdminUpdateMatch.On(function(player, data)
 	if not isAdmin(player) then return end
-
-	GameSettings.STARTING_TICKETS      = math.clamp(math.floor(data.startingTickets),      0,  10_000_000)
-	GameSettings.MATCH_DURATION        = math.clamp(math.floor(data.matchDuration),         30, 86400)
-	GameSettings.INTERMISSION_DURATION = math.clamp(math.floor(data.intermissionDuration),  1,  3600)
-	GameSettings.COST_BOT_DEATH        = math.clamp(math.floor(data.costBotDeath),          0,  100_000)
-	GameSettings.COST_BROKE            = math.clamp(math.floor(data.costBroke),             0,  100_000)
-	GameSettings.COST_OVERRUN          = math.clamp(math.floor(data.costOverrun),           0,  100_000)
-
+	GameSettings.STARTING_TICKETS      = math.clamp(math.floor(data.startingTickets),      0, 10_000_000)
+	GameSettings.MATCH_DURATION        = math.clamp(math.floor(data.matchDuration),        30, 86400)
+	GameSettings.INTERMISSION_DURATION = math.clamp(math.floor(data.intermissionDuration),  1, 3600)
+	GameSettings.COST_BOT_DEATH        = math.clamp(math.floor(data.costBotDeath),          0, 100_000)
+	GameSettings.COST_BROKE            = math.clamp(math.floor(data.costBroke),             0, 100_000)
+	GameSettings.COST_OVERRUN          = math.clamp(math.floor(data.costOverrun),           0, 100_000)
 	print(string.format("[Admin] Match settings updated by %s", player.Name))
 end)
 
@@ -808,7 +848,7 @@ Network.NpcReady.On(function(player)
 				isBearer     = npc.IsFlagBearer,
 				companyIndex = npc.CompanyIndex,
 				ownerUserId  = npc.CompanyOwner and npc.CompanyOwner.UserId or 0,
-				role         = npc.Role or "ranker",  -- was missing
+				role         = npc.Role or "ranker",
 			})
 		end
 	end
@@ -816,7 +856,9 @@ Network.NpcReady.On(function(player)
 	for p, comps in pairs(companies) do
 		for idx in pairs(comps) do
 			local state = serverCanAttack[p] and serverCanAttack[p][idx]
-			if state ~= nil then Network.NpcCanAttackSync.Fire(player, idx, state, p.UserId) end
+			if state ~= nil then
+				Network.NpcCanAttackSync.Fire(player, idx, state, p.UserId)
+			end
 		end
 	end
 
@@ -826,11 +868,12 @@ Network.NpcReady.On(function(player)
 end)
 
 Network.NpcOrderCommand.On(function(player, anchorPos, facingDir, ranks, files, companyIndex)
-	print(string.format("[Server] Order Received from %s for Company %d", player.Name, companyIndex))
+	print(string.format("[Server] Order from %s for Company %d", player.Name, companyIndex))
 	if not companies[player] then return end
 	if typeof(anchorPos) ~= "Vector3" then return end
 	if typeof(facingDir) ~= "Vector3" then return end
-	if anchorPos.Magnitude > 10000 then return end
+	if anchorPos.Magnitude > 10000   then return end
+
 	companyIndex = math.floor(companyIndex)
 	if companyIndex < 1 or companyIndex > GameSettings.MAX_COMPANIES then return end
 
@@ -840,16 +883,17 @@ end)
 Network.BearerModeCommand.On(function(player, companyIndex, modeRaw)
 	if not companies[player] then return end
 	companyIndex = math.floor(companyIndex)
-
 	if companyIndex < 1 or companyIndex > GameSettings.MAX_COMPANIES then return end
-	local comp = companies[player][companyIndex]
 
+	local comp = companies[player][companyIndex]
 	if not comp then return end
+
 	local mode = math.clamp(math.floor(modeRaw), 0, 3)
 
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not (npc and npc.IsFlagBearer) then continue end
+
 		if mode == BEARER_MODE_PACING and npc.BearerMode ~= BEARER_MODE_CENTER then
 			mode = BEARER_MODE_CENTER
 		end
@@ -881,14 +925,13 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 		Network.NpcCanAttackSync.Fire(p, companyIndex, newState, player.UserId)
 	end
 
+	-- Only interrupt NPCs that have NOT yet fired; committed NPCs must reload fully
 	if not newState then
 		local comp = companies[player] and companies[player][companyIndex]
 		if comp then
 			for _, shortId in ipairs(comp.slots) do
 				local npc = activeNpcs[shortId]
 				if npc and npc.WeaponState ~= WEAPON_IDLE then
-					-- WEAPON_FIRE is now included: once an NPC has pulled the
-					-- trigger it is "committed" and must reload before firing again.
 					local committed = npc.WeaponState == NpcConstants.WEAPON_FIRE
 						or npc.WeaponState == NpcConstants.WEAPON_RELOAD_IDLE
 						or npc.WeaponState == NpcConstants.WEAPON_RELOAD
@@ -902,7 +945,6 @@ Network.NpcCanAttackToggle.On(function(player, companyIndex)
 	end
 end)
 
-
 Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	if not companies[player] or not companies[player][companyIndex] then return end
 	local comp = companies[player][companyIndex]
@@ -911,6 +953,7 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 	for _, shortId in ipairs(comp.slots) do
 		local npc = activeNpcs[shortId]
 		if not npc or npc.IsFlagBearer then continue end
+
 		if isMelee then
 			if npc.WeaponState ~= WEAPON_IDLE then sf.setNpcWeaponState(npc, WEAPON_IDLE, nil) end
 			npc.AimAlign.Enabled = false
@@ -924,7 +967,6 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 			npc.MeleeTimer  = 0
 			npc.MeleeTarget = nil
 			npc.Pathfinder:Stop()
-
 			for p in pairs(readyPlayers) do
 				Network.NpcMeleeState.Fire(p, shortId, MELEE_NONE)
 				Network.NpcWeaponState.Fire(p, shortId, WEAPON_IDLE)
@@ -941,34 +983,20 @@ Network.NpcMeleeTarget.On(function(player, companyIndex, targetOwnerUserId, targ
 	local targetPlayer = Players:GetPlayerByUserId(targetOwnerUserId)
 	if not targetPlayer then return end
 	if not companies[targetPlayer] or not companies[targetPlayer][targetCompanyIndex] then return end
-	
-	-- Prevent friendly fire (same team)
-	if targetPlayer.Team == player.Team then return end
-	
+	if targetPlayer.Team == player.Team then return end  -- no friendly fire
+
 	comp.meleeTargetPlayer  = targetPlayer
 	comp.meleeTargetCompIdx = targetCompanyIndex
 
 	for _, shortId in ipairs(comp.slots) do
 		task.spawn(function()
-			-- Reduced reaction time (max 100ms) to feel snappier
 			task.wait(math.random() * 0.1)
-
 			local npc = activeNpcs[shortId]
-			-- Safety check: ensure NPC still exists and the company is still in melee mode
 			if not npc or npc.IsFlagBearer or not npc.Model or not npc.Model.Parent then return end
-			if not comp.isMelee then return end 
-
-			if npc.WeaponState ~= WEAPON_IDLE then
-				sf.setNpcWeaponState(npc, WEAPON_IDLE, nil)
-			end
-			
+			if not comp.isMelee then return end
+			if npc.WeaponState ~= WEAPON_IDLE then sf.setNpcWeaponState(npc, WEAPON_IDLE, nil) end
 			npc.MeleeTarget = nil
-			local initialState = math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START
-			
-			local targetComp = companies[targetPlayer] and companies[targetPlayer][targetCompanyIndex]
-		-- Acquisition logic inside setNpcMeleeState or updateNpcMelee will now handle
-		-- the NoobPath:Run(part) call independently for this NPC.
-			sf.setNpcMeleeState(npc, initialState)
+			sf.setNpcMeleeState(npc, math.random() < 0.5 and MELEE_BOT_START or MELEE_UP_START)
 		end)
 	end
 end)
@@ -982,11 +1010,11 @@ Network.NpcHitReport.On(function(player, attackerId, victimId, actualHitPos)
 			sf.applyDamage(victim, GameSettings.MUSKET_DAMAGE, attacker)
 		end
 	end
-
 	Network.NpcFire.FireExcept(player, attackerId, actualHitPos)
 end)
 
--- ── Heartbeat ─────────────────────────────────────────────────────────
+-- ── 9. Heartbeat ──────────────────────────────────────────────────────
+
 local nearAccum = 0
 local farAccum  = 0
 
@@ -999,8 +1027,8 @@ RunService.Heartbeat:Connect(function(dt)
 	sf.updateFlagStates(dt)
 
 	table.clear(DEAD_IDS)
-	local doNear = nearAccum >= NEAR_RATE
-	local doFar  = farAccum  >= FAR_RATE
+	local doNear    = nearAccum >= NEAR_RATE
+	local doFar     = farAccum  >= FAR_RATE
 	local timestamp = workspace:GetServerTimeNow()
 	local now       = os.clock()
 
@@ -1008,24 +1036,20 @@ RunService.Heartbeat:Connect(function(dt)
 	table.clear(FAR_ENTRIES)
 
 	for shortId, npc in pairs(activeNpcs) do
-		-- 1. Dead check
 		if not (npc.Model and npc.Model.Parent) then
 			table.insert(DEAD_IDS, shortId)
 			continue
 		end
 
-		-- 2. Logic (Combat & Melee)
 		sf.updateNpcCombat(npc, dt)
 		sf.updateNpcMelee(npc, dt)
 
-		-- 3. Networking Prep
 		local cf    = npc.Root.CFrame
 		local entry
 		if doFar then
 			entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
 			table.insert(FAR_ENTRIES, entry)
 		end
-
 		if doNear and cfChanged(cf, npc.LastSentCF, npc) then
 			if not entry then
 				entry = getPooledEntry(shortId, cf.Position, getYaw(cf))
@@ -1035,7 +1059,6 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- Safety cleanup for NPCs whose models were destroyed externally (e.g., deleted by admin)
 	for _, shortId in ipairs(DEAD_IDS) do
 		activeNpcs[shortId] = nil
 	end
@@ -1044,13 +1067,13 @@ RunService.Heartbeat:Connect(function(dt)
 	if doFar  then farAccum  -= FAR_RATE  end
 
 	for player in pairs(readyPlayers) do
-		local playerPos = getPlayerRootPos(player)
-		if not farLastSent[player] then farLastSent[player] = {} end
+		local playerPos     = getPlayerRootPos(player)
+		farLastSent[player] = farLastSent[player] or {}
 
 		local playerFarSent = farLastSent[player]
 
-		if not PLAYER_WORK_NEAR[player] then PLAYER_WORK_NEAR[player] = {} end
-		if not PLAYER_WORK_FAR[player]  then PLAYER_WORK_FAR[player]  = {} end
+		PLAYER_WORK_NEAR[player] = PLAYER_WORK_NEAR[player] or {}
+		PLAYER_WORK_FAR[player]  = PLAYER_WORK_FAR[player]  or {}
 		table.clear(PLAYER_WORK_NEAR[player])
 		table.clear(PLAYER_WORK_FAR[player])
 
@@ -1081,14 +1104,8 @@ RunService.Heartbeat:Connect(function(dt)
 	for player in pairs(readyPlayers) do
 		local near = PLAYER_WORK_NEAR[player]
 		local far  = PLAYER_WORK_FAR[player]
-
-		if near and #near > 0 then 
-			fireChunked(player, timestamp, near) 
-		end
-
-		if far  and #far  > 0 then 
-			fireChunked(player, timestamp, far)
-		end
+		if near and #near > 0 then fireChunked(player, timestamp, near) end
+		if far  and #far  > 0 then fireChunked(player, timestamp, far)  end
 	end
 
 	releaseEntries()
