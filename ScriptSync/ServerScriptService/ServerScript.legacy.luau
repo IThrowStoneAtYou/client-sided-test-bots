@@ -34,20 +34,22 @@ local NpcConstants      = require(ReplicatedStorage.Modules.Shared.NpcConstants)
 local RegimentData      = require(ReplicatedStorage.Modules.Shared.RegimentData)
 
 -- ── 1. NpcConstants destructure ───────────────────────────────────────
-local SPAWN_OFFSET       = NpcConstants.SPAWN_OFFSET
-local COMPANY_GAP        = NpcConstants.COMPANY_GAP
-local RANK_SPACING       = NpcConstants.RANK_SPACING
-local RANK_DEPTH         = NpcConstants.RANK_DEPTH
-local FLAG_OFFSET_Z      = NpcConstants.FLAG_OFFSET_Z
-local MOVE_RETRIES       = NpcConstants.MOVE_RETRIES
-local WEAPON_IDLE        = NpcConstants.WEAPON_IDLE
-local MELEE_NONE         = NpcConstants.MELEE_NONE
-local MELEE_IDLE         = NpcConstants.MELEE_IDLE
-local MELEE_BOT_START    = NpcConstants.MELEE_BOT_START
-local MELEE_UP_START     = NpcConstants.MELEE_UP_START
-local MELEE_ADVANCE      = NpcConstants.MELEE_ADVANCE
-local BEARER_MODE_CENTER = NpcConstants.BEARER_MODE_CENTER
-local BEARER_MODE_PACING = NpcConstants.BEARER_MODE_PACING
+local SPAWN_OFFSET        = NpcConstants.SPAWN_OFFSET
+local COMPANY_GAP         = NpcConstants.COMPANY_GAP
+local RANK_SPACING        = NpcConstants.RANK_SPACING
+local RANK_DEPTH          = NpcConstants.RANK_DEPTH
+local FLAG_OFFSET_Z       = NpcConstants.FLAG_OFFSET_Z
+local MOVE_RETRIES        = NpcConstants.MOVE_RETRIES
+local WEAPON_IDLE         = NpcConstants.WEAPON_IDLE
+local WEAPON_RELOAD_IDLE  = NpcConstants.WEAPON_RELOAD_IDLE
+local WEAPON_RELOAD       = NpcConstants.WEAPON_RELOAD
+local MELEE_NONE          = NpcConstants.MELEE_NONE
+local MELEE_IDLE          = NpcConstants.MELEE_IDLE
+local MELEE_BOT_START     = NpcConstants.MELEE_BOT_START
+local MELEE_UP_START      = NpcConstants.MELEE_UP_START
+local MELEE_ADVANCE       = NpcConstants.MELEE_ADVANCE
+local BEARER_MODE_CENTER  = NpcConstants.BEARER_MODE_CENTER
+local BEARER_MODE_PACING  = NpcConstants.BEARER_MODE_PACING
 
 -- ── 1. Server-only networking/perf constants ──────────────────────────
 local CHUNK_SIZE    = 35
@@ -751,11 +753,32 @@ local function hookChat(player: Player)
 	end)
 end
 
+-- ── Team change monitor: despawn companies if forced to menu ────────────
+
+local function watchTeamChange(player: Player)
+	local lastTeam = player.Team
+	
+	player:GetPropertyChangedSignal("Team"):Connect(function()
+		local newTeam = player.Team
+		local noTeamFolder = Teams:FindFirstChild("NO TEAM")
+		
+		-- If moved to NO TEAM (forced to menu by game code)
+		if newTeam == noTeamFolder and lastTeam ~= noTeamFolder then
+			print(string.format("[TeamMonitor] %s forced to menu, despawning companies", player.Name))
+			despawnAllCompanies(player)
+		end
+		
+		lastTeam = newTeam
+	end)
+end
+
 Players.PlayerAdded:Connect(hookChat)
 Players.PlayerAdded:Connect(watchDespawnRequest)
+Players.PlayerAdded:Connect(watchTeamChange)
 for _, p in ipairs(Players:GetPlayers()) do
 	hookChat(p)
 	watchDespawnRequest(p)
+	watchTeamChange(p)
 end
 
 -- ── 9. Remote handlers ────────────────────────────────────────────────
@@ -955,7 +978,11 @@ Network.NpcMeleeToggle.On(function(player, companyIndex, isMelee)
 		if not npc or npc.IsFlagBearer then continue end
 
 		if isMelee then
-			if npc.WeaponState ~= WEAPON_IDLE then sf.setNpcWeaponState(npc, WEAPON_IDLE, nil) end
+			-- Don't interrupt reload by toggling melee mode
+			local isReloading = npc.WeaponState == WEAPON_RELOAD_IDLE or npc.WeaponState == WEAPON_RELOAD
+			if not isReloading and npc.WeaponState ~= WEAPON_IDLE then 
+				sf.setNpcWeaponState(npc, WEAPON_IDLE, nil) 
+			end
 			npc.AimAlign.Enabled = false
 			npc.MeleeTimer       = 0
 			npc.MeleeTarget      = nil
