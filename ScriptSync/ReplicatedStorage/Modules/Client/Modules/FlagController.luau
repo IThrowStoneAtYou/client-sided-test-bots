@@ -289,12 +289,14 @@ end
 
 -- ── Public API ────────────────────────────────────────────────────────
 
-function FlagController.attachToNpc(clientModel: Model)
+function FlagController.attachToNpc(clientModel: Model, flagOwnerId: number?, flagCompIdx: number?)
 	local shortId = tonumber(clientModel.Name:sub(5))
 	if not shortId then return end
 
-	local ownerId = clientModel:GetAttribute("OwnerUserId")
-	local compIdx = clientModel:GetAttribute("CompanyIndex")
+	-- Use explicit owner params when provided (enemy carrying friendly flag).
+	-- Fall back to the model's own attributes (bearer holding their own flag).
+	local ownerId = flagOwnerId or clientModel:GetAttribute("OwnerUserId")
+	local compIdx = flagCompIdx or clientModel:GetAttribute("CompanyIndex")
 
 	FlagController.detachFromNpc(shortId)
 
@@ -333,6 +335,7 @@ function FlagController.attachToNpc(clientModel: Model)
 	local track = playFlagAnim(clientModel)
 	attachedFlags[shortId] = { model = flagModel, motor = motor, track = track }
 end
+
 
 function FlagController.detachFromNpc(shortId: number)
 	local data = attachedFlags[shortId]

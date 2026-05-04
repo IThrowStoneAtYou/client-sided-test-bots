@@ -659,7 +659,15 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		elseif key == Enum.KeyCode.M then
 			local currentTeam = localPlayer.Team
 			if currentTeam and currentTeam.Name ~= "NO TEAM" then
+				-- Signal server to despawn all companies AND reset team.
+				-- The server's RequestTeamReset handler already calls
+				-- despawnAllCompanies + syncCompanies, so client models
+				-- will be cleaned up via the NpcDespawn events it fires.
 				Network.RequestTeamReset.Fire()
+			else
+				-- Already on NO TEAM — just show the menu directly
+				-- (teamMenu.show() is called by checkTeamRequirement via
+				-- the Team property changed signal, so nothing extra needed)
 			end
 			return
 		end
@@ -913,9 +921,14 @@ Network.FlagPickedUp.On(function(ownerUserId, compIdx, pickerShortId, isFriendly
 			FlagController.detachFromNpc(oldId)
 		end
 		flagHolders[ownerUserId][compIdx] = pickerShortId
-		FlagController.attachToNpc(rep.Client)
+
+		-- Always pass the FLAG OWNER's info, not the carrier's.
+		-- This ensures the flag icon shows the original owner's nation
+		-- even when an enemy is the one holding it.
+		FlagController.attachToNpc(rep.Client, ownerUserId, compIdx)
 	end
 end)
+
 
 -->>>>>>>>>>>>
 -- FlagCaptureProgress is no longer used for a separate HUD.

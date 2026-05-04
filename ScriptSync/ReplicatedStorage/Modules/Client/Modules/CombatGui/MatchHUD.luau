@@ -1,6 +1,12 @@
 -->>>>>>>>>>>>
 -- MATCH_HUD
--- Version 2.0.0
+-- Version 2.1.0
+--
+-- Fix: FLAG_GB was on the LEFT (team 1 / ATTACKERS bar) and FLAG_FR on the
+-- RIGHT (team 2 / DEFENDERS bar).  Because ATTACKERS = France and DEFENDERS =
+-- Britain, the flags were swapped relative to their ticket bars, making it
+-- LOOK like the British/Defenders side was losing points whenever Attacker
+-- bots died.  Swapped flags and aligned bar colours with RegimentData accents.
 -->>>>>>>>>>>>
 
 local TweenService = game:GetService("TweenService")
@@ -11,10 +17,10 @@ local FLAG_GB  = "rbxassetid://88813497029040"
 local FLAG_FR  = "rbxassetid://139065210013036"
 local BAR_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
--- Team 1 = red side (left)
-local TEAM1_BAR_COLOR = Color3.fromRGB(170, 0, 0)
--- Team 2 = dark navy side (right)
-local TEAM2_BAR_COLOR = Color3.fromRGB(28, 42, 90)
+-- Team 1 = ATTACKERS (France) → blue, left side
+local TEAM1_BAR_COLOR = Color3.fromRGB(55, 100, 220)
+-- Team 2 = DEFENDERS (Britain) → red, right side
+local TEAM2_BAR_COLOR = Color3.fromRGB(210, 50, 50)
 
 local MatchHUD = {}
 MatchHUD.__index = MatchHUD
@@ -38,7 +44,6 @@ end
 function MatchHUD:_build()
 
 	-- ── Outer wrapper: centered at top ────────────────────────────────
-	-- Holds both the timer label and the bar row, stacked vertically
 	local wrapper = Instance.new("Frame")
 	wrapper.Name                   = "MatchWrapper"
 	wrapper.Size                   = UDim2.new(0, 500, 0, 52)
@@ -71,8 +76,7 @@ function MatchHUD:_build()
 	row.ZIndex                 = 20
 	row.Parent                 = wrapper
 
-	-- Left flag icon
-	local flagSize = 28
+	-- Left flag icon — ATTACKERS (France)
 	local flagL = Instance.new("ImageLabel")
 	flagL.Name                 = "FlagLeft"
 	flagL.Size                 = UDim2.new(0, 47, 0, 47)
@@ -80,7 +84,7 @@ function MatchHUD:_build()
 	flagL.AnchorPoint          = Vector2.new(0, 0)
 	flagL.BackgroundColor3     = Color3.fromRGB(22, 22, 34)
 	flagL.BackgroundTransparency = 0.1
-	flagL.Image                = FLAG_GB --FLAG_IMG
+	flagL.Image                = FLAG_FR   -- ATTACKERS = France, left bar
 	flagL.ScaleType            = Enum.ScaleType.Crop
 	flagL.ZIndex               = 25
 	flagL.Parent               = row
@@ -95,7 +99,7 @@ function MatchHUD:_build()
 	flagLStroke.Transparency = 0.2
 	flagLStroke.Parent       = flagL
 
-	-- Right flag icon
+	-- Right flag icon — DEFENDERS (Britain)
 	local flagR = Instance.new("ImageLabel")
 	flagR.Name                 = "FlagRight"
 	flagR.Size                 = UDim2.new(0, 47, 0, 47)
@@ -103,7 +107,7 @@ function MatchHUD:_build()
 	flagR.AnchorPoint          = Vector2.new(0, 0)
 	flagR.BackgroundColor3     = Color3.fromRGB(22, 22, 34)
 	flagR.BackgroundTransparency = 0.1
-	flagR.Image                = FLAG_FR
+	flagR.Image                = FLAG_GB   -- DEFENDERS = Britain, right bar
 	flagR.ScaleType            = Enum.ScaleType.Crop
 	flagR.ZIndex               = 25
 	flagR.Parent               = row
@@ -118,8 +122,7 @@ function MatchHUD:_build()
 	flagRStroke.Transparency = 0.2
 	flagRStroke.Parent       = flagR
 
-	-- Split bar background (sits between the two flags)
-	local barGap = flagSize + 4   -- pixels between flag edge and bar edge
+	-- Split bar background
 	local barBg = Instance.new("Frame")
 	barBg.Name                   = "BarBg"
 	barBg.Size                   = UDim2.new(0.706, -64, 0.75, 0)
@@ -137,7 +140,7 @@ function MatchHUD:_build()
 	barBgStroke.Transparency = 0.4
 	barBgStroke.Parent       = barBg
 
-	-- Gold bar — grows from left
+	-- Team 1 bar (ATTACKERS / France) — grows from left
 	local goldBar = Instance.new("Frame")
 	goldBar.Name                   = "GoldBar"
 	goldBar.Size                   = UDim2.new(0.5, 0, 1, 0)
@@ -149,7 +152,6 @@ function MatchHUD:_build()
 	goldBar.ZIndex                 = 22
 	goldBar.Parent                 = barBg
 
-	-- Gold bar ticket label (centered on left half)
 	local goldLabel = Instance.new("TextLabel")
 	goldLabel.Name                  = "GoldLabel"
 	goldLabel.Size                  = UDim2.new(1, 0, 1, 0)
@@ -162,7 +164,7 @@ function MatchHUD:_build()
 	goldLabel.ZIndex                = 23
 	goldLabel.Parent                = goldBar
 
-	-- Navy bar — retreats from right
+	-- Team 2 bar (DEFENDERS / Britain) — retreats from right
 	local navyBar = Instance.new("Frame")
 	navyBar.Name                   = "NavyBar"
 	navyBar.Size                   = UDim2.new(0.5, 0, 1, 0)
@@ -174,13 +176,12 @@ function MatchHUD:_build()
 	navyBar.ZIndex                 = 22
 	navyBar.Parent                 = barBg
 
-	-- Navy bar ticket label (centered on right half)
 	local navyLabel = Instance.new("TextLabel")
 	navyLabel.Name                  = "NavyLabel"
 	navyLabel.Size                  = UDim2.new(1, 0, 1, 0)
 	navyLabel.BackgroundTransparency = 1
 	navyLabel.Text                  = "10,000"
-	navyLabel.TextColor3            = Color3.fromRGB(200, 215, 255)
+	navyLabel.TextColor3            = Color3.fromRGB(255, 230, 200)
 	navyLabel.Font                  = Enum.Font.GothamBold
 	navyLabel.TextSize              = 12
 	navyLabel.TextXAlignment        = Enum.TextXAlignment.Center
@@ -232,8 +233,8 @@ function MatchHUD:update(t1: number, t2: number, timeRemaining: number)
 	local fmt1 = fmtTickets(t1)
 	local fmt2 = fmtTickets(t2)
 
-	self._goldLabel.Text = fmt1
-	self._navyLabel.Text = fmt2
+	self._goldLabel.Text = fmt1   -- ATTACKERS (France) tickets
+	self._navyLabel.Text = fmt2   -- DEFENDERS (Britain) tickets
 	self._timer.Text     = fmtTime(timeRemaining)
 	self._timer.TextColor3 = Color3.fromRGB(220, 220, 220)
 
@@ -255,11 +256,11 @@ function MatchHUD:showResult(winner: number, t1: number, t2: number)
 		self._timer.Text       = "DRAW"
 		self._timer.TextColor3 = Color3.fromRGB(200, 200, 200)
 	elseif winner == 1 then
-		self._timer.Text       = "TEAM I WINS"
-		self._timer.TextColor3 = Color3.fromRGB(210, 160, 35)
+		self._timer.Text       = "FRANCE WINS"
+		self._timer.TextColor3 = Color3.fromRGB(55, 100, 220)
 	else
-		self._timer.Text       = "TEAM II WINS"
-		self._timer.TextColor3 = Color3.fromRGB(130, 160, 255)
+		self._timer.Text       = "BRITAIN WINS"
+		self._timer.TextColor3 = Color3.fromRGB(210, 50, 50)
 	end
 end
 

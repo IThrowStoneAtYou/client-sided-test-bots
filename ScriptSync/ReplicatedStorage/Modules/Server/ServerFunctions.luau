@@ -274,23 +274,35 @@ function ServerFunctions.init(ctx)
 		for i = #comp.slots, 1, -1 do
 			if comp.slots[i] == shortId then
 				table.remove(comp.slots, i)
+			
 				MatchManager.onBotDied(npc.TeamName)
-
+				
 				if #comp.slots == 0 then
 					-- Company fully wiped out.
-					MatchManager.onCompanyOverrun(owner, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
+					-- ── NEW: if the enemy is actively holding the flag and the
+					-- capture timer hasn't expired yet, do NOT fire onCompanyOverrun
+					-- or schedule a respawn now. captureFlag will do it when the
+					-- FLAG_CAPTURE_TIME actually expires. Firing overrun early would
+					-- deduct tickets and despawn the company before the capture
+					-- resolves, giving the enemy a "free" overrun plus a capture.
+					local flagActivelyHeld = comp.flagState
+						and comp.flagState.isEnemyHeld
+						and not comp.flagState.isDropped
 
-					-- If flag is dropped (no survivors to pick it up), schedule a full respawn.
-					-- This prevents the company from being permanently stuck with bearerRespawnGate=true
-					-- and an empty respawnQueue that can never be flushed.
-					if not comp._overrunScheduled then
-						comp._overrunScheduled = true
-						if ctx.respawnAfterOverrun then
-							task.spawn(function()
-								ctx.respawnAfterOverrun(owner)
-							end)
+					if not flagActivelyHeld then
+						MatchManager.onCompanyOverrun(owner, compIdx, comp.lastAttackerPlayer, comp.lastAttackerCompIdx)
+
+						if not comp._overrunScheduled then
+							comp._overrunScheduled = true
+							if ctx.respawnAfterOverrun then
+								task.spawn(function()
+									ctx.respawnAfterOverrun(owner)
+								end)
+							end
 						end
 					end
+					-- If flagActivelyHeld == true: captureFlag will call
+					-- onCompanyOverrun + respawnAfterOverrun when the timer expires.
 				end
 				break
 			end
@@ -1161,33 +1173,25 @@ function ServerFunctions.init(ctx)
 						continue
 					end
 
-					-- ── Friendly chase: path victim company soldiers toward the carrier
-					-- so they can engage in combat and potentially kill it, resetting the
-					-- capture timer.  Throttled to every 2 s to avoid pathfinder spam.
+					-- Friendly chase logic (unchanged)
 					fs._chaseAccum = (fs._chaseAccum or 0) + dt
 					if fs._chaseAccum >= 2 then
 						fs._chaseAccum = 0
 						local carrierPos = holder.Root.Position
 
-						-- Send soldiers from the victim company toward the carrier.
 						for _, sid in ipairs(comp.slots) do
 							local s = activeNpcs[sid]
 							if not s or s.IsFlagBearer or s._goingForFlag then continue end
-							-- Don't interrupt soldiers that are already reloading mid-combat.
-							-- Just redirect their movement; combat detection handles the rest.
 							task.spawn(function()
 								s.Pathfinder:Stop()
 								s.Pathfinder:Run(carrierPos)
 							end)
 						end
 
-						-- Also send soldiers from same-team allied companies if their flag
-						-- is not being threatened (opportunistic assistance).
 						for allyPlayer, allyComps in pairs(companies) do
 							if allyPlayer == player then continue end
 							if not (allyPlayer.Team and player.Team and allyPlayer.Team == player.Team) then continue end
 							for _, allyComp in pairs(allyComps) do
-								-- Only assist if the ally's own flag is safe
 								local allyFs = allyComp.flagState
 								if allyFs and (allyFs.isDropped or allyFs.isEnemyHeld) then continue end
 								for _, sid in ipairs(allyComp.slots) do
@@ -1207,12 +1211,21 @@ function ServerFunctions.init(ctx)
 
 					if fs.captureBroadcastAccum >= 1 then
 						fs.captureBroadcastAccum -= 1
-						local remaining = math.max(0, captureT - fs.captureAccum)
-						for p in pairs(readyPlayers) do
-							Network.NpcCompanyStrength.Fire(
-								p, compIdx, comp.tickets, true,
-								player.UserId, remaining, true
-							)
+
+						-- ── NEW: only show capture bar if bots are still alive and
+						-- the company is NOT already broken. A broken company with 0
+						-- bots can't fight back, so the bar would be misleading.
+						local hasLiveBots = #comp.slots > 0
+						local notBroken   = not comp.isBroken
+
+						if hasLiveBots and notBroken then
+							local remaining = math.max(0, captureT - fs.captureAccum)
+							for p in pairs(readyPlayers) do
+								Network.NpcCompanyStrength.Fire(
+									p, compIdx, comp.tickets, true,
+									player.UserId, remaining, true
+								)
+							end
 						end
 					end
 
